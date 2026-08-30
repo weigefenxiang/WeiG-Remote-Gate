@@ -10,16 +10,15 @@ permissions:
 
 jobs:
   patch:
-    if: github.event.head_commit.message == 'chore: apply empty IPv6 verifier maintenance'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: dev/v0.3.1
           fetch-depth: 0
-      - name: Patch fw3 verifier exit status
-        shell: python3 {0}
+      - name: Patch verifier and regression
         run: |
+          python3 <<'PY'
           from pathlib import Path
 
           fw = Path('openwrt/remote-gate-firewall.sh')
@@ -53,6 +52,7 @@ jobs:
           test.write_text(s.replace(old, new), encoding='utf-8')
 
           Path('.github/workflows/maintenance-fix-empty-v6-verify.yml').unlink()
+          PY
       - name: Validate patch
         run: |
           sh -n openwrt/remote-gate-firewall.sh
@@ -64,5 +64,3 @@ jobs:
           git add -A
           git commit -m "fix: return success for empty IPv6 fw3 policy"
           git push origin HEAD:dev/v0.3.1
-
-# Retry trigger: workflow now exists on the branch before this push.
