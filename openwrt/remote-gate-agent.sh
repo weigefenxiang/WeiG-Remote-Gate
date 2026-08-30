@@ -163,8 +163,10 @@ pull_once() {
 run_once() {
     sync_firewall_policy || true
     post_status
-    pull_once
+    pull_rc=0
+    pull_once || pull_rc=$?
     post_status
+    return "$pull_rc"
 }
 
 case "${1:-once}" in

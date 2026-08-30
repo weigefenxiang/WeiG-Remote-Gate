@@ -1,5 +1,7 @@
 # WeiG-Remote-Gate
 
+**Language:** [English](README.md) · [简体中文](translations/README.zh-CN.md)
+
 **Secure Remote Access Gateway for OpenWrt / ImmortalWrt.**
 
 WeiG-Remote-Gate is a Cloudflare-fronted control plane for Multi-WAN status and temporary private remote access. The home WAN does **not** host an HTTP/HTTPS management service. OpenWrt reports status and pulls one-time commands over outbound HTTPS.
@@ -88,6 +90,8 @@ OpenWrt
    `-- Multi-WAN inventory
 ```
 
+The Cloudflare hostname is the **control plane**. WireGuard traffic is the **data plane** and must reach the selected home WAN public IPv4 directly. Do not point a WireGuard UDP endpoint at a Cloudflare Tunnel hostname.
+
 ## Remote Gate flow
 
 1. Sign in to the Cloudflare-fronted dashboard.
@@ -104,9 +108,42 @@ OpenWrt
 The agent continuously synchronizes:
 
 - active public-WAN `l3_device` values;
-- locally listening WireGuard UDP ports.
+- configured and locally listening WireGuard UDP ports.
+
+Configured WireGuard listen ports are protected even before the WireGuard interface is fully up. This keeps the public UDP port fail-closed during interface startup or netifd problems.
 
 The project registers a firewall include so the guard is restored after a firewall reload/restart. Authorization state is restored only for the remaining TTL; expired state is never reopened.
+
+## WireGuard note for OpenWrt / ImmortalWrt 21.02
+
+On some 21.02-class builds, adding a new UCI interface with `proto='wireguard'` and running only:
+
+```sh
+/etc/init.d/network reload
+```
+
+can leave the new interface in a state similar to:
+
+```text
+proto: none
+NO_DEVICE
+```
+
+while `/lib/netifd/proto/wireguard.sh` is present. A full network restart may be required once so netifd registers and brings up the new protocol interface:
+
+```sh
+/etc/init.d/network restart
+```
+
+This briefly reconnects WAN interfaces, so do not run it remotely without a safe recovery path. Verify afterward with:
+
+```sh
+ifstatus <wireguard-interface>
+wg show interfaces
+wg show all listen-port
+```
+
+Remote Gate can still protect the configured WireGuard UDP listen port while the interface itself is down.
 
 ## UI
 
@@ -123,6 +160,34 @@ The dashboard follows `DESIGN.md` and supports:
 
 See [`VERSION`](VERSION).
 
+## Real-device validation
+
+The fw3 backend has been validated end-to-end on a real ImmortalWrt 21.02-class router using `iptables` legacy + `ipset`, PPPoE public WAN, Cloudflare Tunnel control plane and a router-local WireGuard UDP listener.
+
+The verified sequence was:
+
+```text
+CLOSED
+  -> public ICMP echo blocked
+  -> public WireGuard UDP blocked
+
+ACTIVATE
+  -> only the dashboard-derived current IPv4 added to the timeout set
+  -> source-specific ICMP ACCEPT before the general DROP
+  -> source-specific WireGuard UDP ACCEPT before the general DROP
+  -> WireGuard handshake and traffic succeeded
+
+TTL EXPIRED
+  -> authorization set became empty
+  -> source-specific ACCEPT rules disappeared
+  -> ICMP and WireGuard UDP returned to DROP
+  -> a fresh WireGuard handshake could not be established
+```
+
+During the same validation, the Remote Gate chain remained INPUT-only. Existing qBittorrent / UPnP / DNAT / FORWARD behavior was not taken over by Remote Gate.
+
+The fw4/nftables backend is implemented for modern OpenWrt/ImmortalWrt and follows the same security model; the hardware validation described above specifically covers the fw3 path.
+
 ## Production validation
 
 After installation, verify the backend shown by:
@@ -137,6 +202,7 @@ For fw3:
 ```sh
 iptables -S INPUT | sed -n '1,8p'
 ipset list weig_remote_gate_auth_v4
+iptables -S WEIG_REMOTE_GATE
 ```
 
 For fw4:
@@ -147,7 +213,7 @@ fw4 print | grep -n 'WeiG Remote Gate'
 nft list set inet fw4 weig_remote_gate_protected_ifname
 ```
 
-Then test from two different external IPv4 addresses: the authorized address should reach ICMP/WireGuard during the TTL, while the other address remains blocked. Separately verify the qBittorrent listening/forwarded port remains reachable as before.
+Then test from two different external IPv4 addresses: the authorized address should reach ICMP/WireGuard during the TTL, while the other address remains blocked. After the TTL, disable and re-enable the WireGuard client and verify that no fresh handshake is established. Separately verify the qBittorrent listening/forwarded port remains reachable as before.
 
 ## License
 
