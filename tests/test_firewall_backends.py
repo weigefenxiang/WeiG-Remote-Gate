@@ -118,6 +118,13 @@ class FirewallBackendTests(unittest.TestCase):
         self.assertNotIn('"$LIB_DIR/remote-gate-agent.sh" once', update)
         self.assertIn('"$LIB_DIR/remote-gate-agent.sh" report || true', install)
 
+    def test_legacy_upgrade_keeps_new_ipv6_gate_disabled(self):
+        install = OPENWRT_INSTALL.read_text(encoding="utf-8")
+        update = OPENWRT_UPDATE.read_text(encoding="utf-8")
+        self.assertIn("GATE_IPV6='auto'", install)
+        self.assertIn("append_default GATE_IPV6 disabled", update)
+        self.assertNotIn("append_default GATE_IPV6 auto", update)
+
 
 if __name__ == "__main__":
     unittest.main()
