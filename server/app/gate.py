@@ -130,7 +130,7 @@ def queue_activate(
             raise GateError("endpoint_family_mismatch")
         if family and family != endpoint_family:
             raise GateError("endpoint_family_mismatch")
-        if endpoint.get("reachability") not in {"direct", "mapped", "private"}:
+        if endpoint.get("reachability") not in {"direct", "mapped", "private", "egress_probe"}:
             raise GateError("endpoint_not_reachable")
 
         inventory = normalize_inventory(store)
@@ -143,7 +143,7 @@ def queue_activate(
             endpoint_family == "ipv6"
             or scope != "wg_ping"
             or endpoint.get("provider") != "native"
-            or endpoint.get("reachability") == "private"
+            or endpoint.get("reachability") in {"private", "egress_probe"}
         )
         if advanced and agent_schema < 2:
             raise GateError("agent_upgrade_required")
