@@ -120,6 +120,28 @@ class FirewallBackendTests(unittest.TestCase):
         self.assertIn("wireguard_ports", source)
         self.assertIn('"$FIREWALL" sync "$v4" "$v6" "$ports"', source)
 
+    def test_collect_wans_avoids_busybox_sort_o_stdout_leak(self):
+        source = AGENT.read_text(encoding="utf-8")
+        block = source.split("collect_wans() {", 1)[1].split("wireguard_ports() {", 1)[0]
+        self.assertNotIn('sort -u "$file" -o "$file"', block)
+        self.assertIn('sort -u "$file" > "${file}.tmp"', block)
+        self.assertIn('mv "${file}.tmp" "$file"', block)
+
+    def test_inventory_output_starts_with_schema_json_after_collect_wans(self):
+        source = AGENT.read_text(encoding="utf-8")
+        collect = source.split("collect_wans() {", 1)[1].split("wireguard_ports() {", 1)[0]
+        inventory = source.split("build_inventory_json() {", 1)[1].split("control_candidates() {", 1)[0]
+        self.assertNotIn('sort -u "$file" -o "$file"', collect)
+        self.assertIn("collect_wans", inventory)
+        self.assertIn("printf '{\"schema\":2", inventory)
+
+    def test_fw3_ipv6_capability_checks_hash_ip_family_support(self):
+        source = FIREWALL.read_text(encoding="utf-8")
+        block = source.split("fw3_ipv6_capable() {", 1)[1].split("ensure_state() {", 1)[0]
+        self.assertIn("ip6tables -m set -h", block)
+        self.assertIn("ipset help hash:ip 2>&1 | grep -qi 'inet6'", block)
+        self.assertNotIn("ipset help 2>&1 | grep", block)
+
     def test_private_ipv4_wans_are_in_gate_policy(self):
         source = AGENT.read_text(encoding="utf-8")
         block = source.split("v4_protected_devices() {", 1)[1].split("v6_protected_devices() {", 1)[0]
