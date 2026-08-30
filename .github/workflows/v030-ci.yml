@@ -1,0 +1,85 @@
+name: v0.3 CI
+
+on:
+  push:
+    branches:
+      - dev/v0.3.0
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Python tests
+        run: python -m unittest discover -s tests -p 'test_*.py' -v
+
+      - name: Python compile
+        run: python -m py_compile server/app/*.py server/remote-gate.py tests/*.py
+
+      - name: Shell syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in openwrt/*.sh openwrt/*.init server/*.sh; do
+            sh -n "$file"
+          done
+          bash -n server/install.sh server/update.sh server/uninstall.sh server/migrate-from-wan2-vault.sh
+
+      - name: JavaScript syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in server/app/static/js/*.js; do
+            node --check "$file"
+          done
+          node --check tests/browser_layout.mjs
+
+  browser:
+    runs-on: ubuntu-latest
+    needs: core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Chromium test runtime
+        run: |
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps chromium
+
+      - name: Start fixture server
+        run: |
+          python tests/ui_fixture_server.py > /tmp/remote-gate-ui-fixture.log 2>&1 &
+          echo $! > /tmp/remote-gate-ui-fixture.pid
+          for i in $(seq 1 20); do
+            curl -fsS http://127.0.0.1:8765/healthz >/dev/null && exit 0
+            sleep 0.5
+          done
+          cat /tmp/remote-gate-ui-fixture.log
+          exit 1
+
+      - name: Browser layout regression
+        run: node tests/browser_layout.mjs
+
+      - name: Stop fixture server
+        if: always()
+        run: |
+          [ -f /tmp/remote-gate-ui-fixture.pid ] && kill "$(cat /tmp/remote-gate-ui-fixture.pid)" 2>/dev/null || true
+          cat /tmp/remote-gate-ui-fixture.log 2>/dev/null || true
