@@ -71,6 +71,7 @@ FILES=(
   "server/app/static/css/layout.css"
   "server/app/static/css/dashboard.css"
   "server/app/static/css/themes.css"
+  "server/app/static/css/spatial.css"
   "server/app/static/js/theme-bootstrap.js"
   "server/app/static/js/i18n.js"
   "server/app/static/js/theme.js"
