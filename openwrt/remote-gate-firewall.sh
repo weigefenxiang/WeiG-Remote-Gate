@@ -57,7 +57,7 @@ valid_ttl() {
 fw3_ipv6_capable() {
     command -v ip6tables >/dev/null 2>&1 || return 1
     ip6tables -m set -h >/dev/null 2>&1 || return 1
-    ipset help 2>&1 | grep -q 'inet6' || return 1
+    ipset help hash:ip 2>&1 | grep -qi 'inet6' || return 1
 }
 
 ensure_state() {
