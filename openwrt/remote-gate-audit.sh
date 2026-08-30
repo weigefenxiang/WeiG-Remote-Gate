@@ -59,13 +59,11 @@ if has ip6tables; then
 fi
 if has ipset; then
     ipset --version 2>/dev/null | sed -n '1p' || true
-    printf 'ipset inet6 support: '
-    tmp="weig_remote_gate_audit6_$$"
-    if ipset create "$tmp" hash:ip family inet6 timeout 30 2>/dev/null; then
+    printf 'ipset help mentions inet6 family: '
+    if ipset help hash:ip 2>&1 | grep -qi 'inet6'; then
         printf 'YES\n'
-        ipset destroy "$tmp" 2>/dev/null || true
     else
-        printf 'NO\n'
+        printf 'NO/UNKNOWN\n'
     fi
 fi
 
@@ -119,12 +117,20 @@ fi
 section 'NATMAP DISCOVERY'
 print_cmd natmap
 if has natmap; then
-    natmap -h 2>&1 | sed -n '1,8p' || true
+    printf 'natmap executable detected.\n'
+else
+    printf 'natmap executable not detected.\n'
 fi
-printf 'Processes mentioning natmap:\n'
-ps 2>/dev/null | grep '[n]atmap' || true
-printf 'UCI sections mentioning natmap:\n'
-uci show 2>/dev/null | grep -i 'natmap' | sed -E "s/(password|token|secret|key)='[^']*'/\1='<redacted>'/Ig" | sed -n '1,80p' || true
+if has pidof && pidof natmap >/dev/null 2>&1; then
+    printf 'natmap process: running\n'
+else
+    printf 'natmap process: not detected\n'
+fi
+if [ -e /etc/config/natmap ]; then
+    printf 'UCI config file: /etc/config/natmap exists (content intentionally not printed)\n'
+else
+    printf 'UCI config file: not detected\n'
+fi
 
 section 'REMOTE GATE CURRENT STATE'
 printf 'Agent service: '
@@ -141,5 +147,5 @@ fi
 
 section 'NOTES'
 printf '%s\n' \
-    'This audit is read-only except for a temporary empty inet6 ipset capability probe, which is destroyed immediately.' \
-    'It does not read /etc/remote-gate.conf, WireGuard private keys, or any secret/token value.'
+    'This audit performs read-only capability/status queries only.' \
+    'It does not read /etc/remote-gate.conf, WireGuard private keys, NATMap configuration contents, or any secret/token value.'
