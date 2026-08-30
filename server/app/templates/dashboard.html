@@ -20,13 +20,17 @@
 
   <header class="topbar">
     <div class="topbar-inner">
-      <a class="brand compact" href="/" aria-label="WeiG Remote Gate home">
-        <div class="brand-mark" aria-hidden="true">WG</div>
-        <div>
-          <strong>WeiG Remote Gate</strong>
-          <span data-i18n="header.secureRemoteAccess">Secure Remote Access</span>
-        </div>
-      </a>
+      <div class="mobile-brand-line">
+        <a class="brand compact" href="/" aria-label="WeiG Remote Gate home">
+          <div class="brand-mark" aria-hidden="true">WG</div>
+          <div>
+            <strong>WeiG Remote Gate</strong>
+            <span data-i18n="header.secureRemoteAccess">Secure Remote Access</span>
+          </div>
+        </a>
+        <button class="icon-button mobile-logout" data-action="logout" type="button" data-i18n-title="header.signOut" title="Sign out" aria-label="Sign out">↗</button>
+      </div>
+
       <div class="top-actions">
         <div class="system-pill"><span class="status-dot success"></span><span id="system-state" data-i18n="header.systemOnline">System online</span></div>
         <div class="mini-switch" role="group" aria-label="Language">
@@ -40,7 +44,7 @@
         </div>
         <button class="icon-button text-button" id="arrange-button" type="button" data-i18n="header.arrange">Arrange</button>
         <button class="icon-button" id="reset-layout-button" type="button" data-i18n-title="header.resetLayout" title="Reset layout" aria-label="Reset layout">↺</button>
-        <button class="icon-button" id="logout-button" type="button" data-i18n-title="header.signOut" title="Sign out" aria-label="Sign out">↗</button>
+        <button class="icon-button desktop-logout" data-action="logout" type="button" data-i18n-title="header.signOut" title="Sign out" aria-label="Sign out">↗</button>
       </div>
     </div>
   </header>
@@ -66,15 +70,15 @@
 
         <div class="gate-layout">
           <div class="gate-orb-wrap">
-            <div class="gate-orb" id="gate-orb" data-state="closed" aria-live="polite">
-              <div class="gate-ring ring-a"></div>
-              <div class="gate-ring ring-b"></div>
-              <div class="gate-core">
-                <span class="gate-lock" id="gate-lock">◆</span>
+            <button class="gate-orb" id="gate-orb" data-state="closed" type="button" aria-live="polite" aria-label="Activate remote access">
+              <span class="gate-ring ring-a" aria-hidden="true"></span>
+              <span class="gate-ring ring-b" aria-hidden="true"></span>
+              <span class="gate-core">
+                <span class="gate-lock" id="gate-lock" aria-hidden="true">◆</span>
                 <strong id="gate-state">Closed</strong>
                 <small id="gate-substate">WAN input stays hidden</small>
-              </div>
-            </div>
+              </span>
+            </button>
           </div>
 
           <div class="gate-form">
@@ -132,21 +136,21 @@
           <div class="address-row">
             <div class="address-line">
               <span class="label">IPv4</span>
-              <strong class="address-value fit-single-line" id="client-ipv4" data-fit-max="18" data-fit-min="10">—</strong>
+              <strong class="address-value fit-single-line" id="client-ipv4" data-fit-max="20" data-fit-min="10">—</strong>
             </div>
             <div class="address-meta" id="client-ipv4-meta">Not observed</div>
           </div>
           <div class="address-row">
             <div class="address-line">
               <span class="label">IPv6</span>
-              <strong class="address-value fit-single-line" id="client-ipv6" data-fit-max="18" data-fit-min="9">—</strong>
+              <strong class="address-value fit-single-line" id="client-ipv6" data-fit-max="20" data-fit-min="7.5">—</strong>
             </div>
             <div class="address-meta" id="client-ipv6-meta">Not observed</div>
           </div>
           <div class="address-row">
             <div class="address-line">
               <span class="label" data-i18n="client.authorization">Gate authorization</span>
-              <strong class="address-value fit-single-line" id="authorization-source" data-fit-max="16" data-fit-min="9">—</strong>
+              <strong class="address-value fit-single-line" id="authorization-source" data-fit-max="18" data-fit-min="8">—</strong>
             </div>
           </div>
         </div>
@@ -192,7 +196,7 @@
         <div class="activity" id="activity-list"></div>
       </article>
 
-      <article class="workspace-card depth-card" data-card-id="system" data-default-size="compact" data-size="compact">
+      <article class="workspace-card depth-card" data-card-id="system" data-default-size="normal" data-size="normal">
         <div class="panel-head tight">
           <div>
             <span class="eyebrow" data-i18n="system.eyebrow">SYSTEM</span>
@@ -215,6 +219,8 @@
   <script src="/static/js/theme.js"></script>
   <script src="/static/js/fit-text.js"></script>
   <script src="/static/js/workspace.js"></script>
+  <script src="/static/js/activity.js"></script>
+  <script src="/static/js/gate-controls.js"></script>
   <script src="/static/js/app.js"></script>
 </body>
 </html>

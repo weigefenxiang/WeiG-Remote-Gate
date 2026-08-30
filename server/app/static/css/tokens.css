@@ -2,12 +2,14 @@
   color-scheme: light dark;
   --font-sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+
   --radius-xs: 8px;
   --radius-sm: 12px;
   --radius-md: 16px;
   --radius-lg: 22px;
-  --radius-xl: 28px;
+  --radius-xl: 26px;
   --radius-pill: 999px;
+
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -17,26 +19,50 @@
   --space-8: 32px;
   --space-10: 40px;
   --space-12: 48px;
-  --space-16: 64px;
+
+  --type-page: clamp(28px, 2vw, 34px);
+  --type-card: 21px;
+  --type-value: 18px;
+  --type-body: 15px;
+  --type-label: 12px;
+  --type-caption: 11px;
+  --type-button: 15px;
+
+  --control-height: 44px;
+  --control-height-primary: 52px;
+
   --primary: #5965e8;
   --primary-hover: #6874f2;
   --success: #16a36a;
   --warning: #d8871a;
   --danger: #d84a4a;
+
   --canvas: #f5f7fb;
   --canvas-elevated: #ffffff;
-  --surface-1: rgba(255,255,255,.76);
-  --surface-2: rgba(255,255,255,.94);
+  --surface-1: rgba(255,255,255,.80);
+  --surface-2: rgba(255,255,255,.96);
+  --surface-raised: rgba(255,255,255,.985);
+  --surface-recessed: rgba(236,239,248,.78);
   --ink: #11131a;
   --ink-muted: #667085;
   --ink-subtle: #98a2b3;
   --hairline: rgba(17,19,26,.10);
-  --hairline-strong: rgba(17,19,26,.16);
-  --shadow-card: 0 22px 60px rgba(31,38,65,.10), 0 4px 14px rgba(31,38,65,.05);
-  --shadow-control: 0 8px 22px rgba(55,65,160,.20), inset 0 1px rgba(255,255,255,.35);
-  --inner-highlight: inset 0 1px rgba(255,255,255,.72);
-  --ambient-a: rgba(106,116,255,.20);
-  --ambient-b: rgba(53,205,167,.12);
+  --hairline-strong: rgba(17,19,26,.17);
+  --border-hover: rgba(89,101,232,.27);
+  --border-active: rgba(89,101,232,.40);
+
+  --elevation-card-rest: 0 16px 38px rgba(31,38,65,.09), 0 3px 10px rgba(31,38,65,.045);
+  --elevation-card-hover: 0 28px 64px rgba(31,38,65,.14), 0 8px 20px rgba(31,38,65,.07);
+  --elevation-card-pressed: 0 10px 26px rgba(31,38,65,.08), 0 2px 7px rgba(31,38,65,.04);
+  --elevation-control-rest: 0 7px 18px rgba(47,56,130,.14), 0 2px 5px rgba(31,38,65,.05);
+  --elevation-control-hover: 0 13px 28px rgba(47,56,130,.21), 0 4px 9px rgba(31,38,65,.07);
+  --elevation-control-pressed: 0 3px 9px rgba(47,56,130,.12);
+  --elevation-recessed: inset 0 2px 7px rgba(31,38,65,.075), inset 0 1px 1px rgba(31,38,65,.04);
+  --highlight-top: inset 0 1px rgba(255,255,255,.78);
+  --highlight-control: inset 0 1px rgba(255,255,255,.62);
+
+  --ambient-a: rgba(106,116,255,.19);
+  --ambient-b: rgba(53,205,167,.10);
 }
 
 html[data-theme="dark"] {
@@ -45,18 +71,31 @@ html[data-theme="dark"] {
   --success: #42c98a;
   --warning: #f0aa48;
   --danger: #ff6b6b;
+
   --canvas: #090b10;
   --canvas-elevated: #0f1219;
-  --surface-1: rgba(20,24,33,.78);
-  --surface-2: rgba(25,30,41,.94);
+  --surface-1: rgba(20,24,33,.82);
+  --surface-2: rgba(25,30,41,.96);
+  --surface-raised: rgba(31,37,50,.98);
+  --surface-recessed: rgba(9,12,18,.72);
   --ink: #f7f8fa;
   --ink-muted: #a8b0be;
   --ink-subtle: #737c8c;
-  --hairline: rgba(255,255,255,.10);
-  --hairline-strong: rgba(255,255,255,.16);
-  --shadow-card: 0 28px 80px rgba(0,0,0,.34), 0 4px 16px rgba(0,0,0,.20);
-  --shadow-control: 0 10px 28px rgba(69,78,210,.24), inset 0 1px rgba(255,255,255,.16);
-  --inner-highlight: inset 0 1px rgba(255,255,255,.08);
+  --hairline: rgba(255,255,255,.105);
+  --hairline-strong: rgba(255,255,255,.18);
+  --border-hover: rgba(125,134,255,.34);
+  --border-active: rgba(125,134,255,.48);
+
+  --elevation-card-rest: 0 22px 54px rgba(0,0,0,.32), 0 5px 15px rgba(0,0,0,.20);
+  --elevation-card-hover: 0 34px 76px rgba(0,0,0,.44), 0 10px 24px rgba(0,0,0,.26);
+  --elevation-card-pressed: 0 12px 30px rgba(0,0,0,.26), 0 3px 9px rgba(0,0,0,.18);
+  --elevation-control-rest: 0 8px 20px rgba(0,0,0,.24), 0 4px 12px rgba(56,64,180,.14);
+  --elevation-control-hover: 0 15px 32px rgba(0,0,0,.34), 0 6px 18px rgba(76,86,230,.20);
+  --elevation-control-pressed: 0 3px 10px rgba(0,0,0,.28);
+  --elevation-recessed: inset 0 2px 8px rgba(0,0,0,.34), inset 0 1px 2px rgba(0,0,0,.25);
+  --highlight-top: inset 0 1px rgba(255,255,255,.09);
+  --highlight-control: inset 0 1px rgba(255,255,255,.13);
+
   --ambient-a: rgba(89,101,232,.20);
   --ambient-b: rgba(66,201,138,.08);
 }

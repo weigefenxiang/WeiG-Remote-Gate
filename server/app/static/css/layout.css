@@ -1,7 +1,8 @@
 .card-workspace {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
-  gap: 16px;
+  grid-auto-flow: dense;
+  gap: 14px;
   align-items: start;
 }
 
@@ -9,40 +10,56 @@
   position: relative;
   min-width: 0;
   border-radius: var(--radius-xl);
-  padding: 22px;
-  transition: border-color .18s ease, opacity .18s ease, transform .18s ease;
+  padding: 19px;
+  transition:
+    border-color .18s ease,
+    box-shadow .18s ease,
+    opacity .18s ease,
+    transform .18s ease;
 }
 
-.workspace-card[data-size="compact"] { grid-column: span 3; padding: 18px; }
+.workspace-card[data-size="compact"] { grid-column: span 3; padding: 17px; }
 .workspace-card[data-size="normal"] { grid-column: span 4; }
 .workspace-card[data-size="wide"] { grid-column: span 8; }
-.workspace-card.dragging { opacity: .58; }
+.workspace-card[data-card-id="activity"][data-size="wide"] { grid-column: 1 / -1; }
+.workspace-card.drop-target {
+  border-color: var(--border-active);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 18%, transparent), var(--elevation-card-hover), var(--highlight-top);
+}
+
+.workspace-card.dragging {
+  opacity: .64;
+  transform: translateY(-4px) rotate(.15deg);
+  box-shadow: var(--elevation-card-hover), var(--highlight-top);
+  z-index: 4;
+}
 
 .workspace-card-tools {
   display: none;
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
-  margin: -8px -8px 10px 0;
+  margin: -6px -6px 8px 0;
 }
 
 .card-workspace.arranging .workspace-card {
-  border-color: color-mix(in srgb, var(--primary) 34%, var(--hairline));
+  border-color: var(--border-hover);
 }
 .card-workspace.arranging .workspace-card-tools { display: flex; }
 .card-workspace.arranging .workspace-card { cursor: grab; }
 .card-workspace.arranging .workspace-card:active { cursor: grabbing; }
 
 .card-tool {
-  min-width: 32px;
-  min-height: 30px;
+  min-width: 34px;
+  min-height: 32px;
   border: 1px solid var(--hairline);
   border-radius: 9px;
   color: var(--ink-muted);
-  background: var(--surface-2);
-  box-shadow: var(--inner-highlight);
+  background: var(--surface-raised);
+  box-shadow: var(--elevation-control-rest), var(--highlight-control);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 750;
+  cursor: pointer;
 }
 .drag-handle {
   display: inline-grid;
@@ -51,7 +68,7 @@
   letter-spacing: -2px;
   user-select: none;
 }
-.size-tool { min-width: 66px; padding: 0 9px; }
+.size-tool { min-width: 70px; padding: 0 9px; }
 
 .fit-single-line {
   display: block;
@@ -62,35 +79,51 @@
   text-overflow: clip;
 }
 
+@media (hover:hover) and (pointer:fine) {
+  .card-workspace:not(.arranging) > .workspace-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--border-hover);
+    box-shadow: var(--elevation-card-hover), var(--highlight-top);
+  }
+}
+
 @media (max-width: 1199px) {
   .card-workspace { grid-template-columns: repeat(8, minmax(0, 1fr)); }
   .workspace-card[data-size="compact"] { grid-column: span 4; }
   .workspace-card[data-size="normal"] { grid-column: span 4; }
-  .workspace-card[data-size="wide"] { grid-column: span 8; }
+  .workspace-card[data-size="wide"],
+  .workspace-card[data-card-id="activity"][data-size="wide"] { grid-column: span 8; }
 }
 
 @media (max-width: 899px) and (min-width: 768px) {
   .card-workspace { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .workspace-card[data-size="compact"],
   .workspace-card[data-size="normal"] { grid-column: span 2; }
-  .workspace-card[data-size="wide"] { grid-column: span 4; }
+  .workspace-card[data-size="wide"],
+  .workspace-card[data-card-id="activity"][data-size="wide"] { grid-column: span 4; }
 }
 
 @media (max-width: 767px) {
   .card-workspace {
     grid-template-columns: minmax(0, 1fr);
+    grid-auto-flow: row;
     gap: 12px;
   }
   .workspace-card,
   .workspace-card[data-size="compact"],
   .workspace-card[data-size="normal"],
-  .workspace-card[data-size="wide"] {
+  .workspace-card[data-size="wide"],
+  .workspace-card[data-card-id="activity"][data-size="wide"] {
     grid-column: span 1;
     padding: 16px;
-    border-radius: 20px;
+    border-radius: 21px;
   }
   .workspace-card-tools { display: none !important; }
-  .address-line { display: grid; gap: 2px; }
+  .address-line { display: grid; gap: 3px; }
   .address-value { width: 100%; text-align: left; }
   .address-meta { text-align: left; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-card { transition: none !important; }
 }

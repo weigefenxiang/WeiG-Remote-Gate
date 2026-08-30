@@ -99,6 +99,8 @@ FILES=(
   "server/app/static/js/theme.js"
   "server/app/static/js/fit-text.js"
   "server/app/static/js/workspace.js"
+  "server/app/static/js/activity.js"
+  "server/app/static/js/gate-controls.js"
   "server/app/static/js/app.js"
   "VERSION"
 )

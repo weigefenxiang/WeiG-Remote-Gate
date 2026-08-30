@@ -1,7 +1,7 @@
 ---
-version: 2
+version: 3
 name: WeiG-Remote-Gate
-description: "A calm, precise, adaptive network-security workspace. The visual language combines technical restraint, clear spatial hierarchy, restrained depth, and a distinct WeiG security identity. Effects communicate state; decoration never competes with security information."
+description: "A dense, tactile, adaptive network-security workspace with standardized spatial depth, large readable controls, and a distinct WeiG security identity."
 ---
 
 # 1. Product philosophy
@@ -12,18 +12,19 @@ Principles:
 - Console first; marketing copy never pushes controls below the fold unnecessarily.
 - Calm before flashy.
 - One primary security action at a time.
-- Depth through surfaces, hairlines, inner highlights and restrained shadows.
+- Depth communicates hierarchy and interaction.
 - Animation explains state transitions; it never exists only for spectacle.
 - Security state is always expressed by text and icon, never color alone.
 - No fake diagnostics. Do not label HTTP timing as ICMP ping.
 - Never expose secrets, tokens or private keys in the UI.
 - Never trade readability for an artificial one-screen requirement.
+- Prefer larger typography and tighter information structure over tiny text and excessive whitespace.
 
 # 2. Workspace model
 
-Desktop uses an adaptive card workspace rather than a fixed dashboard grid.
+Desktop uses an adaptive dense card workspace rather than a fixed dashboard grid.
 
-Default card priority:
+Canonical card priority:
 1. Remote Gate
 2. Current Client
 3. WireGuard
@@ -32,11 +33,20 @@ Default card priority:
 6. System
 
 Desktop behavior:
-- Wide windows should show the primary workspace with minimal scrolling.
+- Use a 12-column grid with `grid-auto-flow: dense`.
+- Wide windows should use available space instead of leaving large empty regions.
 - Narrow windows reflow from 3 columns to 2 columns and then 1 column.
 - Cards may naturally extend below the current viewport; vertical scrolling is valid.
 - The page must not gain whole-page horizontal scrolling.
 - Do not shrink all typography simply to force every card into the viewport.
+
+Canonical wide-screen layout:
+- Remote Gate: 8 columns.
+- Current Client: 4 columns.
+- WireGuard: 4 columns.
+- Public WAN: 4 columns.
+- System: 4 columns.
+- Activity: full row when its size is `Wide`.
 
 Desktop arrangement mode:
 - Arrangement is opt-in; normal controls must never accidentally drag cards.
@@ -50,53 +60,54 @@ Mobile behavior:
 - Drag/reorder mode is disabled.
 - Mobile uses the canonical fixed priority order.
 - Touch scrolling must never conflict with card rearrangement.
+- Header controls reflow below the brand; controls must never obscure the product name.
 
-# 3. Color tokens
+# 3. Color and surface tokens
 
-## Light
-- canvas: #F5F7FB
-- canvas-elevated: #FFFFFF
-- surface-1: rgba(255,255,255,.78)
-- surface-2: rgba(255,255,255,.92)
-- ink: #11131A
-- ink-muted: #667085
-- ink-subtle: #98A2B3
-- hairline: rgba(17,19,26,.10)
-- primary: #5965E8
-- primary-hover: #6874F2
-- success: #16A36A
-- warning: #D8871A
-- danger: #D84A4A
+Light and dark palettes remain centralized in `tokens.css`.
 
-## Dark
-- canvas: #090B10
-- canvas-elevated: #0F1219
-- surface-1: rgba(20,24,33,.78)
-- surface-2: rgba(25,30,41,.94)
-- ink: #F7F8FA
-- ink-muted: #A8B0BE
-- ink-subtle: #737C8C
-- hairline: rgba(255,255,255,.10)
-- primary: #7D86FF
-- primary-hover: #9299FF
-- success: #42C98A
-- warning: #F0AA48
-- danger: #FF6B6B
+Required semantic surfaces:
+- `canvas`
+- `surface-1`
+- `surface-2`
+- `surface-raised`
+- `surface-recessed`
+
+Required border semantics:
+- normal hairline
+- strong hairline
+- hover border
+- active border
+
+No component may invent its own unrelated depth language.
 
 # 4. Typography
 
 Use native system fonts only:
+
 `Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif`
 
 Monospace:
+
 `"SFMono-Regular", Consolas, "Liberation Mono", monospace`
 
-- console heading: 25-34px / 700 / tight tracking
-- section title: 17-22px / 650-720
-- body: 13-16px / 400
-- caption: 10-12px / 500-650
-- numeric IP/status values use a monospace stack and tabular numerals where available
-- desktop typography should remain comfortably larger than mobile typography
+Desktop targets:
+- console heading: 28-34px / 700+
+- card title: 19-22px / 650-750
+- important value / IP: 18-21px
+- body: 14-16px
+- label: 12-13px
+- button: 15-16px
+
+Mobile targets:
+- console heading: 22-24px
+- card title: 19-21px
+- important value: 17-19px
+- body: 14-15px
+- label: 12-13px
+- button: 15-16px
+
+Do not use 9-11px as the normal reading size for primary information.
 
 ## IPv6 hard rule
 
@@ -107,16 +118,18 @@ A complete IPv6 address must:
 - never be truncated;
 - never replace middle groups with `...`.
 
-The UI must fit the full value by dynamically reducing only that value's font size to a documented minimum. Width changes from responsive layout, card size changes, and window resizing must trigger a re-fit. Card padding may be reduced before reaching the minimum font size.
+The UI must fit the full value by dynamically reducing only that value's font size. Width changes from responsive layout, card size changes, and window resizing must trigger a re-fit.
 
 # 5. Spacing
 
-4px base rhythm:
-4 / 8 / 12 / 16 / 20 / 24 / 32 / 40 / 48 / 64
+Use a 4px base rhythm.
 
 Desktop workspace max-width: 1500px.
 Mobile horizontal padding: 12-16px.
 Desktop horizontal padding: 22-28px.
+
+Density rule:
+- reduce duplicate copy, excessive card padding, and oversized vertical gaps before reducing readable font sizes.
 
 # 6. Radius
 
@@ -124,80 +137,106 @@ Desktop horizontal padding: 22-28px.
 - sm: 12px
 - md: 16px
 - lg: 22px
-- xl: 28px
+- xl: 26px
 - pill: 999px
 
-# 7. Depth
+# 7. Standardized elevation system
 
-Four visual layers:
-1. Ambient canvas.
-2. Main surface.
-3. Cards and panels.
-4. Interactive controls.
+Depth is a design-system primitive, not a per-component decoration.
 
-Cards use:
-- 1px hairline border
-- soft outer shadow
-- subtle inset top highlight
-- restrained blur
+Required tokens:
+- `--elevation-card-rest`
+- `--elevation-card-hover`
+- `--elevation-card-pressed`
+- `--elevation-control-rest`
+- `--elevation-control-hover`
+- `--elevation-control-pressed`
+- `--elevation-recessed`
+- `--highlight-top`
+- `--highlight-control`
 
-Hover elevation: max translateY(-2px).
-Pressed: translateY(1px).
-Never use exaggerated scale transforms.
-Never create a neon/cyberpunk visual language.
+Visual layers:
+1. Canvas.
+2. Workspace.
+3. Card.
+4. Control.
+5. Hover / active / pressed state.
+
+Desktop card hover:
+- maximum vertical lift around 2-3px;
+- stronger but restrained shadow;
+- slightly stronger border.
+
+Control hover:
+- maximum vertical lift around 1-2px.
+
+Pressed:
+- move down around 1px;
+- compress the shadow so the control feels physically pressed.
+
+Never use exaggerated scale animation, neon glow, or cyberpunk styling.
 
 # 8. Buttons and segmented controls
 
-Preserve the existing WeiG button language:
-- rounded geometry
-- subtle top highlight
-- controlled depth
-- clear active state
-- no excessive glow
+Primary button target:
+- desktop/mobile height around 50-54px;
+- text 15-16px;
+- raised surface with a top highlight;
+- hover increases elevation;
+- pressed state visibly compresses.
 
-Primary:
-- high contrast indigo
-- 14px radius
-- soft control shadow
-- minimum touch height around 44-46px
+Normal controls:
+- height around 42-46px desktop;
+- 44-48px mobile.
 
-Secondary:
-- surface background + hairline
-- no competing accent
+Segmented controls:
+- use a recessed base;
+- the selected option appears physically raised from the base;
+- unselected options may rise slightly on hover;
+- pressed items return toward the base.
 
-Danger:
-- red only for revoke/close/destructive actions
+Language, Theme, TTL and IP Family share the same component behavior.
 
-Segmented controls are preferred for small mutually exclusive choices such as Theme, Language, TTL and IP Family.
+# 9. Remote Gate orb
 
-# 9. Gate control
+The Gate orb is both the visual anchor and, while CLOSED, a primary activation control.
 
-The Remote Gate is the visual anchor.
+CLOSED:
+- the entire orb is a semantic button;
+- mouse hover raises the core and strengthens the ring;
+- keyboard Enter/Space activates it;
+- touch press uses the same action;
+- the orb and the main Activate button call the exact same activation function.
 
-States:
-- CLOSED: neutral lock, no glow
-- AUTHORIZING: indigo progress ring
-- OPEN: controlled halo
-- CONNECTED: restrained success state
-- EXPIRING: countdown
-- ERROR: red, explanatory copy
+AUTHORIZING:
+- interaction is locked;
+- progress motion may be shown.
 
-Always show a textual state label.
+OPEN:
+- the orb is status-only and must not close access on an accidental click;
+- explicit `Close access now` remains the destructive action.
 
-The verified IPv4 data-plane path must not be weakened for UI convenience. Browser-local remembered IP values are display-only and must never become trusted authorization inputs.
+ERROR:
+- communicate the error textually;
+- retry remains available through the normal activation path when safe.
 
-IPv6 controls must remain visibly unavailable until the corresponding firewall path is implemented and hardware-validated. Never present display support as data-plane support.
+The orb and main Activate button must share the same `canActivate()` conditions:
+- trusted IPv4 request for the currently validated IPv4 path;
+- Public WAN available;
+- WireGuard interface available;
+- no pending command;
+- UI not busy.
 
 # 10. Client address presentation
 
-The Current Client card should display both IPv4 and IPv6 when they have been observed by the browser session.
+The Current Client card should display both IPv4 and IPv6 when observed.
 
 Rules:
-- The current request family must be explicitly labeled.
-- Browser-local address memory is only a convenience for dual-stack visibility.
-- A remembered address must be labeled as previously observed rather than current.
-- Gate authorization must clearly identify the trusted address actually being authorized.
-- IPv6 uses the single-line fitting rule above.
+- current request family is explicitly labeled;
+- browser-local address memory is display-only;
+- remembered addresses are labeled as previously observed;
+- Gate authorization identifies the trusted address actually authorized;
+- IPv6 follows the single-line hard rule.
 
 # 11. WireGuard presentation
 
@@ -214,54 +253,68 @@ Show at minimum:
 Never expose a WireGuard private key.
 Never imply LAN routing is healthy only because a Handshake exists.
 
-# 12. Language behavior
+# 12. Activity stream
 
-The source templates are English-first.
+The default Activity list is a dense single-line event stream.
 
-Language selection precedence:
+Rules:
+- one event per line by default;
+- current-day events show only `HH:mm:ss`;
+- older events use a compact date+time form;
+- summary fields remove redundant low-value data;
+- the summary remains one line and may dynamically fit;
+- clicking an event may expand a secondary full-detail line;
+- do not spend three default rows on title, metadata, and timestamp.
+
+# 13. Language behavior
+
+Source templates are English-first.
+
+Selection precedence:
 1. explicit browser-local user choice;
 2. browser language detection;
 3. English fallback.
 
-Simplified Chinese is selected for `zh`, `zh-CN`, `zh-SG`, and `zh-Hans`-class browser languages. Unknown languages fall back to English.
+Simplified Chinese is selected for `zh`-class browser languages.
 
 Professional terms may remain English in Chinese UI, including:
 `IP`, `IPv4`, `IPv6`, `WireGuard`, `Endpoint`, `Public WAN`, `TTL`, `Client`, `Server`, `Firewall`, `Backend`, `Handshake`, `Token`, and `Dual-stack`.
 
-# 13. Theme behavior
+# 14. Theme behavior
 
 Default theme is `auto`.
 Supported values: `auto`, `light`, `dark`.
 
 Auto follows `prefers-color-scheme` live.
 Persist only an explicit user choice.
-Theme bootstrap must execute before first paint to prevent a light flash in dark mode.
+Theme bootstrap executes before first paint.
 
-# 14. Responsive behavior
+# 15. Responsive behavior
 
 >= 1440px:
-- 3-column adaptive workspace
-- `Wide` cards span two columns
-- primary cards should normally fit with little or no scrolling
+- dense 12-column workspace;
+- large readable typography;
+- primary workspace should normally require little or no scrolling.
 
 1024-1439px:
-- 2-column adaptive workspace
-- preserve desktop-readable typography
+- adaptive 2-3 column workspace;
+- preserve desktop-readable typography.
 
 768-1023px:
-- 2 columns when practical, otherwise natural single-column reflow
-- vertical scrolling is expected when viewport height is limited
-- desktop arrangement mode remains available
+- 2 columns when practical;
+- vertical scrolling is expected when viewport height is limited;
+- arrangement mode remains available.
 
 < 768px:
-- canonical single-column card order
-- arrangement controls disabled
-- compact Gate visualization
-- 44px-class touch targets for primary actions
-- no hover-dependent essential information
-- full IPv6 remains one line by dynamic font fitting
+- canonical single-column card order;
+- arrangement controls disabled;
+- brand occupies its own header row;
+- Language and Theme controls move below the brand and use large centered segmented bars;
+- primary controls use 44px-class or larger touch targets;
+- no hover-dependent essential information;
+- full IPv6 remains one line by dynamic font fitting.
 
-# 15. Accessibility
+# 16. Accessibility
 
 - WCAG AA text contrast.
 - `:focus-visible` ring on all interactive elements.
@@ -269,25 +322,45 @@ Theme bootstrap must execute before first paint to prevent a light flash in dark
 - Never rely on color only.
 - Status changes use `aria-live=polite` where appropriate.
 - Buttons remain keyboard operable.
-- Dragging must have a button/keyboard-equivalent reordering path.
+- The CLOSED Gate orb is a semantic button.
+- Dragging has a button-equivalent reordering path.
 
-# 16. Do / Don't
+# 17. Module boundaries
+
+CSS:
+- `tokens.css`: color, typography, spacing, radius and elevation.
+- `base.css`: reset, global typography and accessibility.
+- `components.css`: buttons, segmented controls, inputs, badges and reusable surfaces.
+- `layout.css`: workspace grid, card sizing, drag layout and responsive structure.
+- `dashboard.css`: Gate, Client, WireGuard, WAN, Activity and System presentation only.
+
+JavaScript:
+- `theme-bootstrap.js`: pre-paint theme bootstrap.
+- `theme.js`: theme interaction.
+- `i18n.js`: language state and dictionaries.
+- `fit-text.js`: long single-line fitting such as IPv6.
+- `workspace.js`: card order, sizes, drag mode and local persistence.
+- `gate-controls.js`: Gate orb, Activate, Close, TTL and IP Family interactions.
+- `activity.js`: compact event summaries and expansion.
+- `app.js`: API state, data refresh and render orchestration.
+
+# 18. Do / Don't
 
 Do:
-- keep the dashboard calm, compact and data-first
-- use semantic status labels
-- preserve readable desktop typography while reflowing cards
-- keep public IP values readable and copyable
-- show both observed IP families without confusing display state with authorization state
-- keep Gate activation a deliberate single action
+- keep the dashboard calm, tactile, compact and data-first;
+- make typography and controls comfortably readable;
+- use standardized elevation tokens;
+- use dense layout before shrinking content;
+- preserve public IP readability;
+- keep Gate activation deliberate even when the orb is clickable.
 
 Don't:
-- put HTTP/HTTPS probes on the home WAN
-- add decorative neon everywhere
-- use glassmorphism on every element
-- force a one-screen layout by shrinking all typography
-- allow whole-page horizontal scrolling
-- allow arbitrary pixel card resizing
-- hard-code WAN2, wg0 or UDP 51820 in frontend code
-- let the browser choose the IP address that gets authorized
-- expose WRITE_TOKEN, session secret or WireGuard private keys
+- put HTTP/HTTPS probes on the home WAN;
+- add decorative neon everywhere;
+- force one-screen layout by shrinking all typography;
+- allow whole-page horizontal scrolling;
+- allow arbitrary pixel card resizing;
+- hard-code WAN2, wg0 or UDP 51820 in frontend code;
+- create a second activation implementation for the Gate orb;
+- let the browser choose the IP address that gets authorized;
+- expose WRITE_TOKEN, session secret or WireGuard private keys.
