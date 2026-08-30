@@ -78,10 +78,14 @@ FILES=(
   "server/app/static/css/tokens.css"
   "server/app/static/css/base.css"
   "server/app/static/css/components.css"
+  "server/app/static/css/layout.css"
   "server/app/static/css/dashboard.css"
   "server/app/static/css/themes.css"
   "server/app/static/js/theme-bootstrap.js"
+  "server/app/static/js/i18n.js"
   "server/app/static/js/theme.js"
+  "server/app/static/js/fit-text.js"
+  "server/app/static/js/workspace.js"
   "server/app/static/js/app.js"
   "VERSION"
 )
@@ -121,7 +125,6 @@ install -d -o root -g remotegate -m 0750 "$NEW_ETC"
 install -d -o remotegate -g remotegate -m 0700 "$NEW_STATE"
 install -d -o root -g root -m 0755 "$NEW_LIB/app/templates" "$NEW_LIB/app/static/css" "$NEW_LIB/app/static/js"
 
-# Preserve hostname, login credentials, WRITE_TOKEN and session secret exactly.
 install -o root -g remotegate -m 0640 "$OLD_ETC/config.json" "$NEW_ETC/config.json"
 install -o root -g remotegate -m 0640 "$OLD_ETC/auth.json" "$NEW_ETC/auth.json"
 install -o root -g remotegate -m 0640 "$OLD_ETC/secrets.json" "$NEW_ETC/secrets.json"
@@ -133,8 +136,6 @@ find "$NEW_LIB/app" -type d -exec chmod 0755 {} +
 find "$NEW_LIB/app" -type f -exec chmod 0644 {} +
 install -o root -g root -m 0644 "$TMP_DIR/VERSION" "$NEW_LIB/VERSION"
 
-# Convert legacy WAN state to the Remote Gate shape. A fresh OpenWrt report will
-# update it again immediately after the migration.
 if [ -r "$OLD_STATE/current.json" ]; then
     python3 - "$OLD_STATE/current.json" "$NEW_STATE/current.json" <<'PY'
 import ipaddress, json, os, sys, tempfile

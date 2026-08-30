@@ -1,15 +1,17 @@
 <!doctype html>
-<html lang="zh-CN" data-theme="auto">
+<html lang="en" data-theme="auto" data-lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>WeiG Remote Gate</title>
   <script src="/static/js/theme-bootstrap.js"></script>
+  <script src="/static/js/i18n.js"></script>
   <link rel="stylesheet" href="/static/css/tokens.css">
   <link rel="stylesheet" href="/static/css/base.css">
   <link rel="stylesheet" href="/static/css/components.css">
   <link rel="stylesheet" href="/static/css/dashboard.css">
+  <link rel="stylesheet" href="/static/css/layout.css">
   <link rel="stylesheet" href="/static/css/themes.css">
 </head>
 <body>
@@ -22,137 +24,197 @@
         <div class="brand-mark" aria-hidden="true">WG</div>
         <div>
           <strong>WeiG Remote Gate</strong>
-          <span>Secure Remote Access</span>
+          <span data-i18n="header.secureRemoteAccess">Secure Remote Access</span>
         </div>
       </a>
       <div class="top-actions">
-        <div class="system-pill"><span class="status-dot success"></span><span id="system-state">System online</span></div>
-        <div class="theme-switch" role="group" aria-label="Appearance">
-          <button type="button" data-theme-choice="auto">Auto</button>
-          <button type="button" data-theme-choice="light">Light</button>
-          <button type="button" data-theme-choice="dark">Dark</button>
+        <div class="system-pill"><span class="status-dot success"></span><span id="system-state" data-i18n="header.systemOnline">System online</span></div>
+        <div class="mini-switch" role="group" aria-label="Language">
+          <button type="button" data-lang-choice="en">EN</button>
+          <button type="button" data-lang-choice="zh">中文</button>
         </div>
-        <button class="icon-button" id="logout-button" type="button" title="Sign out" aria-label="Sign out">↗</button>
+        <div class="theme-switch" role="group" aria-label="Appearance">
+          <button type="button" data-theme-choice="auto" data-i18n="theme.auto">Auto</button>
+          <button type="button" data-theme-choice="light" data-i18n="theme.light">Light</button>
+          <button type="button" data-theme-choice="dark" data-i18n="theme.dark">Dark</button>
+        </div>
+        <button class="icon-button text-button" id="arrange-button" type="button" data-i18n="header.arrange">Arrange</button>
+        <button class="icon-button" id="reset-layout-button" type="button" data-i18n-title="header.resetLayout" title="Reset layout" aria-label="Reset layout">↺</button>
+        <button class="icon-button" id="logout-button" type="button" data-i18n-title="header.signOut" title="Sign out" aria-label="Sign out">↗</button>
       </div>
     </div>
   </header>
 
   <main class="page-shell">
-    <section class="hero">
+    <section class="console-heading">
       <div>
         <div class="eyebrow">REMOTE ACCESS CONTROL</div>
-        <h1>Private by default.<br><span>Open only when you need it.</span></h1>
-        <p>当前访问者经过 Cloudflare 身份层进入控制面；OpenWrt 只主动出站拉取一次性 Gate 命令。</p>
+        <h1 data-i18n="dashboard.title">Remote access console</h1>
       </div>
-      <div class="hero-client depth-card">
-        <span class="label">Current client IPv4</span>
-        <strong id="client-ip">—</strong>
-        <span class="small muted">This address is server-derived and cannot be overridden by the browser.</span>
-      </div>
+      <p data-i18n="dashboard.subtitle">Private by default. Open only the current client when needed.</p>
     </section>
 
-    <section class="control-grid">
-      <article class="gate-panel depth-card">
+    <section class="card-workspace" id="workspace">
+      <article class="workspace-card gate-card depth-card" data-card-id="gate" data-default-size="wide" data-size="wide">
         <div class="panel-head">
           <div>
-            <span class="eyebrow">REMOTE GATE</span>
-            <h2>Temporary WAN access</h2>
+            <span class="eyebrow" data-i18n="gate.eyebrow">REMOTE GATE</span>
+            <h2 data-i18n="gate.title">Temporary WAN access</h2>
           </div>
           <span class="state-badge" id="gate-state-badge">CLOSED</span>
         </div>
 
-        <div class="gate-orb-wrap">
-          <div class="gate-orb" id="gate-orb" data-state="closed" aria-live="polite">
-            <div class="gate-ring ring-a"></div>
-            <div class="gate-ring ring-b"></div>
-            <div class="gate-core">
-              <span class="gate-lock" id="gate-lock">◆</span>
-              <strong id="gate-state">Closed</strong>
-              <small id="gate-substate">WAN input stays hidden</small>
+        <div class="gate-layout">
+          <div class="gate-orb-wrap">
+            <div class="gate-orb" id="gate-orb" data-state="closed" aria-live="polite">
+              <div class="gate-ring ring-a"></div>
+              <div class="gate-ring ring-b"></div>
+              <div class="gate-core">
+                <span class="gate-lock" id="gate-lock">◆</span>
+                <strong id="gate-state">Closed</strong>
+                <small id="gate-substate">WAN input stays hidden</small>
+              </div>
             </div>
+          </div>
+
+          <div class="gate-form">
+            <div class="field compact-field full-row">
+              <span data-i18n="gate.family">IP Family</span>
+              <div class="segment family-segment" id="family-segment">
+                <button type="button" data-family="ipv4" class="active">IPv4</button>
+                <button type="button" data-family="ipv6" disabled>IPv6</button>
+                <button type="button" data-family="dual" disabled>Dual</button>
+              </div>
+            </div>
+            <label class="field compact-field">
+              <span data-i18n="gate.publicWan">Public WAN</span>
+              <select id="wan-select"></select>
+            </label>
+            <label class="field compact-field">
+              <span data-i18n="gate.wireguard">WireGuard</span>
+              <select id="wg-select"></select>
+            </label>
+            <div class="field compact-field full-row">
+              <span data-i18n="gate.duration">Access duration</span>
+              <div class="segment" id="ttl-segment">
+                <button type="button" data-ttl="60">1m</button>
+                <button type="button" data-ttl="300" class="active">5m</button>
+                <button type="button" data-ttl="900">15m</button>
+                <button type="button" data-ttl="1800">30m</button>
+              </div>
+            </div>
+            <p class="family-note full-row" id="family-note" data-i18n="gate.familyNoteIpv4">IPv4 Gate is enabled only when this control request itself is using IPv4.</p>
+            <button class="button primary gate-action full-row" id="activate-button" type="button">
+              <span data-i18n="gate.activate">Activate remote access</span>
+              <span aria-hidden="true">→</span>
+            </button>
+            <button class="button danger subtle full-row hidden" id="close-button" type="button" data-i18n="gate.close">Close access now</button>
           </div>
         </div>
 
-        <div class="gate-form">
-          <label class="field compact-field">
-            <span>Public WAN</span>
-            <select id="wan-select"></select>
-          </label>
-          <label class="field compact-field">
-            <span>WireGuard</span>
-            <select id="wg-select"></select>
-          </label>
-          <div class="field compact-field full-row">
-            <span>Access duration</span>
-            <div class="segment" id="ttl-segment">
-              <button type="button" data-ttl="60">1m</button>
-              <button type="button" data-ttl="300" class="active">5m</button>
-              <button type="button" data-ttl="900">15m</button>
-              <button type="button" data-ttl="1800">30m</button>
-            </div>
-          </div>
-          <button class="button primary gate-action full-row" id="activate-button" type="button">
-            <span>Activate remote access</span>
-            <span aria-hidden="true">→</span>
-          </button>
-          <button class="button danger subtle full-row hidden" id="close-button" type="button">Close access now</button>
+        <div class="gate-status-strip">
+          <span>ICMP <strong id="icmp-state">DROP</strong></span>
+          <span>WireGuard UDP <strong id="udp-state">DROP</strong></span>
+          <span><span data-i18n="client.authorization">Gate authorization</span> <strong id="fw-source">—</strong></span>
+          <span>TTL <strong id="fw-expires">—</strong></span>
         </div>
       </article>
 
-      <div class="status-stack">
-        <article class="status-card depth-card">
-          <div class="panel-head tight">
-            <div>
-              <span class="eyebrow">WIREGUARD</span>
-              <h2>Secure tunnel</h2>
+      <article class="workspace-card client-card depth-card" data-card-id="client" data-default-size="normal" data-size="normal">
+        <div class="panel-head tight">
+          <div>
+            <span class="eyebrow" data-i18n="client.eyebrow">CURRENT CLIENT</span>
+            <h2 data-i18n="client.title">Observed addresses</h2>
+          </div>
+          <span class="state-badge request-family" id="request-family">—</span>
+        </div>
+        <div class="address-stack">
+          <div class="address-row">
+            <div class="address-line">
+              <span class="label">IPv4</span>
+              <strong class="address-value fit-single-line" id="client-ipv4" data-fit-max="18" data-fit-min="10">—</strong>
             </div>
-            <span class="status-dot neutral" id="wg-dot"></span>
+            <div class="address-meta" id="client-ipv4-meta">Not observed</div>
           </div>
-          <div class="metric-grid">
-            <div><span class="label">Interface</span><strong id="wg-name">—</strong></div>
-            <div><span class="label">Listen port</span><strong id="wg-port">—</strong></div>
-            <div><span class="label">Latest handshake</span><strong id="wg-handshake">Never</strong></div>
-            <div><span class="label">Traffic</span><strong id="wg-traffic">—</strong></div>
-          </div>
-        </article>
-
-        <article class="status-card depth-card">
-          <div class="panel-head tight">
-            <div>
-              <span class="eyebrow">FIREWALL</span>
-              <h2>Authorization window</h2>
+          <div class="address-row">
+            <div class="address-line">
+              <span class="label">IPv6</span>
+              <strong class="address-value fit-single-line" id="client-ipv6" data-fit-max="18" data-fit-min="9">—</strong>
             </div>
-            <span class="status-dot neutral" id="fw-dot"></span>
+            <div class="address-meta" id="client-ipv6-meta">Not observed</div>
           </div>
-          <div class="metric-grid">
-            <div><span class="label">ICMP echo</span><strong id="icmp-state">DROP</strong></div>
-            <div><span class="label">WireGuard UDP</span><strong id="udp-state">DROP</strong></div>
-            <div><span class="label">Authorized source</span><strong id="fw-source">—</strong></div>
-            <div><span class="label">Expires</span><strong id="fw-expires">—</strong></div>
+          <div class="address-row">
+            <div class="address-line">
+              <span class="label" data-i18n="client.authorization">Gate authorization</span>
+              <strong class="address-value fit-single-line" id="authorization-source" data-fit-max="16" data-fit-min="9">—</strong>
+            </div>
           </div>
-        </article>
-      </div>
-    </section>
+        </div>
+        <p class="trust-note" data-i18n="client.trustNote">Browser-saved addresses are display-only and are never trusted as authorization input.</p>
+      </article>
 
-    <section class="section-block">
-      <div class="section-heading">
-        <div><span class="eyebrow">NETWORK</span><h2>Interfaces</h2></div>
-        <span class="muted small" id="wan-refresh">Waiting for OpenWrt report…</span>
-      </div>
-      <div class="wan-grid" id="wan-grid"></div>
-    </section>
+      <article class="workspace-card depth-card" data-card-id="wireguard" data-default-size="normal" data-size="normal">
+        <div class="panel-head tight">
+          <div>
+            <span class="eyebrow" data-i18n="wg.eyebrow">WIREGUARD</span>
+            <h2 data-i18n="wg.title">Secure tunnel</h2>
+          </div>
+          <span class="status-dot neutral" id="wg-dot"></span>
+        </div>
+        <div class="metric-grid">
+          <div><span class="label" data-i18n="wg.interface">Interface</span><strong id="wg-name">—</strong></div>
+          <div><span class="label" data-i18n="wg.listenPort">Listen port</span><strong id="wg-port">—</strong></div>
+          <div><span class="label" data-i18n="wg.handshake">Latest Handshake</span><strong id="wg-handshake">Never</strong></div>
+          <div><span class="label" data-i18n="wg.traffic">Traffic</span><strong id="wg-traffic">—</strong></div>
+          <div class="metric-wide"><span class="label" data-i18n="wg.status">Status</span><strong id="wg-status">—</strong></div>
+          <div class="metric-wide"><span class="label" data-i18n="wg.lanHint">LAN access</span><strong id="wg-lan-hint" data-i18n="wg.lanHintValue">Verify client AllowedIPs and WG → LAN forwarding</strong></div>
+        </div>
+      </article>
 
-    <section class="section-block">
-      <div class="section-heading">
-        <div><span class="eyebrow">SECURITY EVENT STREAM</span><h2>Recent activity</h2></div>
-      </div>
-      <div class="activity depth-card" id="activity-list"></div>
+      <article class="workspace-card depth-card" data-card-id="wan" data-default-size="normal" data-size="normal">
+        <div class="panel-head tight">
+          <div>
+            <span class="eyebrow" data-i18n="wan.eyebrow">PUBLIC WAN</span>
+            <h2 data-i18n="wan.title">Interfaces</h2>
+          </div>
+          <span class="muted small" id="wan-refresh" data-i18n="wan.waiting">Waiting for OpenWrt report…</span>
+        </div>
+        <div class="wan-list" id="wan-list"></div>
+      </article>
+
+      <article class="workspace-card depth-card" data-card-id="activity" data-default-size="wide" data-size="wide">
+        <div class="panel-head tight">
+          <div>
+            <span class="eyebrow" data-i18n="activity.eyebrow">SECURITY EVENT STREAM</span>
+            <h2 data-i18n="activity.title">Recent activity</h2>
+          </div>
+        </div>
+        <div class="activity" id="activity-list"></div>
+      </article>
+
+      <article class="workspace-card depth-card" data-card-id="system" data-default-size="compact" data-size="compact">
+        <div class="panel-head tight">
+          <div>
+            <span class="eyebrow" data-i18n="system.eyebrow">SYSTEM</span>
+            <h2 data-i18n="system.title">Runtime</h2>
+          </div>
+          <span class="status-dot neutral" id="system-dot"></span>
+        </div>
+        <div class="system-list">
+          <div class="system-row"><span data-i18n="system.agent">Agent</span><strong id="agent-state">—</strong></div>
+          <div class="system-row"><span data-i18n="system.requestFamily">Request family</span><strong id="system-request-family">—</strong></div>
+          <div class="system-row"><span data-i18n="system.gateMode">Gate mode</span><strong data-i18n="system.gateModeValue">Verified IPv4</strong></div>
+          <div class="system-row"><span data-i18n="system.refresh">Refresh</span><strong data-i18n="system.every5s">Every 5s</strong></div>
+        </div>
+      </article>
     </section>
   </main>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="/static/js/theme.js"></script>
+  <script src="/static/js/fit-text.js"></script>
+  <script src="/static/js/workspace.js"></script>
   <script src="/static/js/app.js"></script>
 </body>
 </html>

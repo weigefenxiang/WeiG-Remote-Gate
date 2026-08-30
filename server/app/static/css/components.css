@@ -76,6 +76,32 @@
   box-shadow: var(--inner-highlight);
 }
 
+.mini-switch {
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: var(--surface-1);
+  box-shadow: var(--inner-highlight);
+}
+.mini-switch button {
+  min-height: 30px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 9px;
+  color: var(--ink-subtle);
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 750;
+}
+.mini-switch button.active {
+  color: var(--ink);
+  background: var(--surface-2);
+  box-shadow: 0 3px 10px rgba(31,38,65,.08), var(--inner-highlight);
+}
+
 .status-dot {
   width: 8px;
   height: 8px;
@@ -161,6 +187,7 @@ input::placeholder { color: var(--ink-subtle); }
 .auth-page { display: grid; place-items: center; padding: 28px 16px; }
 .auth-shell { width: min(100%, 440px); }
 .auth-card { border-radius: 26px; padding: 28px; }
+.auth-toolbar { display: flex; justify-content: flex-end; margin: -6px -6px 16px 0; }
 .auth-card > .muted { margin: 22px 0; font-size: 13px; line-height: 1.65; }
 .auth-foot {
   margin-top: 20px;

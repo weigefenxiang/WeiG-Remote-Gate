@@ -15,7 +15,7 @@ ICMP echo-request     -> 默认关闭
 WireGuard UDP 端口    -> 默认关闭
 ```
 
-用户在控制面完成登录并点击激活后，只有由服务器从可信 Cloudflare 请求路径推导出的当前客户端公网 IPv4，才会被临时允许：
+用户在控制面完成登录并点击激活后，只有由服务器从可信 Cloudflare 请求路径推导出的当前 Client 公网 IPv4，才会被临时允许：
 
 ```text
 Ping 选中的公网 WAN IPv4
@@ -28,7 +28,7 @@ Ping 选中的公网 WAN IPv4
 
 Remote Gate 有意只工作在路由器的 **INPUT** 路径，不会向 `FORWARD` 安装过滤规则，也不会管理无关的 TCP/UDP 端口。
 
-因此以下现有服务继续由原防火墙策略处理：
+因此以下现有服务继续由原 Firewall policy 处理：
 
 - qBittorrent / BitTorrent TCP 与 UDP
 - DHT / PeX
@@ -39,21 +39,21 @@ Remote Gate 有意只工作在路由器的 **INPUT** 路径，不会向 `FORWARD
 
 qBittorrent 的端口转发通常走 PREROUTING/DNAT + FORWARD，不会进入 Remote Gate 的 INPUT 防护链。
 
-## 防火墙兼容性
+## Firewall 兼容性
 
-OpenWrt 安装器会自动检测当前防火墙实现：
+OpenWrt 安装器会自动检测当前 Firewall 实现：
 
-| 平台 | Remote Gate 后端 |
+| 平台 | Remote Gate Backend |
 | --- | --- |
 | firewall3 / `fw3` | `iptables` + `ipset` timeout |
 | firewall4 / `fw4` | `nftables` timeout set |
 
-用户不需要为了本项目主动迁移防火墙代际。不支持的系统会在安装阶段 fail closed。
+用户不需要为了本项目主动迁移 Firewall 代际。不支持的系统会在安装阶段 fail closed。
 
 已知目标示例：
 
-- ImmortalWrt 21.02 / OpenWrt 21.02 类系统 -> fw3 后端
-- 现代 OpenWrt / ImmortalWrt -> fw4 后端
+- ImmortalWrt 21.02 / OpenWrt 21.02 类系统 -> fw3 Backend
+- 现代 OpenWrt / ImmortalWrt -> fw4 Backend
 
 ## 规则优先级
 
@@ -62,7 +62,7 @@ Gate 防护规则会在普通 `ESTABLISHED,RELATED` 快捷放行之前执行。�
 - fw3：`WEIG_REMOTE_GATE` 插入 `INPUT` 第 1 条。
 - fw4：使用 `chain-pre/input`，位于 fw4 入站 conntrack 状态规则之前。
 
-原有 UCI 规则（例如 `Allow-Ping`）**不会被删除**。Remote Gate 安装期间，由更靠前的 Gate 防护规则决定结果；卸载 Remote Gate 后恢复原防火墙行为。
+原有 UCI 规则（例如 `Allow-Ping`）**不会被删除**。Remote Gate 安装期间，由更靠前的 Gate 防护规则决定结果；卸载 Remote Gate 后恢复原 Firewall 行为。
 
 ## 架构
 
@@ -82,7 +82,7 @@ VPS / WeiG-Remote-Gate
    |
 OpenWrt
    |
-   +-- 自动检测防火墙后端
+   +-- 自动检测 Firewall Backend
    |     +-- fw3 -> iptables + ipset
    |     `-- fw4 -> nftables
    +-- WireGuard 自动发现
@@ -95,41 +95,41 @@ Cloudflare 域名属于**控制面**。WireGuard 属于**数据面**，必须直
 ## Remote Gate 工作流程
 
 1. 登录 Cloudflare 前置的控制面。
-2. 服务器从可信 Cloudflare 请求路径推导客户端地址。
-3. 选择已上报的公网 WAN、WireGuard 接口与 TTL。
-4. VPS 生成短生命周期的一次性命令；浏览器不能自行提交任意授权 IP。
+2. Server 从可信 Cloudflare 请求路径推导 Client 地址。
+3. 选择已上报的 Public WAN、WireGuard Interface 与 TTL。
+4. VPS 生成短生命周期的一次性命令；Browser 不能自行提交任意授权 IP。
 5. OpenWrt Agent 通过出站 HTTPS 拉取命令。
-6. 防火墙后端只授权选中的 `(来源 IPv4, WAN 设备, WireGuard 端口)` 三元组。
-7. 只有该来源能够临时访问 ICMP echo 与选定 WireGuard UDP 端口。
+6. Firewall Backend 只授权选中的 `(来源 IPv4, WAN device, WireGuard port)` 三元组。
+7. 只有该来源能够临时访问 ICMP echo 与选定 WireGuard UDP port。
 8. TTL 到期或点击 **Close now** 后，Gate 恢复关闭状态。
 
-## 持续保护与防火墙重载
+## 持续保护与 Firewall reload
 
 Agent 会持续同步：
 
 - 当前活动公网 WAN 的 `l3_device`；
-- 已配置以及当前正在监听的 WireGuard UDP 端口。
+- 已配置以及当前正在监听的 WireGuard UDP port。
 
-即使 WireGuard 接口尚未完全启动，只要 UCI 已配置监听端口，Remote Gate 也会提前保护该端口，从而在接口启动失败或 netifd 异常时保持公网 UDP fail closed。
+即使 WireGuard Interface 尚未完全启动，只要 UCI 已配置 listen port，Remote Gate 也会提前保护该端口，从而在 Interface 启动失败或 netifd 异常时保持公网 UDP fail closed。
 
 项目会注册 firewall include，因此 firewall reload/restart 后会自动恢复 Gate 防护。只有尚未过期的授权状态会按剩余 TTL 恢复，已过期状态不会重新开放。
 
 ## OpenWrt / ImmortalWrt 21.02 的 WireGuard 注意事项
 
-在部分 21.02 类系统中，新建 `proto='wireguard'` 的 UCI 接口后如果只执行：
+在部分 21.02 类系统中，新建 `proto='wireguard'` 的 UCI Interface 后如果只执行：
 
 ```sh
 /etc/init.d/network reload
 ```
 
-新接口可能停留在类似下面的状态：
+新 Interface 可能停留在类似下面的状态：
 
 ```text
 proto: none
 NO_DEVICE
 ```
 
-即使 `/lib/netifd/proto/wireguard.sh` 已经存在。此时可能需要完整重启一次 network，让 netifd 正确注册并启动新协议接口：
+即使 `/lib/netifd/proto/wireguard.sh` 已经存在。此时可能需要完整重启一次 network，让 netifd 正确注册并启动新 protocol Interface：
 
 ```sh
 /etc/init.d/network restart
@@ -143,18 +143,43 @@ wg show interfaces
 wg show all listen-port
 ```
 
-即使 WireGuard 接口本身尚未起来，Remote Gate 仍可根据已配置的监听端口提前保护对应公网 UDP 端口。
+即使 WireGuard Interface 本身尚未起来，Remote Gate 仍可根据已配置的 listen port 提前保护对应公网 UDP port。
 
-## UI
+## Adaptive Dashboard Workspace
 
-控制面遵循 `DESIGN.md`，支持：
+控制面遵循 `DESIGN.md`。源码模板以 English 为基准，同时额外支持自动简体中文。
 
-- Auto / Light / Dark 外观；
-- Auto 模式实时跟随系统主题；
-- 避免暗色模式闪烁；
-- 模块化 CSS 与 JavaScript；
-- 桌面与移动端响应式布局；
-- 克制的立体层次与语义动效。
+当前 UI 支持：
+
+- Auto / Light / Dark Appearance，并在 Auto 下实时跟随系统主题；
+- 浏览器语言为 `zh` 类时自动显示简体中文，无法识别时默认 English；
+- `EN / 中文` 手动切换，选择只保存在当前浏览器；
+- Desktop 使用自适应 Card Workspace，而不是固定死网格；
+- Desktop 的 Arrange mode 支持拖拉排序，同时提供按钮式移动；
+- Card 支持浏览器本地 `Compact / Normal / Wide` 三档尺寸和 Reset layout；
+- Mobile 使用固定优先级，关闭拖拉，避免影响触摸滚动；
+- 同时显示本 Browser 曾观察到的 IPv4 与 IPv6；
+- IPv6 **必须完整保持单行**，根据当前 Card 宽度动态缩小字体，不换行、不省略、不截断；
+- WireGuard Card 紧凑显示 Handshake、Traffic 与 LAN access 提示；
+- 保持克制的立体层次和语义动效。
+
+Browser 本地记住的 IP **仅用于显示**，绝不会作为可信 Gate authorization source 上传或使用。
+
+当前完成真实硬件验证的数据面授权仍然是 IPv4。如果 Dashboard 当前请求本身通过 IPv6 到达，UI 会正常显示 IPv6，但会禁用 IPv4 Activate，而不是拿 Browser 本地曾记住的旧 IPv4 去授权。IPv6 / Dual 数据面按钮会继续保持不可用，直到对应 fw3/fw4 防护路径完成实现和实机验证。
+
+## 更新已有 VPS
+
+已经安装 Remote Gate 的 VPS 可以只更新 Application files，不会重新生成 hostname、登录凭据、`WRITE_TOKEN`、Session 或状态数据：
+
+```bash
+curl -fsSL \
+  https://raw.githubusercontent.com/weigefenxiang/WeiG-Remote-Gate/main/server/update.sh \
+  -o /tmp/remote-gate-update.sh
+
+bash /tmp/remote-gate-update.sh
+```
+
+Updater 会在 `/var/backups/weig-remote-gate/` 创建备份，重启仅监听 localhost 的服务，检查 `/healthz` 与 Agent API；如果升级失败，会自动恢复上一版 Application files。
 
 ## 当前版本
 
@@ -162,7 +187,7 @@ wg show all listen-port
 
 ## 实机验证
 
-fw3 后端已经在真实 ImmortalWrt 21.02 类路由器上完成端到端验证，环境包含 `iptables` legacy + `ipset`、PPPoE 公网 WAN、Cloudflare Tunnel 控制面以及路由器本机 WireGuard UDP 监听。
+fw3 Backend 已经在真实 ImmortalWrt 21.02 类路由器上完成端到端验证，环境包含 `iptables` legacy + `ipset`、PPPoE 公网 WAN、Cloudflare Tunnel 控制面以及路由器本机 WireGuard UDP listener。
 
 已验证流程：
 
@@ -175,22 +200,22 @@ ACTIVATE
   -> 只有控制面推导出的当前 IPv4 被加入 timeout 授权集
   -> 来源限定 ICMP ACCEPT 位于通用 DROP 之前
   -> 来源限定 WireGuard UDP ACCEPT 位于通用 DROP 之前
-  -> WireGuard 成功握手并产生真实数据流量
+  -> WireGuard 成功 Handshake 并产生真实数据流量
 
 TTL EXPIRED
   -> 授权集合自动清空
   -> 来源限定 ACCEPT 规则消失
   -> ICMP 与 WireGuard UDP 恢复 DROP
-  -> 重新发起 WireGuard 握手失败
+  -> 重新发起 WireGuard Handshake 失败
 ```
 
 同一轮验证中，Remote Gate 防护链始终只工作在 INPUT，没有接管 qBittorrent / UPnP / DNAT / FORWARD 的原有行为。
 
-fw4/nftables 后端已经按相同安全模型实现，面向现代 OpenWrt/ImmortalWrt；上述真实硬件验证明确对应 fw3 路径。
+fw4/nftables Backend 已经按相同安全模型实现，面向现代 OpenWrt/ImmortalWrt；上述真实硬件验证明确对应 fw3 路径。
 
 ## 生产环境验证
 
-安装后先确认后端与状态：
+安装后先确认 Backend 与状态：
 
 ```sh
 /usr/lib/remote-gate/remote-gate-firewall.sh detect
@@ -213,8 +238,8 @@ fw4 print | grep -n 'WeiG Remote Gate'
 nft list set inet fw4 weig_remote_gate_protected_ifname
 ```
 
-建议使用两个不同的外部公网 IPv4 测试：TTL 内只有被授权地址可以访问 ICMP/WireGuard，另一地址必须继续被阻断。TTL 结束后关闭并重新开启 WireGuard 客户端，确认无法产生新的握手。同时单独确认 qBittorrent 的监听/转发端口仍与安装前一样可达。
+建议使用两个不同的外部公网 IPv4 测试：TTL 内只有被授权地址可以访问 ICMP/WireGuard，另一地址必须继续被阻断。TTL 结束后关闭并重新开启 WireGuard Client，确认无法产生新的 Handshake。同时单独确认 qBittorrent 的监听/转发 port 仍与安装前一样可达。
 
-## 许可证
+## License
 
 GPL-3.0-only。

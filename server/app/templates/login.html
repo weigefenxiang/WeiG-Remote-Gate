@@ -1,11 +1,12 @@
 <!doctype html>
-<html lang="zh-CN" data-theme="auto">
+<html lang="en" data-theme="auto" data-lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
   <title>Sign in · WeiG Remote Gate</title>
   <script src="/static/js/theme-bootstrap.js"></script>
+  <script src="/static/js/i18n.js"></script>
   <link rel="stylesheet" href="/static/css/tokens.css">
   <link rel="stylesheet" href="/static/css/base.css">
   <link rel="stylesheet" href="/static/css/components.css">
@@ -14,33 +15,39 @@
 <body class="auth-page">
   <main class="auth-shell">
     <section class="auth-card depth-card">
+      <div class="auth-toolbar">
+        <div class="mini-switch" role="group" aria-label="Language">
+          <button type="button" data-lang-choice="en">EN</button>
+          <button type="button" data-lang-choice="zh">中文</button>
+        </div>
+      </div>
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">WG</div>
         <div>
-          <div class="eyebrow">PRIVATE CONTROL PLANE</div>
+          <div class="eyebrow" data-i18n="login.controlPlane">PRIVATE CONTROL PLANE</div>
           <h1>WeiG Remote Gate</h1>
         </div>
       </div>
-      <p class="muted">只通过 Cloudflare 进入控制面。家庭 WAN 不提供本项目的 HTTP/HTTPS 管理入口。</p>
+      <p class="muted" data-i18n="login.description">Enter through Cloudflare only. The home WAN does not expose an HTTP/HTTPS management endpoint for this project.</p>
       <div class="form-error" role="alert">{{ERROR}}</div>
       <form action="/login" method="post" class="stack">
         <label class="field">
-          <span>Username</span>
+          <span data-i18n="login.username">Username</span>
           <input name="username" autocomplete="username" required autofocus>
         </label>
         <label class="field">
-          <span>Password</span>
+          <span data-i18n="login.password">Password</span>
           <input type="password" name="password" autocomplete="current-password" required>
         </label>
         <label class="check-row">
           <input type="checkbox" name="remember" value="1">
-          <span>Remember this browser for 30 days</span>
+          <span data-i18n="login.remember">Remember this browser for 30 days</span>
         </label>
-        <button class="button primary wide" type="submit">Sign in securely</button>
+        <button class="button primary wide" type="submit" data-i18n="login.signIn">Sign in securely</button>
       </form>
       <div class="auth-foot">
         <span class="status-dot neutral"></span>
-        <span>Loopback-only backend</span>
+        <span data-i18n="login.loopback">Loopback-only backend</span>
       </div>
     </section>
   </main>

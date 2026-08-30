@@ -145,16 +145,41 @@ wg show all listen-port
 
 Remote Gate can still protect the configured WireGuard UDP listen port while the interface itself is down.
 
-## UI
+## Adaptive dashboard workspace
 
-The dashboard follows `DESIGN.md` and supports:
+The dashboard follows `DESIGN.md` and is English-first while providing automatic Simplified Chinese support.
 
-- Auto / Light / Dark appearance;
-- live OS theme changes in Auto mode;
-- no dark-mode flash;
-- modular CSS and JavaScript;
-- responsive desktop/mobile layouts;
-- restrained 3D depth and semantic motion.
+It supports:
+
+- Auto / Light / Dark appearance with live OS theme changes in Auto mode;
+- automatic Simplified Chinese for `zh`-class browser languages, with English fallback;
+- manual `EN / 中文` switching stored only in the browser;
+- an adaptive desktop card workspace instead of a fixed grid;
+- desktop Arrange mode with drag-and-drop plus button-based reordering;
+- browser-local `Compact / Normal / Wide` card sizes and Reset layout;
+- fixed mobile card priority with drag disabled to preserve touch scrolling;
+- simultaneous display of browser-observed IPv4 and IPv6 values;
+- full IPv6 display on exactly one line with dynamic font fitting;
+- compact WireGuard Handshake / Traffic / LAN-access guidance;
+- restrained depth and semantic motion.
+
+Browser-local remembered IP addresses are **display-only**. They are never submitted as a trusted Gate authorization source.
+
+The currently hardware-validated data-plane authorization remains IPv4. If the dashboard request itself arrives over IPv6, the UI displays that IPv6 address but disables IPv4 activation rather than trusting a stale browser-saved IPv4. IPv6/Dual controls remain unavailable until the matching firewall data plane is implemented and hardware-validated.
+
+## Updating an existing VPS
+
+Existing Remote Gate installations can update application files without regenerating the hostname, login credentials, `WRITE_TOKEN`, sessions, or state:
+
+```bash
+curl -fsSL \
+  https://raw.githubusercontent.com/weigefenxiang/WeiG-Remote-Gate/main/server/update.sh \
+  -o /tmp/remote-gate-update.sh
+
+bash /tmp/remote-gate-update.sh
+```
+
+The updater creates a backup under `/var/backups/weig-remote-gate/`, restarts the localhost-only service, verifies `/healthz`, verifies the Agent API, and restores the previous application files if the update fails.
 
 ## Current version
 
