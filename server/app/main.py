@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from .client_sources import delete_sources, observe_ipv4_probe, observe_source, source_for_family, trusted_sources
+from .client_sources import delete_sources, observe_network_probe, observe_source, source_for_family, trusted_sources
 from .config import load_settings
 from .endpoints import build_endpoints, normalize_inventory, observe_wan_egress, validate_inventory_v2
 from .gate import GateError, ack_command, gate_view, pull_command, queue_activate, queue_close
@@ -77,6 +77,16 @@ def _safe_ipv4(value: object) -> str:
     return str(address)
 
 
+def _safe_probe_address(value: object, family: str) -> str:
+    if family not in {"ipv4", "ipv6"}:
+        raise ValueError("invalid_family")
+    address = ipaddress.ip_address(str(value or "").strip())
+    expected = 4 if family == "ipv4" else 6
+    if address.version != expected or not address.is_global:
+        raise ValueError("invalid_probe_address")
+    return str(address)
+
+
 def _login_blocked(ip: str) -> bool:
     now = time.time()
     with LOGIN_LOCK:
@@ -129,7 +139,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header(
             "Content-Security-Policy",
             "default-src 'self'; img-src 'self' data:; style-src 'self'; "
-            "script-src 'self' https://api.ipify.org; connect-src 'self'; object-src 'none'; "
+            "script-src 'self' https://api.ipify.org https://api6.ipify.org; connect-src 'self'; object-src 'none'; "
             "base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
         )
 
@@ -350,11 +360,17 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 data = self._read_json()
-                record = observe_ipv4_probe(STORE, session.token, _safe_ipv4(data.get("ipv4")))
+                if data.get("family"):
+                    family = str(data.get("family") or "").strip()
+                    address = _safe_probe_address(data.get("address"), family)
+                else:
+                    family = "ipv4"
+                    address = _safe_probe_address(data.get("ipv4"), family)
+                record = observe_network_probe(STORE, session.token, address, family=family)
             except (ValueError, TypeError):
-                self._json(400, {"error": "invalid_ipv4_probe"})
+                self._json(400, {"error": "invalid_source_probe"})
                 return
-            self._json(200, {"family": "ipv4", **record})
+            self._json(200, record)
             return
 
         if path == "/api/v1/agent/egress-probe":
