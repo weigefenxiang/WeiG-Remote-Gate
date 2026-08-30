@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="auto">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>WeiG Remote Gate</title>
+  <script src="/static/js/theme-bootstrap.js"></script>
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/css/base.css">
+  <link rel="stylesheet" href="/static/css/components.css">
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+  <link rel="stylesheet" href="/static/css/themes.css">
+</head>
+<body>
+  <div class="ambient ambient-a" aria-hidden="true"></div>
+  <div class="ambient ambient-b" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand compact" href="/" aria-label="WeiG Remote Gate home">
+        <div class="brand-mark" aria-hidden="true">WG</div>
+        <div>
+          <strong>WeiG Remote Gate</strong>
+          <span>Secure Remote Access</span>
+        </div>
+      </a>
+      <div class="top-actions">
+        <div class="system-pill"><span class="status-dot success"></span><span id="system-state">System online</span></div>
+        <div class="theme-switch" role="group" aria-label="Appearance">
+          <button type="button" data-theme-choice="auto">Auto</button>
+          <button type="button" data-theme-choice="light">Light</button>
+          <button type="button" data-theme-choice="dark">Dark</button>
+        </div>
+        <button class="icon-button" id="logout-button" type="button" title="Sign out" aria-label="Sign out">↗</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="page-shell">
+    <section class="hero">
+      <div>
+        <div class="eyebrow">REMOTE ACCESS CONTROL</div>
+        <h1>Private by default.<br><span>Open only when you need it.</span></h1>
+        <p>当前访问者经过 Cloudflare 身份层进入控制面；OpenWrt 只主动出站拉取一次性 Gate 命令。</p>
+      </div>
+      <div class="hero-client depth-card">
+        <span class="label">Current client IPv4</span>
+        <strong id="client-ip">—</strong>
+        <span class="small muted">This address is server-derived and cannot be overridden by the browser.</span>
+      </div>
+    </section>
+
+    <section class="control-grid">
+      <article class="gate-panel depth-card">
+        <div class="panel-head">
+          <div>
+            <span class="eyebrow">REMOTE GATE</span>
+            <h2>Temporary WAN access</h2>
+          </div>
+          <span class="state-badge" id="gate-state-badge">CLOSED</span>
+        </div>
+
+        <div class="gate-orb-wrap">
+          <div class="gate-orb" id="gate-orb" data-state="closed" aria-live="polite">
+            <div class="gate-ring ring-a"></div>
+            <div class="gate-ring ring-b"></div>
+            <div class="gate-core">
+              <span class="gate-lock" id="gate-lock">◆</span>
+              <strong id="gate-state">Closed</strong>
+              <small id="gate-substate">WAN input stays hidden</small>
+            </div>
+          </div>
+        </div>
+
+        <div class="gate-form">
+          <label class="field compact-field">
+            <span>Public WAN</span>
+            <select id="wan-select"></select>
+          </label>
+          <label class="field compact-field">
+            <span>WireGuard</span>
+            <select id="wg-select"></select>
+          </label>
+          <div class="field compact-field full-row">
+            <span>Access duration</span>
+            <div class="segment" id="ttl-segment">
+              <button type="button" data-ttl="60">1m</button>
+              <button type="button" data-ttl="300" class="active">5m</button>
+              <button type="button" data-ttl="900">15m</button>
+              <button type="button" data-ttl="1800">30m</button>
+            </div>
+          </div>
+          <button class="button primary gate-action full-row" id="activate-button" type="button">
+            <span>Activate remote access</span>
+            <span aria-hidden="true">→</span>
+          </button>
+          <button class="button danger subtle full-row hidden" id="close-button" type="button">Close access now</button>
+        </div>
+      </article>
+
+      <div class="status-stack">
+        <article class="status-card depth-card">
+          <div class="panel-head tight">
+            <div>
+              <span class="eyebrow">WIREGUARD</span>
+              <h2>Secure tunnel</h2>
+            </div>
+            <span class="status-dot neutral" id="wg-dot"></span>
+          </div>
+          <div class="metric-grid">
+            <div><span class="label">Interface</span><strong id="wg-name">—</strong></div>
+            <div><span class="label">Listen port</span><strong id="wg-port">—</strong></div>
+            <div><span class="label">Latest handshake</span><strong id="wg-handshake">Never</strong></div>
+            <div><span class="label">Traffic</span><strong id="wg-traffic">—</strong></div>
+          </div>
+        </article>
+
+        <article class="status-card depth-card">
+          <div class="panel-head tight">
+            <div>
+              <span class="eyebrow">FIREWALL</span>
+              <h2>Authorization window</h2>
+            </div>
+            <span class="status-dot neutral" id="fw-dot"></span>
+          </div>
+          <div class="metric-grid">
+            <div><span class="label">ICMP echo</span><strong id="icmp-state">DROP</strong></div>
+            <div><span class="label">WireGuard UDP</span><strong id="udp-state">DROP</strong></div>
+            <div><span class="label">Authorized source</span><strong id="fw-source">—</strong></div>
+            <div><span class="label">Expires</span><strong id="fw-expires">—</strong></div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section-block">
+      <div class="section-heading">
+        <div><span class="eyebrow">NETWORK</span><h2>Interfaces</h2></div>
+        <span class="muted small" id="wan-refresh">Waiting for OpenWrt report…</span>
+      </div>
+      <div class="wan-grid" id="wan-grid"></div>
+    </section>
+
+    <section class="section-block">
+      <div class="section-heading">
+        <div><span class="eyebrow">SECURITY EVENT STREAM</span><h2>Recent activity</h2></div>
+      </div>
+      <div class="activity depth-card" id="activity-list"></div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="/static/js/theme.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,153 @@
+#!/bin/sh
+
+CONFIG_FILE="/etc/remote-gate.conf"
+STATE_DIR="/etc/remote-gate-state"
+LOCK_DIR="/tmp/remote-gate-report.lock"
+TAG="remote-gate"
+ERRORS=0
+
+[ -r "$CONFIG_FILE" ] || exit 1
+# shellcheck disable=SC1090
+. "$CONFIG_FILE"
+
+: "${HOSTNAME:?HOSTNAME is required}"
+: "${WRITE_TOKEN:?WRITE_TOKEN is required}"
+MODE="${MODE:-auto}"
+INTERFACES="${INTERFACES:-WAN2}"
+
+case "$MODE" in auto|manual) ;; *) logger -t "$TAG" "Invalid MODE: $MODE"; exit 1 ;; esac
+
+mkdir "$LOCK_DIR" 2>/dev/null || exit 0
+mkdir -p "$STATE_DIR/interfaces"
+chmod 700 "$STATE_DIR" "$STATE_DIR/interfaces" 2>/dev/null || true
+
+CURRENT_FILE="/tmp/remote-gate.current.$$"
+SORTED_FILE="/tmp/remote-gate.sorted.$$"
+FINGERPRINT_FILE="/tmp/remote-gate.inventory.$$"
+BODY_FILE="/tmp/remote-gate.response.$$"
+trap 'rmdir "$LOCK_DIR" 2>/dev/null; rm -f "$CURRENT_FILE" "$SORTED_FILE" "$FINGERPRINT_FILE" "$BODY_FILE"' EXIT INT TERM
+: > "$CURRENT_FILE"
+
+valid_name() {
+    case "$1" in ''|*[!A-Za-z0-9_.:@-]*) return 1 ;; *) return 0 ;; esac
+}
+
+valid_device() {
+    case "$1" in *[!A-Za-z0-9_.:@+-]*) return 1 ;; *) return 0 ;; esac
+}
+
+read_interface() {
+    name="$1"
+    valid_name "$name" || return 0
+    status="$(ubus call "network.interface.${name}" status 2>/dev/null)" || return 0
+    up="$(printf '%s' "$status" | jsonfilter -e '@.up' 2>/dev/null | sed -n '1p')"
+    [ "$up" = "true" ] || return 0
+    ip="$(printf '%s' "$status" | jsonfilter -e '@["ipv4-address"][0].address' 2>/dev/null | sed -n '1p')"
+    dev="$(printf '%s' "$status" | jsonfilter -e '@.l3_device' 2>/dev/null | sed -n '1p')"
+    [ -n "$ip" ] && [ -n "$dev" ] || return 0
+    valid_device "$dev" || return 0
+    targets="$(printf '%s' "$status" | jsonfilter -e '@.route[*].target' 2>/dev/null)"
+    printf '%s\n' "$targets" | grep -qx '0.0.0.0' || return 0
+    printf '%s|%s|%s\n' "$name" "$ip" "$dev" >> "$CURRENT_FILE"
+}
+
+if [ "$MODE" = "auto" ]; then
+    for obj in $(ubus list 'network.interface.*' 2>/dev/null); do
+        name="${obj#network.interface.}"
+        [ "$name" = "$obj" ] && continue
+        [ "$name" = "loopback" ] && continue
+        read_interface "$name"
+    done
+else
+    for name in $INTERFACES; do
+        read_interface "$name"
+    done
+fi
+
+sort -u "$CURRENT_FILE" > "$SORTED_FILE"
+mv "$SORTED_FILE" "$CURRENT_FILE"
+
+if [ "${LIST_ONLY:-0}" = "1" ]; then
+    cat "$CURRENT_FILE"
+    exit 0
+fi
+
+curl_args() {
+    dev="$1"
+    printf '%s\n' "-4" "--interface" "$dev"
+}
+
+post_update() {
+    name="$1"; ip="$2"; dev="$3"
+    payload="{\"interface\":\"${name}\",\"device\":\"${dev}\",\"ip\":\"${ip}\"}"
+    HTTP_CODE="$(
+        curl -4 --interface "$dev" -sS \
+            --connect-timeout 8 --max-time 20 --retry 2 --retry-delay 2 \
+            -o "$BODY_FILE" -w '%{http_code}' \
+            -X POST "https://${HOSTNAME}/api/v1/update" \
+            -H "Authorization: Bearer ${WRITE_TOKEN}" \
+            -H 'Content-Type: application/json' \
+            --data-binary "$payload" 2>/dev/null
+    )"
+    rc=$?
+    if [ "$rc" -eq 0 ] && [ "$HTTP_CODE" = "204" ]; then
+        tmp="$STATE_DIR/interfaces/.${name}.$$"
+        { printf '%s\n' "$ip"; printf '%s\n' "$dev"; } > "$tmp"
+        chmod 600 "$tmp"
+        mv "$tmp" "$STATE_DIR/interfaces/$name"
+        return 0
+    fi
+    logger -t "$TAG" "$name report failed (HTTP ${HTTP_CODE:-000})"
+    return 1
+}
+
+while IFS='|' read -r name ip dev; do
+    [ -n "$name" ] || continue
+    old_ip="$(sed -n '1p' "$STATE_DIR/interfaces/$name" 2>/dev/null)"
+    old_dev="$(sed -n '2p' "$STATE_DIR/interfaces/$name" 2>/dev/null)"
+    if [ "${FORCE:-0}" = "1" ] || [ "$ip" != "$old_ip" ] || [ "$dev" != "$old_dev" ]; then
+        post_update "$name" "$ip" "$dev" || ERRORS=1
+    fi
+done < "$CURRENT_FILE"
+
+: > "$FINGERPRINT_FILE"
+while IFS='|' read -r name ip dev; do
+    [ -n "$name" ] || continue
+    printf '%s|%s\n' "$name" "$dev" >> "$FINGERPRINT_FILE"
+done < "$CURRENT_FILE"
+
+NEW_FINGERPRINT="$(cat "$FINGERPRINT_FILE" 2>/dev/null)"
+OLD_FINGERPRINT="$(cat "$STATE_DIR/inventory" 2>/dev/null)"
+if [ "$NEW_FINGERPRINT" != "$OLD_FINGERPRINT" ] || [ "${FORCE_INVENTORY:-0}" = "1" ]; then
+    first_dev="$(sed -n '1s/^[^|]*|[^|]*|\(.*\)$/\1/p' "$CURRENT_FILE")"
+    if [ -n "$first_dev" ]; then
+        payload='{"interfaces":['
+        sep=''
+        while IFS='|' read -r name ip dev; do
+            [ -n "$name" ] || continue
+            payload="${payload}${sep}{\"name\":\"${name}\",\"device\":\"${dev}\"}"
+            sep=','
+        done < "$CURRENT_FILE"
+        payload="${payload}]}"
+
+        HTTP_CODE="$(
+            curl -4 --interface "$first_dev" -sS \
+                --connect-timeout 8 --max-time 20 --retry 2 --retry-delay 2 \
+                -o "$BODY_FILE" -w '%{http_code}' \
+                -X POST "https://${HOSTNAME}/api/v1/inventory" \
+                -H "Authorization: Bearer ${WRITE_TOKEN}" \
+                -H 'Content-Type: application/json' \
+                --data-binary "$payload" 2>/dev/null
+        )"
+        rc=$?
+        if [ "$rc" -eq 0 ] && [ "$HTTP_CODE" = "204" ]; then
+            cp "$FINGERPRINT_FILE" "$STATE_DIR/inventory"
+            chmod 600 "$STATE_DIR/inventory"
+        else
+            logger -t "$TAG" "inventory update failed (HTTP ${HTTP_CODE:-000})"
+            ERRORS=1
+        fi
+    fi
+fi
+
+exit "$ERRORS"

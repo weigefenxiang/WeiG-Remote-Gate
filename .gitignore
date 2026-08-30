@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.env
+*.local
+config.json
+auth.json
+secrets.json
+current.json
+sessions.json
+commands.json
+activity.json

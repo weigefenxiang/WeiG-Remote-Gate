@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="auto">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Sign in · WeiG Remote Gate</title>
+  <script src="/static/js/theme-bootstrap.js"></script>
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/css/base.css">
+  <link rel="stylesheet" href="/static/css/components.css">
+  <link rel="stylesheet" href="/static/css/themes.css">
+</head>
+<body class="auth-page">
+  <main class="auth-shell">
+    <section class="auth-card depth-card">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">WG</div>
+        <div>
+          <div class="eyebrow">PRIVATE CONTROL PLANE</div>
+          <h1>WeiG Remote Gate</h1>
+        </div>
+      </div>
+      <p class="muted">只通过 Cloudflare 进入控制面。家庭 WAN 不提供本项目的 HTTP/HTTPS 管理入口。</p>
+      <div class="form-error" role="alert">{{ERROR}}</div>
+      <form action="/login" method="post" class="stack">
+        <label class="field">
+          <span>Username</span>
+          <input name="username" autocomplete="username" required autofocus>
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <input type="password" name="password" autocomplete="current-password" required>
+        </label>
+        <label class="check-row">
+          <input type="checkbox" name="remember" value="1">
+          <span>Remember this browser for 30 days</span>
+        </label>
+        <button class="button primary wide" type="submit">Sign in securely</button>
+      </form>
+      <div class="auth-foot">
+        <span class="status-dot neutral"></span>
+        <span>Loopback-only backend</span>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

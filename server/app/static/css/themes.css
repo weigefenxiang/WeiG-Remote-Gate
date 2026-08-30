@@ -1,0 +1,27 @@
+html, body, .depth-card, .button, input, select, .topbar, .theme-switch, .theme-switch button {
+  transition:
+    background-color .22s ease,
+    border-color .22s ease,
+    color .22s ease,
+    box-shadow .22s ease;
+}
+
+html[data-theme="dark"] .depth-card {
+  background:
+    linear-gradient(155deg, rgba(255,255,255,.035), transparent 30%),
+    var(--surface-1);
+}
+html[data-theme="dark"] .topbar {
+  background: color-mix(in srgb, var(--canvas) 78%, transparent);
+}
+html[data-theme="dark"] select,
+html[data-theme="dark"] input {
+  color-scheme: dark;
+}
+
+@media (max-width: 720px) {
+  .depth-card {
+    backdrop-filter: blur(12px) saturate(110%);
+    -webkit-backdrop-filter: blur(12px) saturate(110%);
+  }
+}

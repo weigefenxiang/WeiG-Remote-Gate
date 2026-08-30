@@ -1,0 +1,23 @@
+[Unit]
+Description=WeiG Remote Gate
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=remotegate
+Group=remotegate
+WorkingDirectory=/usr/local/lib/remote-gate
+ExecStart=/usr/bin/python3 /usr/local/lib/remote-gate/remote-gate.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/remote-gate
+ReadOnlyPaths=/etc/remote-gate /usr/local/lib/remote-gate
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
