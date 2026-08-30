@@ -14,7 +14,7 @@
     return list.filter((item) =>
       item &&
       item.family === family &&
-      ['direct', 'mapped'].includes(item.reachability) &&
+      ['direct', 'mapped', 'private'].includes(item.reachability) &&
       (!selectedWg || item.wireguard === selectedWg)
     );
   }
