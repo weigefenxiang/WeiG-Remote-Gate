@@ -376,7 +376,8 @@ class Handler(BaseHTTPRequestHandler):
                         ttl=int(data.get("ttl", 300)),
                     )
             except (ValueError, KeyError, GateError) as exc:
-                self._json(400, {"error": str(exc)})
+                status = 409 if str(exc) == "command_pending" else 400
+                self._json(status, {"error": str(exc)})
                 return
             self._json(202, {"command_id": command["id"], "state": "pending"})
             return
@@ -390,7 +391,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"error": "missing_cf_connecting_ip"})
                 return
             observe_source(STORE, session.token, source)
-            command = queue_close(STORE, source_ip=source)
+            try:
+                command = queue_close(STORE, source_ip=source)
+            except GateError as exc:
+                status = 409 if str(exc) == "command_pending" else 400
+                self._json(status, {"error": str(exc)})
+                return
             self._json(202, {"command_id": command["id"], "state": "pending"})
             return
 
