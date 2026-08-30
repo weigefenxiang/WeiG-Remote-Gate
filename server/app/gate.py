@@ -10,13 +10,22 @@ from .endpoints import endpoint_by_id, normalize_inventory
 from .store import JsonStore
 
 
-ALLOWED_TTLS = {60, 300, 900, 1800}
+PRESET_TTLS = {60, 300, 900, 1800}
+CUSTOM_TTL_MIN = 1800
+CUSTOM_TTL_MAX = 12 * 60 * 60
+CUSTOM_TTL_STEP = 1800
 ALLOWED_SCOPES = {"wg", "wg_ping"}
 QUEUE_LOCK = threading.RLock()
 
 
 class GateError(ValueError):
     pass
+
+
+def valid_ttl(ttl: int) -> bool:
+    if ttl in PRESET_TTLS:
+        return True
+    return CUSTOM_TTL_MIN <= ttl <= CUSTOM_TTL_MAX and ttl % CUSTOM_TTL_STEP == 0
 
 
 def normalize_current(store: JsonStore) -> dict[str, Any]:
@@ -117,7 +126,7 @@ def queue_activate(
     New schema-2 callers provide endpoint_id/family/scope. Schema-1 callers may
     continue to provide wan_name/wg_name while the VPS is upgraded first.
     """
-    if ttl not in ALLOWED_TTLS:
+    if not valid_ttl(ttl):
         raise GateError("invalid_ttl")
     if scope not in ALLOWED_SCOPES:
         raise GateError("invalid_scope")
@@ -171,7 +180,6 @@ def queue_activate(
             "state": "pending",
         }
     else:
-        # Compatibility with the current v0.2.x server/browser contract.
         address = _source_address(source_ip, "ipv4")
         if not wan_name or not wg_name:
             raise GateError("endpoint_required")
