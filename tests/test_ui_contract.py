@@ -33,7 +33,7 @@ class UIContractTests(unittest.TestCase):
         self.assertNotIn('data-family="dual"', source)
         self.assertIn('/static/css/spatial.css', source)
 
-    def test_browser_never_supplies_authorization_ip(self):
+    def test_browser_never_supplies_authorization_ip_directly(self):
         app = APP.read_text(encoding="utf-8")
         gate = GATE.read_text(encoding="utf-8")
         self.assertNotIn("CLIENT_MEMORY_KEY", app)
@@ -41,6 +41,21 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("client_sources", app)
         self.assertIn("endpoint_id", gate)
         self.assertIn("scope", gate)
+
+    def test_ipv4_only_carrier_probe_is_automatic_and_short_lived(self):
+        source = BOOTSTRAP.read_text(encoding="utf-8")
+        self.assertIn("https://api.ipify.org?format=jsonp", source)
+        self.assertIn("/api/v1/client-source/probe", source)
+        self.assertIn("PROBE_INTERVAL", source)
+        self.assertIn("PROBE_TIMEOUT", source)
+        self.assertIn("client_sources?.ipv4", source)
+
+    def test_private_wan_paths_are_manual_try_options(self):
+        app = APP.read_text(encoding="utf-8")
+        gate = GATE.read_text(encoding="utf-8")
+        self.assertIn("['direct', 'mapped', 'private']", app)
+        self.assertIn("['direct', 'mapped', 'private']", gate)
+        self.assertIn("Private/CGNAT · Try", app)
 
     def test_manual_family_is_not_locked_to_current_request(self):
         source = GATE.read_text(encoding="utf-8")
