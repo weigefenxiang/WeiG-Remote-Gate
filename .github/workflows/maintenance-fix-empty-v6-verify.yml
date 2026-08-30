@@ -23,32 +23,18 @@ jobs:
 
           fw = Path('openwrt/remote-gate-firewall.sh')
           s = fw.read_text(encoding='utf-8')
-          old = '''    elif command -v ip6tables >/dev/null 2>&1; then
-              ip6tables -C INPUT -j "$FW3_CHAIN_V6" >/dev/null 2>&1 && return 1
-          fi
-          }
-          '''
-          new = '''    elif command -v ip6tables >/dev/null 2>&1; then
-              if ip6tables -C INPUT -j "$FW3_CHAIN_V6" >/dev/null 2>&1; then
-                  return 1
-              fi
-          fi
-          return 0
-          }
-          '''
+          old = '    elif command -v ip6tables >/dev/null 2>&1; then\n        ip6tables -C INPUT -j "$FW3_CHAIN_V6" >/dev/null 2>&1 && return 1\n    fi\n}\n'
+          new = '    elif command -v ip6tables >/dev/null 2>&1; then\n        if ip6tables -C INPUT -j "$FW3_CHAIN_V6" >/dev/null 2>&1; then\n            return 1\n        fi\n    fi\n    return 0\n}\n'
           if s.count(old) != 1:
-              raise SystemExit('empty IPv6 verifier block not found exactly once')
+              raise SystemExit(f'empty IPv6 verifier block count={s.count(old)}')
           fw.write_text(s.replace(old, new), encoding='utf-8')
 
           test = Path('tests/test_firewall_backends.py')
           s = test.read_text(encoding='utf-8')
-          old = '''        self.assertIn('ip6tables -C INPUT -j "$FW3_CHAIN_V6" >/dev/null 2>&1 && return 1', source)
-          '''
-          new = '''        self.assertIn('if ip6tables -C INPUT -j "$FW3_CHAIN_V6" >/dev/null 2>&1; then', source)
-              self.assertIn('    return 1\\n        fi\\n    fi\\n    return 0', source)
-          '''
+          old = '        self.assertIn(\'ip6tables -C INPUT -j "$FW3_CHAIN_V6" >/dev/null 2>&1 && return 1\', source)\n'
+          new = '        self.assertIn(\'if ip6tables -C INPUT -j "$FW3_CHAIN_V6" >/dev/null 2>&1; then\', source)\n        self.assertIn(\'    return 1\\n        fi\\n    fi\\n    return 0\', source)\n'
           if s.count(old) != 1:
-              raise SystemExit('empty IPv6 verifier test assertion not found exactly once')
+              raise SystemExit(f'empty IPv6 test assertion count={s.count(old)}')
           test.write_text(s.replace(old, new), encoding='utf-8')
 
           Path('.github/workflows/maintenance-fix-empty-v6-verify.yml').unlink()
