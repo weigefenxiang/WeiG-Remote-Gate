@@ -62,6 +62,13 @@ class FirewallBackendTests(unittest.TestCase):
         self.assertNotIn("--icmpv6-type router", source.lower())
         self.assertNotIn("--icmpv6-type packet-too-big", source.lower())
 
+    def test_empty_ipv6_policy_removes_idle_fw3_jump(self):
+        source = FIREWALL.read_text(encoding="utf-8")
+        self.assertIn('if [ ! -s "$DEVICES_V6_FILE" ]; then', source)
+        self.assertIn('ip6tables -F "$FW3_CHAIN_V6" >/dev/null 2>&1 || true', source)
+        self.assertIn('ip6tables -X "$FW3_CHAIN_V6" >/dev/null 2>&1 || true', source)
+        self.assertIn('ip6tables -C INPUT -j "$FW3_CHAIN_V6" >/dev/null 2>&1 && return 1', source)
+
     def test_scope_can_keep_ping_closed(self):
         source = FIREWALL.read_text(encoding="utf-8")
         self.assertIn('if [ "$AUTH_SCOPE" = "wg_ping" ]', source)
