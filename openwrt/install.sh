@@ -54,6 +54,7 @@ fetch_file() {
 
 fetch_file "remote-gate-report.sh" "$LIB_DIR/remote-gate-report.sh"
 fetch_file "remote-gate-agent.sh" "$LIB_DIR/remote-gate-agent.sh"
+fetch_file "remote-gate-egress-probe.sh" "$LIB_DIR/remote-gate-egress-probe.sh"
 fetch_file "remote-gate-firewall.sh" "$LIB_DIR/remote-gate-firewall.sh"
 fetch_file "remote-gate-firewall-include.sh" "$LIB_DIR/remote-gate-firewall-include.sh"
 fetch_file "remote-gate-audit.sh" "$LIB_DIR/remote-gate-audit.sh"
@@ -135,14 +136,17 @@ fi
 "$INIT_FILE" stop >/dev/null 2>&1 || true
 "$INIT_FILE" start || fail "Remote Gate agent failed to start."
 
+# Probe private/CGNAT WAN IPv4 egress once; failure is non-fatal.
+"$LIB_DIR/remote-gate-egress-probe.sh" >/dev/null 2>&1 || true
 # The procd service begins its own run loop immediately. Keep the post-install
-# probe report-only so a second process cannot pull the same pending command.
+# report-only so a second process cannot pull the same pending command.
 "$LIB_DIR/remote-gate-agent.sh" report || true
 
 printf '\nWeiG Remote Gate OpenWrt components installed.\n'
 printf 'Firewall backend: %s\n' "$BACKEND"
 printf 'IPv6 Gate: auto (%s firewall capability)\n' "$IPV6_CAPABLE"
 printf 'Control transport: automatic IPv4/IPv6 Multi-WAN health fallback\n'
+printf 'Private/CGNAT WAN IPv4 egress: best-effort per-WAN probe enabled\n'
 printf 'The WAN has no HTTP/HTTPS listener from this project.\n'
 printf 'qBittorrent/BT port forwarding remains under the original firewall and is unaffected.\n'
 printf 'Safe update: %s/update.sh\n' "$LIB_DIR"
