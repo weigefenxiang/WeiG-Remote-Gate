@@ -7,9 +7,14 @@ TEMPLATE = ROOT / "server/app/templates/dashboard.html"
 APP = ROOT / "server/app/static/js/app.js"
 GATE = ROOT / "server/app/static/js/gate-controls.js"
 BOOTSTRAP = ROOT / "server/app/static/js/theme-bootstrap.js"
+CLIENT_SOURCES = ROOT / "server/app/static/js/client-sources.js"
+ENDPOINT_PICKER = ROOT / "server/app/static/js/endpoint-picker.js"
+DURATION = ROOT / "server/app/static/js/duration-control.js"
+FEEDBACK = ROOT / "server/app/static/js/motion-feedback.js"
 FAVICON = ROOT / "server/app/static/Wei.G.ico"
 LAYOUT = ROOT / "server/app/static/css/layout.css"
 SPATIAL = ROOT / "server/app/static/css/spatial.css"
+INTERACTION = ROOT / "server/app/static/css/interaction.css"
 I18N = ROOT / "server/app/static/js/i18n.js"
 INSTALL = ROOT / "server/install.sh"
 UPDATE = ROOT / "server/update.sh"
@@ -22,7 +27,7 @@ class UIContractTests(unittest.TestCase):
         self.assertIn(".workspace-flow", source)
         self.assertIn("grid-template-columns: minmax(0, 1fr)", source)
 
-    def test_template_has_v03_gate_controls(self):
+    def test_template_has_gate_family_scope_and_presets(self):
         source = TEMPLATE.read_text(encoding="utf-8")
         self.assertIn('id="endpoint-select"', source)
         self.assertIn('id="scope-segment"', source)
@@ -31,6 +36,10 @@ class UIContractTests(unittest.TestCase):
         self.assertIn('data-family="ipv4"', source)
         self.assertIn('data-family="ipv6"', source)
         self.assertNotIn('data-family="dual"', source)
+        for ttl, label in ((60, "1m"), (300, "5m"), (900, "15m"), (1800, "30m")):
+            self.assertIn(f'data-ttl="{ttl}"', source)
+            self.assertIn(f'>{label}</button>', source)
+        self.assertNotIn('data-ttl="3600"', source)
         self.assertIn('/static/css/spatial.css', source)
 
     def test_browser_never_supplies_authorization_ip_directly(self):
@@ -42,13 +51,15 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("endpoint_id", gate)
         self.assertIn("scope", gate)
 
-    def test_ipv4_only_carrier_probe_is_automatic_and_short_lived(self):
-        source = BOOTSTRAP.read_text(encoding="utf-8")
-        self.assertIn("https://api.ipify.org?format=jsonp", source)
+    def test_dual_stack_source_probe_is_automatic_and_independent(self):
+        source = CLIENT_SOURCES.read_text(encoding="utf-8")
+        self.assertIn("https://api.ipify.org", source)
+        self.assertIn("https://api6.ipify.org", source)
         self.assertIn("/api/v1/client-source/probe", source)
         self.assertIn("PROBE_INTERVAL", source)
         self.assertIn("PROBE_TIMEOUT", source)
-        self.assertIn("client_sources?.ipv4", source)
+        self.assertIn("['ipv4', 'ipv6']", source)
+        self.assertIn("data?.client_sources?.[family]?.address", source)
 
     def test_private_and_egress_wan_paths_are_manual_try_options(self):
         app = APP.read_text(encoding="utf-8")
@@ -61,13 +72,14 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("NAT IPv4", app)
         self.assertIn("Egress · Try", app)
 
-    def test_manual_family_is_not_locked_to_current_request(self):
+    def test_ipv4_is_preferred_without_overriding_manual_ipv6(self):
         source = GATE.read_text(encoding="utf-8")
+        self.assertIn("state.familyManual && familyAvailable(state.family)", source)
+        self.assertIn("familyAvailable('ipv4')", source)
+        self.assertIn("state.familyManual = true", source)
+        self.assertIn("familyAvailable('ipv6')", source)
         self.assertNotIn("state.requestFamily !== 'ipv4'", source)
         self.assertNotIn("state.requestFamily !== 'ipv6'", source)
-        self.assertIn("button.disabled = !familyAvailable(family)", source)
-        self.assertIn("familyAvailable('ipv4')", source)
-        self.assertIn("familyAvailable('ipv6')", source)
 
     def test_cgnat_safe_scope_defaults_to_wireguard_only(self):
         source = GATE.read_text(encoding="utf-8")
@@ -76,12 +88,60 @@ class UIContractTests(unittest.TestCase):
         app = APP.read_text(encoding="utf-8")
         self.assertIn("fw.scope === 'wg_ping'", app)
 
+    def test_endpoint_picker_replaces_native_select_visual(self):
+        picker = ENDPOINT_PICKER.read_text(encoding="utf-8")
+        css = INTERACTION.read_text(encoding="utf-8")
+        self.assertIn("endpoint-picker-trigger", picker)
+        self.assertIn("endpoint-picker-layer", picker)
+        self.assertIn("endpoint-option-card", picker)
+        self.assertIn("role=\"listbox\"", picker)
+        self.assertIn("endpoint-native-select", picker)
+        self.assertIn(".endpoint-native-select", css)
+        self.assertIn("pointer-events: none", css)
+        self.assertIn(".endpoint-picker-sheet", css)
+        self.assertIn(".endpoint-option-card.selected", css)
+
+    def test_custom_duration_is_half_hour_to_twelve_hours(self):
+        source = DURATION.read_text(encoding="utf-8")
+        self.assertIn("const MIN = 1800", source)
+        self.assertIn("const MAX = 43200", source)
+        self.assertIn("const STEP = 1800", source)
+        self.assertIn("ttl-custom-button", source)
+        self.assertIn("duration-slider", source)
+        self.assertIn("RemoteGateFeedback", source)
+        self.assertNotIn("data-ttl=\"3600\"", TEMPLATE.read_text(encoding="utf-8"))
+
+    def test_feedback_module_has_sound_haptic_and_user_controls(self):
+        source = FEEDBACK.read_text(encoding="utf-8")
+        self.assertIn("AudioContext", source)
+        self.assertIn("navigator.vibrate", source)
+        self.assertIn("feedback-sound", source)
+        self.assertIn("feedback-haptic", source)
+        self.assertIn("localStorage", source)
+
+    def test_brand_uses_canonical_wei_g_icon_with_chassis(self):
+        self.assertTrue(FAVICON.is_file())
+        bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
+        css = INTERACTION.read_text(encoding="utf-8")
+        self.assertIn("/static/Wei.G.ico", bootstrap)
+        self.assertIn("brand-icon-image", bootstrap)
+        self.assertIn("brand-icon-chassis", bootstrap)
+        self.assertIn("/static/css/interaction.css", bootstrap)
+        self.assertIn(".brand-icon-chassis", css)
+        self.assertIn(".brand-icon-image", css)
+
     def test_spatial_layer_has_touch_and_depth_tokens(self):
         source = SPATIAL.read_text(encoding="utf-8")
         self.assertIn("var(--touch-min)", source)
         self.assertIn("var(--depth-z3)", source)
         self.assertIn(".activity-row", source)
         self.assertIn(".system-row span", source)
+
+    def test_interaction_layer_respects_reduced_motion(self):
+        source = INTERACTION.read_text(encoding="utf-8")
+        self.assertIn("prefers-reduced-motion: reduce", source)
+        self.assertIn(".endpoint-option-card", source)
+        self.assertIn(".duration-custom-panel", source)
 
     def test_old_ipv4_only_copy_is_gone(self):
         source = I18N.read_text(encoding="utf-8")
@@ -90,10 +150,19 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("Observed by VPS", source)
         self.assertIn("仅 WireGuard", source)
 
-    def test_deploy_scripts_include_spatial_module(self):
+    def test_deploy_scripts_include_interaction_modules(self):
+        required = (
+            "server/app/static/css/spatial.css",
+            "server/app/static/css/interaction.css",
+            "server/app/static/js/motion-feedback.js",
+            "server/app/static/js/client-sources.js",
+            "server/app/static/js/endpoint-picker.js",
+            "server/app/static/js/duration-control.js",
+        )
         for path in (INSTALL, UPDATE):
             source = path.read_text(encoding="utf-8")
-            self.assertIn("server/app/static/css/spatial.css", source, path.name)
+            for item in required:
+                self.assertIn(item, source, f"{path.name}: {item}")
 
     def test_canonical_favicon_is_bootstrapped_and_deployed(self):
         self.assertTrue(FAVICON.is_file())
