@@ -23,11 +23,18 @@ HOSTNAME="${HOSTNAME#https://}"
 HOSTNAME="${HOSTNAME%%/*}"
 [ -n "$HOSTNAME" ] || fail "Hostname is required."
 
-printf 'WRITE_TOKEN from the VPS installer: '
-stty -echo
-IFS= read -r WRITE_TOKEN
-stty echo
-printf '\n'
+if command -v stty >/dev/null 2>&1; then
+    printf 'WRITE_TOKEN from the VPS installer: '
+    stty -echo
+    trap 'stty echo 2>/dev/null || true' EXIT INT TERM
+    IFS= read -r WRITE_TOKEN
+    stty echo
+    trap - EXIT INT TERM
+    printf '\n'
+else
+    printf 'WRITE_TOKEN from the VPS installer (input will be visible on this minimal system): '
+    IFS= read -r WRITE_TOKEN
+fi
 [ "${#WRITE_TOKEN}" -ge 32 ] || fail "WRITE_TOKEN is too short."
 
 mkdir -p "$LIB_DIR" "$(dirname "$HOTPLUG_FILE")"
