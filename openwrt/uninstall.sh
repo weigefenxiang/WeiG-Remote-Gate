@@ -11,7 +11,7 @@ fi
 if [ -x "$LIB_DIR/remote-gate-firewall.sh" ]; then
     "$LIB_DIR/remote-gate-firewall.sh" uninstall || true
 fi
-rm -f /etc/init.d/remote-gate-agent
+rm -f /etc/init.d/remote-gate-agent /etc/hotplug.d/iface/95-remote-gate
 if [ -f /etc/crontabs/root ]; then
     grep -Fvx "$CRON_LINE" /etc/crontabs/root > /tmp/remote-gate-cron.$$ || true
     mv /tmp/remote-gate-cron.$$ /etc/crontabs/root
