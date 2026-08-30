@@ -5,6 +5,11 @@
   favicon.href = '/static/Wei.G.ico';
   document.head.append(favicon);
 
+  const interaction = document.createElement('link');
+  interaction.rel = 'stylesheet';
+  interaction.href = '/static/css/interaction.css';
+  document.head.append(interaction);
+
   const key = 'weig-remote-gate:theme';
   const saved = localStorage.getItem(key);
   const choice = saved === 'light' || saved === 'dark' ? saved : 'auto';
