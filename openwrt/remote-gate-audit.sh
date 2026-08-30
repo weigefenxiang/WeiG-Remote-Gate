@@ -41,6 +41,19 @@ safe_ubus_status() {
     printf '  IPv6 prefix: %s\n' "$p6"
 }
 
+safe_natmap_status() {
+    file="$1"
+    [ -f "$file" ] || return 0
+    pid="$(basename "$file" .json)"
+    ip="$(jsonfilter -i "$file" -e '@.ip' 2>/dev/null | sed -n '1p')"
+    port="$(jsonfilter -i "$file" -e '@.port' 2>/dev/null | sed -n '1p')"
+    inner="$(jsonfilter -i "$file" -e '@.inner_port' 2>/dev/null | sed -n '1p')"
+    proto="$(jsonfilter -i "$file" -e '@.protocol' 2>/dev/null | sed -n '1p')"
+    [ -n "$ip$port$inner$proto" ] || return 0
+    printf 'status pid=%s | protocol=%s | public=%s:%s | inner_port=%s\n' \
+        "$pid" "${proto:--}" "${ip:--}" "${port:--}" "${inner:--}"
+}
+
 section 'SYSTEM'
 if [ -r /etc/openwrt_release ]; then
     grep -E '^(DISTRIB_ID|DISTRIB_RELEASE|DISTRIB_REVISION|DISTRIB_TARGET|DISTRIB_ARCH)=' /etc/openwrt_release 2>/dev/null || true
@@ -131,6 +144,17 @@ if [ -e /etc/config/natmap ]; then
 else
     printf 'UCI config file: not detected\n'
 fi
+if [ -d /var/run/natmap ] && has jsonfilter; then
+    found=0
+    for file in /var/run/natmap/*.json; do
+        [ -f "$file" ] || continue
+        found=1
+        safe_natmap_status "$file"
+    done
+    [ "$found" -eq 1 ] || printf 'Runtime status: no mapping JSON detected\n'
+else
+    printf 'Runtime status directory: not detected\n'
+fi
 
 section 'REMOTE GATE CURRENT STATE'
 printf 'Agent service: '
@@ -148,4 +172,4 @@ fi
 section 'NOTES'
 printf '%s\n' \
     'This audit performs read-only capability/status queries only.' \
-    'It does not read /etc/remote-gate.conf, WireGuard private keys, NATMap configuration contents, or any secret/token value.'
+    'It does not read /etc/remote-gate.conf, WireGuard private keys, NATMap configuration contents, notify scripts, or any secret/token value.'
