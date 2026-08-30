@@ -135,8 +135,9 @@ fi
 "$INIT_FILE" stop >/dev/null 2>&1 || true
 "$INIT_FILE" start || fail "Remote Gate agent failed to start."
 
+# The procd service begins its own run loop immediately. Keep the post-install
+# probe report-only so a second process cannot pull the same pending command.
 "$LIB_DIR/remote-gate-agent.sh" report || true
-"$LIB_DIR/remote-gate-agent.sh" once || true
 
 printf '\nWeiG Remote Gate OpenWrt components installed.\n'
 printf 'Firewall backend: %s\n' "$BACKEND"
