@@ -96,6 +96,16 @@ class FirewallBackendTests(unittest.TestCase):
         self.assertIn('valid_ttl "$ttl"', source)
         self.assertNotIn('TTL must be between 30 and 1800 seconds', source)
 
+    def test_fw3_reuses_existing_ipsets_across_timeout_policy_upgrade(self):
+        source = FIREWALL.read_text(encoding="utf-8")
+        self.assertIn("fw3_ensure_set()", source)
+        self.assertIn('if ipset list "$name" >/dev/null 2>&1; then', source)
+        self.assertIn('ipset create "$name" hash:ip family "$family" timeout 1800', source)
+        self.assertNotIn('ipset -exist create "$FW3_AUTH_SET_V4"', source)
+        self.assertNotIn('ipset -exist create "$FW3_AUTH_SET_V6"', source)
+        self.assertIn('ipset -exist add "$FW3_AUTH_SET_V4" "$AUTH_IP" timeout "$AUTH_REMAINING"', source)
+        self.assertIn('ipset -exist add "$FW3_AUTH_SET_V6" "$AUTH_IP" timeout "$AUTH_REMAINING"', source)
+
     def test_agent_syncs_dual_stack_wans_and_wireguard_ports(self):
         source = AGENT.read_text(encoding="utf-8")
         self.assertIn("v4_protected_devices", source)
