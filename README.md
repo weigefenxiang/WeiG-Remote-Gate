@@ -15,12 +15,14 @@ ICMP / ICMPv6 Echo Request   -> closed by default
 WireGuard UDP listen ports   -> closed by default
 ```
 
-After an authenticated activation, the VPS selects a source address that was recently observed for the same authenticated browser session through Cloudflare. The browser cannot submit an arbitrary authorization IP.
+The preferred client source is the address recently observed for the same authenticated browser session through Cloudflare. If an IPv6-first/mobile session has no observed IPv4, v0.3 can additionally run an IPv4-only carrier probe and temporarily record the reported NAT egress IPv4 as a lower-confidence `carrier_probe` source.
+
+The normal Activate request still does not accept a raw authorization IP. The VPS resolves the selected family from the session source store. Cloudflare-observed sources are marked `verified` and preferred; carrier-probe IPv4 is deliberately marked `heuristic` and uses a shorter TTL.
 
 The temporary authorization is scoped to:
 
 ```text
-(source IP family + exact source IP + WAN device + WireGuard UDP port)
+(source IP family + selected source IP + WAN device + WireGuard UDP port)
 ```
 
 Two access scopes are available:
@@ -106,9 +108,21 @@ The v0.3 inventory uses a schema-2 endpoint model instead of assuming one IPv4 W
 A native endpoint may be:
 
 - a directly reachable public IPv4 on an active WAN;
-- a directly reachable global IPv6 on an active WAN, when the local firewall backend reports IPv6 Gate capability.
+- a directly reachable global IPv6 on an active WAN, when the local firewall backend reports IPv6 Gate capability;
+- a private/CGNAT IPv4 WAN path, exposed as a **manual experimental attempt** and sorted after direct/mapped endpoints.
 
-The VPS remembers recently observed IPv4 and IPv6 client sources **per authenticated browser session**. Selecting IPv4 requires a recent trusted IPv4 observation; selecting IPv6 requires a recent trusted IPv6 observation. A stale browser-local display value is never used for authorization.
+A private/CGNAT WAN IPv4 is not claimed to be Internet-reachable. It can still be selected so users may test upstream mappings, provider-specific behavior, or later NATMap integration without changing the Gate model again.
+
+### Client source acquisition
+
+The VPS keeps IPv4 and IPv6 source records per authenticated browser session:
+
+1. **Cloudflare observation (`verified`)** — preferred. The control request's `CF-Connecting-IP` becomes the source for that family.
+2. **IPv4-only carrier probe (`heuristic`)** — fallback when the session has no IPv4 observation. The browser requests the IPv4-only `api.ipify.org` endpoint and posts the returned public IPv4 to the authenticated/CSRF-protected probe endpoint. The source is stored for a short window and may then be manually selected for IPv4 Gate.
+
+This fallback is intended for mobile carrier NAT, IPv6-first networks, CGNAT broadband, NAT64/464XLAT environments, and other cases where the dashboard itself reaches Cloudflare over IPv6 while IPv4 Internet traffic still exits through an operator NAT address.
+
+A later direct Cloudflare IPv4 observation replaces the heuristic probe value automatically.
 
 The OpenWrt control agent can use healthy IPv4 or IPv6 default-route candidates across Multi-WAN links for its outbound HTTPS control traffic. This control path is independent from the WireGuard data-plane endpoint selected by the user.
 
@@ -121,17 +135,17 @@ The read-only audit can inspect existing `/var/run/natmap/*.json` runtime status
 ## Remote Gate flow
 
 1. Sign in to the Cloudflare-fronted dashboard.
-2. The server observes the current request source from the trusted Cloudflare path and associates it with that authenticated session.
+2. The server records the current Cloudflare-observed source. If IPv4 is missing, the browser may automatically obtain an IPv4 carrier/NAT egress address through the IPv4-only probe and register it as a short-lived heuristic source.
 3. Choose IPv4 or IPv6, an available access endpoint, a WireGuard interface, access scope and TTL.
-4. The VPS resolves the chosen endpoint server-side and queues one short-lived command. The browser never provides the authorization IP, WAN device or WireGuard port as trusted authority.
+4. The VPS resolves the chosen endpoint and selected session source server-side and queues one short-lived command. The Activate payload does not carry a raw authorization IP, WAN device or WireGuard port as authority.
 5. The OpenWrt agent pulls the command over outbound HTTPS.
-6. The firewall backend validates that the WAN device and WireGuard port are currently protected, then authorizes only the exact source tuple.
+6. The firewall backend validates that the WAN device and WireGuard port are currently protected, then authorizes only the selected source tuple.
 7. The agent ACKs the command; a pending command cannot be silently overwritten by a second Activate/Close request.
 8. TTL expiry or **Close now** returns the Gate to the closed state.
 
 ## Continuous protection and firewall reloads
 
-The agent continuously synchronizes active WAN devices and locally configured/listening WireGuard UDP ports. Configured WireGuard listen ports can therefore remain fail-closed even while the WireGuard interface is temporarily down.
+The agent continuously synchronizes active WAN devices with IPv4 addresses, global IPv6-capable WAN devices, and locally configured/listening WireGuard UDP ports. Both public and private/CGNAT IPv4 WAN devices can therefore participate in the Gate policy; endpoint priority and reachability labels remain separate from firewall protection.
 
 The project registers a firewall include so the guard is restored after firewall reload/restart. Authorization state is restored only for the remaining TTL; expired state is not reopened.
 
@@ -170,12 +184,14 @@ Current UI behavior includes:
 - Arrange mode and browser-local layout preferences on desktop;
 - fixed mobile card order with drag disabled for reliable touch scrolling;
 - IPv4 and IPv6 client sources displayed independently;
+- automatic IPv4 carrier-NAT probing when the signed-in session is IPv6-only;
 - complete single-line IPv6 display with dynamic font fitting;
+- public/mapped endpoints first, with private/CGNAT IPv4 paths available as lower-priority manual `Try` options;
 - endpoint, family, scope and TTL selection driven by reported capabilities;
 - one-line expandable activity records;
 - the CLOSED Gate orb and the Activate button sharing the same activation eligibility and action path.
 
-Browser-local UI preferences are not security authority.
+Browser-local UI preferences are not security authority. Carrier-probe IPv4 is intentionally a separate lower-confidence source class rather than being presented as a Cloudflare-verified observation.
 
 ## Updating an existing VPS
 
@@ -240,9 +256,11 @@ During that validation, the Gate remained INPUT-only. Existing qBittorrent / UPn
 
 ### Implemented and CI-tested, pending final hardware validation
 
-v0.3 implements the corresponding IPv6 Gate path for fw3/fw4, including exact IPv6 source authorization, Echo-Request-only ICMPv6 handling, IPv6 WireGuard UDP protection, empty-policy jump cleanup and IPv4/IPv6 Multi-WAN control transport. These paths are covered by automated tests and syntax/browser CI, but the new IPv6 data-plane behavior has **not yet been declared hardware-validated on the 21.02 fw3 device**.
+v0.3 implements the corresponding IPv6 Gate path for fw3/fw4, exact IPv6 source authorization, Echo-Request-only ICMPv6 handling, IPv6 WireGuard UDP protection, empty-policy jump cleanup, IPv4/IPv6 Multi-WAN control transport, automatic carrier-NAT IPv4 source probing, and manual private/CGNAT IPv4 WAN attempts.
 
-The fw4/nftables backend follows the same security model but likewise is not part of the documented fw3 real-device validation above.
+The new carrier-probe and private-WAN paths are covered by unit/contract CI, but they must still be validated against real mobile carrier NAT behavior and the intended private-WAN/NATMap scenarios before being described as hardware-validated.
+
+The fw4/nftables backend follows the same Gate model but likewise is not part of the documented fw3 real-device validation above.
 
 ## Production validation
 
@@ -280,6 +298,8 @@ nft list set inet fw4 weig_remote_gate_protected_ifname_v6
 ```
 
 For each tested family, verify that only the authorized external source reaches the selected WireGuard endpoint during the TTL and that a fresh handshake fails after expiry. Separately verify the existing qBittorrent listening/forwarded port remains reachable exactly as before.
+
+For an IPv6-first phone, confirm the Current Client card obtains an IPv4 record marked `Carrier NAT probe`, select IPv4 + the public WAN endpoint, Activate, and verify whether the resulting WireGuard flow uses the same operator NAT egress address. For a private/CGNAT home WAN, a successful Gate authorization only confirms the router firewall accepted the source; actual Internet reachability still depends on an upstream mapping/NATMap/provider path.
 
 ## License
 
