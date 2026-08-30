@@ -33,10 +33,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for file in openwrt/*.sh openwrt/*.init server/*.sh; do
+          for file in openwrt/*.sh openwrt/*.init; do
             sh -n "$file"
           done
-          bash -n server/install.sh server/update.sh server/uninstall.sh server/migrate-from-wan2-vault.sh
+          for file in server/*.sh; do
+            bash -n "$file"
+          done
 
       - name: JavaScript syntax
         shell: bash
