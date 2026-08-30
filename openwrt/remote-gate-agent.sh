@@ -104,7 +104,8 @@ collect_wans() {
 
     for file in "$INV_DIR"/*.names; do
         [ -f "$file" ] || continue
-        sort -u "$file" -o "$file"
+        sort -u "$file" > "${file}.tmp"
+        mv "${file}.tmp" "$file"
     done
     for file in "$INV_DIR"/*.v4 "$INV_DIR"/*.v6; do
         [ -f "$file" ] || continue
