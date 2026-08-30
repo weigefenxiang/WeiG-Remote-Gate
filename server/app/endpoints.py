@@ -290,7 +290,8 @@ def build_endpoints(store: JsonStore) -> list[dict[str, Any]]:
                 address = _safe_ip(entry.get("address"))
                 if not address:
                     continue
-                direct = ipaddress.ip_address(address).is_global
+                if not ipaddress.ip_address(address).is_global:
+                    continue
                 endpoints.append({
                     "id": _endpoint_id(["native", name, device, "ipv6", address, str(port), wg["name"]]),
                     "wan": name,
@@ -301,8 +302,8 @@ def build_endpoints(store: JsonStore) -> list[dict[str, Any]]:
                     "external_port": port,
                     "local_port": port,
                     "wireguard": wg["name"],
-                    "reachability": "direct" if direct else "non_global",
-                    "priority": 10 if direct else 95,
+                    "reachability": "direct",
+                    "priority": 10,
                 })
 
     for mapping in inventory.get("natmap", []):
