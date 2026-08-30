@@ -2,9 +2,59 @@
   let context = null;
 
   const $ = (id) => document.getElementById(id);
+  const endpointSelect = () => $('endpoint-select') || $('wan-select');
 
   function data() {
     return context?.getData?.() || {};
+  }
+
+  function endpointsFor(family) {
+    const selectedWg = $('wg-select')?.value || '';
+    const list = Array.isArray(data()?.endpoints) ? data().endpoints : [];
+    return list.filter((item) =>
+      item &&
+      item.family === family &&
+      ['direct', 'mapped'].includes(item.reachability) &&
+      (!selectedWg || item.wireguard === selectedWg)
+    );
+  }
+
+  function sourceFor(family) {
+    return data()?.client_sources?.[family]?.address || '';
+  }
+
+  function familyAvailable(family) {
+    if (!['ipv4', 'ipv6'].includes(family)) return false;
+    if (!sourceFor(family)) return false;
+    if (family === 'ipv6' && !data()?.inventory?.capabilities?.gate_ipv6) return false;
+    return endpointsFor(family).length > 0;
+  }
+
+  function chooseFamily() {
+    const state = context.state;
+    if (familyAvailable(state.family)) return state.family;
+    if (familyAvailable(state.requestFamily)) return state.requestFamily;
+    if (familyAvailable('ipv4')) return 'ipv4';
+    if (familyAvailable('ipv6')) return 'ipv6';
+    return state.requestFamily === 'ipv6' ? 'ipv6' : 'ipv4';
+  }
+
+  function familyReason(family) {
+    const t = context.t;
+    const source = sourceFor(family);
+    if (!source) return t('gate.familySourceMissing', {family: family.toUpperCase()});
+    if (family === 'ipv6' && !data()?.inventory?.capabilities?.gate_ipv6) {
+      return t('gate.ipv6Unavailable');
+    }
+    const endpoints = endpointsFor(family);
+    if (!endpoints.length) return t('gate.familyEndpointMissing', {family: family.toUpperCase()});
+    const request = context.state.requestFamily === 'ipv6' ? 'IPv6' : context.state.requestFamily === 'ipv4' ? 'IPv4' : '—';
+    return t('gate.familyReady', {
+      family: family.toUpperCase(),
+      source,
+      count: endpoints.length,
+      request
+    });
   }
 
   function canActivate() {
@@ -14,8 +64,8 @@
     return Boolean(
       !state.busy &&
       !pending &&
-      state.requestFamily === 'ipv4' &&
-      $('wan-select')?.value &&
+      familyAvailable(state.family) &&
+      endpointSelect()?.value &&
       $('wg-select')?.value
     );
   }
@@ -23,25 +73,42 @@
   function syncFamily() {
     if (!context) return;
     const state = context.state;
-    const t = context.t;
-    const ipv4 = $('family-segment')?.querySelector('[data-family="ipv4"]');
-    const ipv6 = $('family-segment')?.querySelector('[data-family="ipv6"]');
-    const dual = $('family-segment')?.querySelector('[data-family="dual"]');
+    const familyRoot = $('family-segment');
+    if (!familyRoot) return;
 
-    if (!ipv4 || !ipv6 || !dual) return;
+    const previous = state.family;
+    state.family = chooseFamily();
 
-    ipv4.disabled = state.requestFamily !== 'ipv4';
-    ipv6.disabled = true;
-    dual.disabled = true;
-    state.family = 'ipv4';
-
-    $('family-segment').querySelectorAll('[data-family]').forEach((button) => {
-      button.classList.toggle('active', button.dataset.family === state.family);
+    familyRoot.querySelectorAll('[data-family]').forEach((button) => {
+      const family = button.dataset.family;
+      if (family === 'dual') {
+        button.disabled = true;
+        button.hidden = true;
+        button.classList.remove('active');
+        return;
+      }
+      button.hidden = false;
+      button.disabled = !familyAvailable(family);
+      button.classList.toggle('active', family === state.family);
+      button.setAttribute('aria-pressed', family === state.family ? 'true' : 'false');
+      button.title = familyReason(family);
     });
 
-    $('family-note').textContent = state.requestFamily === 'ipv4'
-      ? t('gate.familyNoteIpv4')
-      : t('gate.familyNoteIpv6');
+    const note = $('family-note');
+    if (note) note.textContent = familyReason(state.family);
+    if (previous !== state.family) context.onFamilyChange?.(state.family);
+  }
+
+  function syncScope() {
+    if (!context) return;
+    const root = $('scope-segment');
+    if (!root) return;
+    if (!['wg', 'wg_ping'].includes(context.state.scope)) context.state.scope = 'wg';
+    root.querySelectorAll('[data-scope]').forEach((button) => {
+      const active = button.dataset.scope === context.state.scope;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
   }
 
   function render(currentData = data()) {
@@ -51,6 +118,7 @@
     const remaining = context.remaining;
 
     syncFamily();
+    syncScope();
 
     const pending = currentData?.gate?.queue?.pending;
     const last = currentData?.gate?.queue?.last;
@@ -88,45 +156,41 @@
 
     const activatable = canActivate();
 
-    orb.dataset.state = mode;
-    orb.dataset.hint = t('gate.activate');
-    orb.disabled = mode !== 'closed' || !activatable;
-    orb.setAttribute('aria-disabled', orb.disabled ? 'true' : 'false');
-    orb.setAttribute('aria-label', activatable ? t('gate.activate') : subtitle);
-    orb.title = activatable ? t('gate.activate') : subtitle;
+    if (orb) {
+      orb.dataset.state = mode;
+      orb.dataset.hint = t('gate.activate');
+      orb.disabled = mode !== 'closed' || !activatable;
+      orb.setAttribute('aria-disabled', orb.disabled ? 'true' : 'false');
+      orb.setAttribute('aria-label', activatable ? t('gate.activate') : familyReason(state.family));
+      orb.title = activatable ? t('gate.activate') : familyReason(state.family);
+    }
 
-    $('gate-state').textContent = title;
-    $('gate-substate').textContent = subtitle;
-    $('gate-state-badge').textContent = badge;
-    $('gate-lock').textContent = active ? '◇' : '◆';
+    if ($('gate-state')) $('gate-state').textContent = title;
+    if ($('gate-substate')) $('gate-substate').textContent = subtitle;
+    if ($('gate-state-badge')) $('gate-state-badge').textContent = badge;
+    if ($('gate-lock')) $('gate-lock').textContent = active ? '◇' : '◆';
 
-    $('activate-button').classList.toggle('hidden', active);
-    $('close-button').classList.toggle('hidden', !active);
-    $('activate-button').disabled = !activatable;
-    $('close-button').disabled = state.busy || Boolean(pending);
+    $('activate-button')?.classList.toggle('hidden', active);
+    $('close-button')?.classList.toggle('hidden', !active);
+    if ($('activate-button')) $('activate-button').disabled = !activatable;
+    if ($('close-button')) $('close-button').disabled = state.busy || Boolean(pending);
   }
 
   function activate() {
-    if (!context) return;
+    if (!context || !canActivate()) return;
     const state = context.state;
-
-    if (state.requestFamily !== 'ipv4') {
-      context.toast(context.t('toast.ipv4Required'), 'error');
-      return;
-    }
-    if (!canActivate()) return;
-
     context.post('/api/v1/gate/activate', {
-      wan: $('wan-select').value,
-      wireguard: $('wg-select').value,
-      ttl: state.ttl,
-      family: state.family
+      endpoint_id: endpointSelect().value,
+      family: state.family,
+      scope: state.scope || 'wg',
+      ttl: state.ttl
     });
   }
 
   function bind(nextContext) {
     context = nextContext;
     const state = context.state;
+    if (!state.scope) state.scope = 'wg';
 
     $('ttl-segment')?.addEventListener('click', (event) => {
       const button = event.target.closest('[data-ttl]');
@@ -134,21 +198,29 @@
       state.ttl = Number(button.dataset.ttl);
       $('ttl-segment').querySelectorAll('button').forEach((item) => {
         item.classList.toggle('active', item === button);
+        item.setAttribute('aria-pressed', item === button ? 'true' : 'false');
       });
     });
 
     $('family-segment')?.addEventListener('click', (event) => {
       const button = event.target.closest('[data-family]');
-      if (!button || button.disabled) return;
+      if (!button || button.disabled || !['ipv4', 'ipv6'].includes(button.dataset.family)) return;
       state.family = button.dataset.family;
-      $('family-segment').querySelectorAll('[data-family]').forEach((item) => {
-        item.classList.toggle('active', item === button);
-      });
+      context.onFamilyChange?.(state.family);
+      render();
     });
 
-    $('wan-select')?.addEventListener('change', () => render());
+    $('scope-segment')?.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-scope]');
+      if (!button || !['wg', 'wg_ping'].includes(button.dataset.scope)) return;
+      state.scope = button.dataset.scope;
+      syncScope();
+    });
+
+    endpointSelect()?.addEventListener('change', () => render());
     $('wg-select')?.addEventListener('change', () => {
       context.onWireGuardChange?.();
+      syncFamily();
       render();
     });
 
@@ -159,5 +231,5 @@
     window.addEventListener('remote-gate-language', () => render());
   }
 
-  window.RemoteGateGateControls = {bind, render, canActivate, activate};
+  window.RemoteGateGateControls = {bind, render, canActivate, activate, familyAvailable};
 })();
