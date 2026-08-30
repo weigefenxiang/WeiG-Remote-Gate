@@ -82,6 +82,7 @@ FILES=(
   "server/remote-gate.py"
   "server/remote-gate.service"
   "server/uninstall.sh"
+  "server/update.sh"
   "server/app/__init__.py"
   "server/app/config.py"
   "server/app/store.py"
@@ -119,9 +120,11 @@ done
 
 python3 -m py_compile "$TMP_DIR"/server/app/*.py "$TMP_DIR/server/remote-gate.py"
 bash -n "$TMP_DIR/server/uninstall.sh"
+bash -n "$TMP_DIR/server/update.sh"
 
 install -o root -g root -m 0755 "$TMP_DIR/server/remote-gate.py" "$LIB_DIR/remote-gate.py"
 install -o root -g root -m 0755 "$TMP_DIR/server/uninstall.sh" "$LIB_DIR/uninstall.sh"
+install -o root -g root -m 0755 "$TMP_DIR/server/update.sh" "$LIB_DIR/update.sh"
 install -o root -g root -m 0644 "$TMP_DIR/server/remote-gate.service" "$SERVICE_FILE"
 cp -a "$TMP_DIR/server/app/." "$LIB_DIR/app/"
 find "$LIB_DIR/app" -type d -exec chmod 0755 {} +
@@ -196,4 +199,5 @@ printf 'Backend:       127.0.0.1:29444 (localhost only)\n'
 printf 'WRITE_TOKEN:   %s\n' "$WRITE_TOKEN"
 printf '\nStore WRITE_TOKEN only on the OpenWrt device and the VPS secret file.\n'
 printf 'Recommended public path: Cloudflare Tunnel -> http://127.0.0.1:29444\n'
+printf 'Safe update:    %s/update.sh\n' "$LIB_DIR"
 printf 'Safe uninstall: %s/uninstall.sh --dry-run\n' "$LIB_DIR"
