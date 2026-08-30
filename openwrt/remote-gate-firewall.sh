@@ -268,6 +268,13 @@ fw3_rebuild_v6() {
         fw3_remove_jump_v6
         return 0
     }
+    if [ ! -s "$DEVICES_V6_FILE" ]; then
+        fw3_remove_jump_v6
+        ip6tables -F "$FW3_CHAIN_V6" >/dev/null 2>&1 || true
+        ip6tables -X "$FW3_CHAIN_V6" >/dev/null 2>&1 || true
+        ipset flush "$FW3_AUTH_SET_V6" >/dev/null 2>&1 || true
+        return 0
+    fi
     ip6tables -N "$FW3_CHAIN_V6" >/dev/null 2>&1 || true
     fw3_remove_jump_v6
     ip6tables -F "$FW3_CHAIN_V6"
@@ -314,6 +321,8 @@ fw3_verify() {
         ip6tables -C INPUT -j "$FW3_CHAIN_V6" >/dev/null 2>&1 || return 1
         first_rule6="$(ip6tables -S INPUT | sed -n '2p')"
         [ "$first_rule6" = "-A INPUT -j $FW3_CHAIN_V6" ] || return 1
+    elif command -v ip6tables >/dev/null 2>&1; then
+        ip6tables -C INPUT -j "$FW3_CHAIN_V6" >/dev/null 2>&1 && return 1
     fi
 }
 
