@@ -67,12 +67,17 @@ backend() {
 }
 
 register_include() {
+    b="$1"
     command -v uci >/dev/null 2>&1 || fail "uci is required"
     uci -q delete firewall.remote_gate 2>/dev/null || true
     uci set firewall.remote_gate='include'
+    uci set firewall.remote_gate.type='script'
     uci set firewall.remote_gate.path="$INCLUDE_SCRIPT"
     uci set firewall.remote_gate.enabled='1'
-    uci set firewall.remote_gate.reload='1'
+    case "$b" in
+        fw3-iptables) uci set firewall.remote_gate.reload='1' ;;
+        fw4-nftables) uci set firewall.remote_gate.fw4_compatible='1' ;;
+    esac
     uci commit firewall
 }
 
@@ -157,13 +162,15 @@ fw3_rebuild() {
     iptables -F "$FW3_CHAIN"
     iptables -I INPUT 1 -j "$FW3_CHAIN"
 
+    # v0.2 intentionally permits exactly one active source. Rebuild the auth set
+    # from the single persisted authorization so an older client is revoked now,
+    # not when its previous timeout would otherwise expire.
+    ipset flush "$FW3_AUTH_SET" >/dev/null 2>&1 || true
     read_auth
     if [ -n "$AUTH_IP" ]; then
         ipset -exist add "$FW3_AUTH_SET" "$AUTH_IP" timeout "$AUTH_REMAINING" >/dev/null
         iptables -A "$FW3_CHAIN" -i "$AUTH_DEVICE" -p icmp --icmp-type echo-request -m set --match-set "$FW3_AUTH_SET" src -j ACCEPT
         iptables -A "$FW3_CHAIN" -i "$AUTH_DEVICE" -p udp --dport "$AUTH_PORT" -m set --match-set "$FW3_AUTH_SET" src -j ACCEPT
-    else
-        ipset flush "$FW3_AUTH_SET" >/dev/null 2>&1 || true
     fi
 
     while IFS= read -r dev; do
@@ -234,7 +241,7 @@ install_rules() {
     b="$(detect_backend)" || fail "unsupported firewall: need fw4+nft or fw3+iptables+ipset"
     printf '%s\n' "$b" > "$BACKEND_FILE"
     chmod 600 "$BACKEND_FILE"
-    register_include
+    register_include "$b"
     case "$b" in
         fw4-nftables)
             write_fw4_includes
@@ -305,7 +312,7 @@ clear_auth() {
     rm -f "$AUTH_FILE"
     b="$(backend 2>/dev/null || true)"
     case "$b" in
-        fw3-iptables) ipset flush "$FW3_AUTH_SET" >/dev/null 2>&1 || true; fw3_rebuild ;;
+        fw3-iptables) fw3_rebuild ;;
         fw4-nftables) fw4_restore_sets ;;
     esac
     logger -t "$TAG" "temporary authorization cleared" 2>/dev/null || true
