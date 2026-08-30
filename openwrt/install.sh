@@ -5,6 +5,7 @@ RAW_BASE="${REMOTE_GATE_RAW_BASE:-https://raw.githubusercontent.com/weigefenxian
 LIB_DIR="/usr/lib/remote-gate"
 CONFIG_FILE="/etc/remote-gate.conf"
 INIT_FILE="/etc/init.d/remote-gate-agent"
+HOTPLUG_FILE="/etc/hotplug.d/iface/95-remote-gate"
 CRON_LINE="*/5 * * * * /usr/lib/remote-gate/remote-gate-report.sh"
 
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -29,7 +30,7 @@ stty echo
 printf '\n'
 [ "${#WRITE_TOKEN}" -ge 32 ] || fail "WRITE_TOKEN is too short."
 
-mkdir -p "$LIB_DIR"
+mkdir -p "$LIB_DIR" "$(dirname "$HOTPLUG_FILE")"
 chmod 0755 "$LIB_DIR"
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd -P)"
 fetch_file() {
@@ -46,7 +47,8 @@ fetch_file "remote-gate-agent.sh" "$LIB_DIR/remote-gate-agent.sh"
 fetch_file "remote-gate-firewall.sh" "$LIB_DIR/remote-gate-firewall.sh"
 fetch_file "remote-gate-firewall-include.sh" "$LIB_DIR/remote-gate-firewall-include.sh"
 fetch_file "remote-gate-agent.init" "$INIT_FILE"
-chmod 0755 "$LIB_DIR"/*.sh "$INIT_FILE"
+fetch_file "remote-gate-hotplug.sh" "$HOTPLUG_FILE"
+chmod 0755 "$LIB_DIR"/*.sh "$INIT_FILE" "$HOTPLUG_FILE"
 
 BACKEND="$("$LIB_DIR/remote-gate-firewall.sh" detect 2>/dev/null)" || \
     fail "Unsupported firewall. Need fw4+nftables or fw3+iptables+ipset."
