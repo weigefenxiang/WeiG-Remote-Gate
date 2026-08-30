@@ -57,12 +57,7 @@ jobs:
 
           test = Path("tests/test_firewall_backends.py")
           source = test.read_text(encoding="utf-8")
-          needle = '''    def test_scope_can_keep_ping_closed(self):
-              source = FIREWALL.read_text(encoding="utf-8")
-              self.assertIn('if [ "$AUTH_SCOPE" = "wg_ping" ]', source)
-              self.assertIn('valid_scope() { case "$1" in wg|wg_ping)', source)
-
-          '''
+          marker = "    def test_scope_can_keep_ping_closed(self):\n"
           addition = '''    def test_fw3_first_rule_verification_ignores_optional_policy_line(self):
               source = FIREWALL.read_text(encoding="utf-8")
               self.assertIn("awk '$1 == \\\"-A\\\" && $2 == \\\"INPUT\\\" { print; exit }'", source)
@@ -70,9 +65,9 @@ jobs:
               self.assertNotIn("ip6tables -S INPUT | sed -n '2p'", source)
 
           '''
-          if source.count(needle) != 1:
-              raise SystemExit("test insertion point not found exactly once")
-          test.write_text(source.replace(needle, addition + needle), encoding="utf-8")
+          if source.count(marker) != 1:
+              raise SystemExit("test insertion marker not found exactly once")
+          test.write_text(source.replace(marker, addition + marker), encoding="utf-8")
 
           Path(".github/workflows/maintenance-fix-fw3-verify.yml").unlink()
       - name: Validate patch
