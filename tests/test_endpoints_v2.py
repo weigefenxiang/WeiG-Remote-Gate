@@ -101,6 +101,38 @@ class EndpointTests(unittest.TestCase):
         endpoints = build_endpoints(self.store)
         self.assertFalse(any(x.get("provider") == "egress_probe" for x in endpoints))
 
+    def test_link_local_ipv6_stays_in_inventory_but_is_not_an_endpoint(self):
+        inventory = dict(self.inventory)
+        inventory["wans"] = [dict(x) for x in self.inventory["wans"]]
+        inventory["wans"][0]["ipv6"] = [
+            "2606:4700:4700::1111",
+            "fe80::1234",
+        ]
+
+        normalized = validate_inventory_v2(inventory)
+        self.store.write("inventory-v2.json", normalized)
+
+        stored_v6 = normalized["wans"][0]["ipv6"]
+        self.assertTrue(
+            any(x["address"] == "fe80::1234" for x in stored_v6)
+        )
+
+        endpoints = build_endpoints(self.store)
+        wan_v6 = [
+            x for x in endpoints
+            if x["wan"] == "WAN" and x["family"] == "ipv6"
+        ]
+
+        self.assertTrue(
+            any(x["external_address"] == "2606:4700:4700::1111" for x in wan_v6)
+        )
+        self.assertFalse(
+            any(x["external_address"] == "fe80::1234" for x in wan_v6)
+        )
+        self.assertTrue(
+            all(x["reachability"] == "direct" for x in wan_v6)
+        )
+
     def test_ipv6_activation_uses_exact_source_and_wg_only_scope(self):
         endpoint = [x for x in build_endpoints(self.store) if x["wan"] == "WAN" and x["family"] == "ipv6"][0]
         command = queue_activate(
