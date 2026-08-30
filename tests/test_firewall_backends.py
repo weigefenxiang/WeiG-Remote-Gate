@@ -94,6 +94,13 @@ class FirewallBackendTests(unittest.TestCase):
         self.assertIn("wireguard_ports", source)
         self.assertIn('"$FIREWALL" sync "$v4" "$v6" "$ports"', source)
 
+    def test_private_ipv4_wans_are_in_gate_policy(self):
+        source = AGENT.read_text(encoding="utf-8")
+        block = source.split("v4_protected_devices() {", 1)[1].split("v6_protected_devices() {", 1)[0]
+        self.assertIn('[ -s "$base.v4" ] || continue', block)
+        self.assertIn("printf '%s\\n' \"$dev\"", block)
+        self.assertNotIn("is_public_ipv4", block)
+
     def test_agent_uses_health_based_transport_candidates(self):
         source = AGENT.read_text(encoding="utf-8")
         self.assertIn("control_candidates", source)
