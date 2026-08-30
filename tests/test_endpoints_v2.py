@@ -69,7 +69,7 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(wan_v6["reachability"], "direct")
 
     def test_private_wan_egress_probe_creates_public_try_endpoint(self):
-        observe_wan_egress(self.store, "pppoe-WAN", "1.1.1.1", now=100)
+        observe_wan_egress(self.store, "pppoe-WAN", "1.1.1.1")
         endpoints = build_endpoints(self.store)
         egress = [x for x in endpoints if x.get("provider") == "egress_probe"][0]
         self.assertEqual(egress["wan"], "WAN")
