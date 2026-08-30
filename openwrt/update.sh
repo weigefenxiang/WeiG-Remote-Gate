@@ -135,8 +135,13 @@ if [ ! -f "$STATE_DIR/install-manifest" ]; then
     chmod 0600 "$STATE_DIR/install-manifest"
 fi
 
+# Normalize policy state before install-time verification. Legacy/interrupted
+# upgrades can leave protected-device files that no longer match the migrated
+# GATE_IPV6 mode or the current WAN inventory. sync-firewall rebuilds those
+# files and restores rules without depending on fw3_verify().
+"$LIB_DIR/remote-gate-agent.sh" sync-firewall || fail "Pre-install firewall policy sync failed."
 "$LIB_DIR/remote-gate-firewall.sh" install >/dev/null || fail "Firewall integration failed."
-"$LIB_DIR/remote-gate-agent.sh" sync-firewall || fail "Dual-stack firewall policy sync failed."
+"$LIB_DIR/remote-gate-agent.sh" sync-firewall || fail "Post-install firewall policy sync failed."
 status="$("$LIB_DIR/remote-gate-firewall.sh" status-json 2>/dev/null || true)"
 printf '%s\n' "$status" | grep -q '"ready":true' || fail "Firewall self-check did not report ready=true."
 
