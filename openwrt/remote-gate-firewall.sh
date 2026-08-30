@@ -220,6 +220,27 @@ read_auth() {
     AUTH_REMAINING="$((AUTH_EXPIRES - now))"
 }
 
+auth_policy_current() {
+    [ -n "$AUTH_IP" ] || return 1
+    case "$AUTH_FAMILY" in
+        ipv4) device_file="$DEVICES_V4_FILE" ;;
+        ipv6) device_file="$DEVICES_V6_FILE" ;;
+        *) return 1 ;;
+    esac
+    grep -Fqx "$AUTH_DEVICE" "$device_file" 2>/dev/null || return 1
+    grep -Fqx "$AUTH_PORT" "$PORTS_FILE" 2>/dev/null || return 1
+    return 0
+}
+
+reconcile_auth_policy() {
+    read_auth
+    [ -n "$AUTH_IP" ] || return 0
+    auth_policy_current && return 0
+    logger -t "$TAG" "temporary authorization revoked because protected WAN/port policy changed" 2>/dev/null || true
+    rm -f "$AUTH_FILE"
+    clear_auth_vars
+}
+
 fw3_remove_jump_v4() {
     while iptables -C INPUT -j "$FW3_CHAIN_V4" >/dev/null 2>&1; do
         iptables -D INPUT -j "$FW3_CHAIN_V4" >/dev/null 2>&1 || break
@@ -308,6 +329,7 @@ fw3_rebuild_v6() {
 
 fw3_rebuild() {
     fw3_ensure_sets
+    reconcile_auth_policy
     fw3_rebuild_v4
     fw3_rebuild_v6
 }
@@ -369,7 +391,7 @@ fw4_restore_sets() {
     fw4_add_lines weig_remote_gate_protected_ifname_v6 "$DEVICES_V6_FILE" ifname
     fw4_add_lines weig_remote_gate_protected_udp_port "$PORTS_FILE" port
 
-    read_auth
+    reconcile_auth_policy
     [ -n "$AUTH_IP" ] || return 0
     auth_set="weig_remote_gate_auth_ipv4"
     [ "$AUTH_FAMILY" = "ipv6" ] && auth_set="weig_remote_gate_auth_ipv6"
@@ -528,7 +550,7 @@ status_json() {
         fw4-nftables) ipv6_capable=true ;;
     esac
 
-    read_auth
+    reconcile_auth_policy
     active=false
     if [ -n "$AUTH_IP" ]; then
         case "$b:$AUTH_FAMILY" in
