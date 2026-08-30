@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   apply:
-    if: github.event.head_commit.message == 'ci: stage v0.3 maintenance helper'
+    if: startsWith(github.event.head_commit.message, 'ci: stage v0.3 maintenance helper')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,8 +21,10 @@ jobs:
           fetch-depth: 1
 
       - name: Remove idle fw3 IPv6 guard
-        shell: python
+        shell: bash
         run: |
+          set -euo pipefail
+          python3 - <<'PY'
           from pathlib import Path
 
           path = Path('openwrt/remote-gate-firewall.sh')
@@ -51,6 +53,7 @@ jobs:
           if old not in source:
               raise SystemExit('expected fw3_rebuild_v6 block not found')
           path.write_text(source.replace(old, new, 1), encoding='utf-8')
+          PY
 
       - name: Sync canonical Wei.G icon
         shell: bash
