@@ -3,7 +3,7 @@ import time
 import unittest
 from pathlib import Path
 
-from server.app.gate import GateError, ack_command, pull_command, queue_activate, queue_close
+from server.app.gate import GateError, ack_command, pull_command, queue_activate, queue_close, valid_ttl
 from server.app.store import JsonStore
 
 
@@ -35,13 +35,13 @@ class GateTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def activate(self):
+    def activate(self, ttl=300):
         return queue_activate(
             self.store,
             source_ip="198.51.100.7",
             wan_name="WAN2",
             wg_name="WG_HOME",
-            ttl=300,
+            ttl=ttl,
         )
 
     def test_browser_source_is_bound_into_command(self):
@@ -59,6 +59,22 @@ class GateTests(unittest.TestCase):
                 wg_name="WG_HOME",
                 ttl=300,
             )
+
+    def test_preset_ttls_remain_valid(self):
+        for ttl in (60, 300, 900, 1800):
+            self.assertTrue(valid_ttl(ttl), ttl)
+
+    def test_custom_ttl_accepts_half_hour_steps_through_twelve_hours(self):
+        for ttl in (1800, 3600, 5400, 21600, 41400, 43200):
+            self.assertTrue(valid_ttl(ttl), ttl)
+
+    def test_custom_ttl_rejects_out_of_range_or_wrong_step(self):
+        for ttl in (0, 59, 360, 1799, 2700, 4500, 43201, 45000):
+            self.assertFalse(valid_ttl(ttl), ttl)
+
+    def test_twelve_hour_command_is_preserved(self):
+        command = self.activate(ttl=43200)
+        self.assertEqual(command["ttl"], 43200)
 
     def test_command_is_consumed_once(self):
         command = self.activate()
