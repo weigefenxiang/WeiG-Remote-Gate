@@ -55,6 +55,7 @@ FILES=(
   "server/remote-gate.py"
   "server/remote-gate.service"
   "server/uninstall.sh"
+  "server/update.sh"
   "server/app/__init__.py"
   "server/app/config.py"
   "server/app/store.py"
@@ -92,6 +93,7 @@ for rel in "${FILES[@]}"; do
 done
 python3 -m py_compile "$TMP_DIR"/server/app/*.py "$TMP_DIR/server/remote-gate.py"
 bash -n "$TMP_DIR/server/uninstall.sh"
+bash -n "$TMP_DIR/server/update.sh"
 
 REMOTE_VERSION="$(sed -n '1p' "$TMP_DIR/VERSION")"
 LOCAL_VERSION="$(cat "$LIB_DIR/VERSION" 2>/dev/null || echo unknown)"
@@ -115,6 +117,7 @@ rm -rf "$LIB_DIR"
 install -d -o root -g root -m 0755 "$LIB_DIR/app"
 install -o root -g root -m 0755 "$TMP_DIR/server/remote-gate.py" "$LIB_DIR/remote-gate.py"
 install -o root -g root -m 0755 "$TMP_DIR/server/uninstall.sh" "$LIB_DIR/uninstall.sh"
+install -o root -g root -m 0755 "$TMP_DIR/server/update.sh" "$LIB_DIR/update.sh"
 install -o root -g root -m 0644 "$TMP_DIR/server/remote-gate.service" "$SERVICE_FILE"
 cp -a "$TMP_DIR/server/app/." "$LIB_DIR/app/"
 find "$LIB_DIR/app" -type d -exec chmod 0755 {} +
@@ -158,4 +161,5 @@ rm -rf "$TMP_DIR"
 unset WRITE_TOKEN
 printf 'WeiG Remote Gate updated: %s -> %s\n' "$LOCAL_VERSION" "$REMOTE_VERSION"
 printf 'Backup: %s\n' "$BACKUP"
+printf 'Safe update: %s/update.sh\n' "$LIB_DIR"
 printf 'Safe uninstall: %s/uninstall.sh --dry-run\n' "$LIB_DIR"
