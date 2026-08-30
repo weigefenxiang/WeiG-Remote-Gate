@@ -8,6 +8,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 FIREWALL = ROOT / "openwrt" / "remote-gate-firewall.sh"
 AGENT = ROOT / "openwrt" / "remote-gate-agent.sh"
+OPENWRT_INSTALL = ROOT / "openwrt" / "install.sh"
+OPENWRT_UPDATE = ROOT / "openwrt" / "update.sh"
 
 
 def fake_cmd(directory: Path, name: str, body: str = "exit 0\n") -> None:
@@ -87,6 +89,16 @@ class FirewallBackendTests(unittest.TestCase):
         self.assertIn("remember_control_path", source)
         self.assertIn('flag="-6"', source)
         self.assertIn('flag="-4"', source)
+
+    def test_openwrt_lifecycle_deploys_read_only_audit(self):
+        for path in (OPENWRT_INSTALL, OPENWRT_UPDATE):
+            source = path.read_text(encoding="utf-8")
+            self.assertIn("remote-gate-audit.sh", source, path.name)
+        audit = (ROOT / "openwrt" / "remote-gate-audit.sh").read_text(encoding="utf-8")
+        self.assertIn("/var/run/natmap/*.json", audit)
+        self.assertIn("content intentionally not printed", audit)
+        self.assertNotIn("cat /etc/config/natmap", audit)
+        self.assertNotIn("cat /etc/remote-gate.conf", audit)
 
 
 if __name__ == "__main__":
