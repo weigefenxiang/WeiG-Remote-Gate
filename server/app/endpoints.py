@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
+import time
 from typing import Any
 
 from .store import JsonStore
+
+
+WAN_EGRESS_TTL = 10 * 60
 
 
 def _safe_ip(value: object) -> str | None:
@@ -24,6 +28,58 @@ def _address_kind(value: str) -> str:
 def _endpoint_id(parts: list[str]) -> str:
     raw = "|".join(parts).encode("utf-8")
     return "ep_" + hashlib.sha256(raw).hexdigest()[:20]
+
+
+def observe_wan_egress(
+    store: JsonStore,
+    device: str,
+    source_ip: str,
+    *,
+    now: int | None = None,
+) -> dict[str, Any]:
+    address = ipaddress.ip_address(source_ip)
+    if address.version != 4 or not address.is_global:
+        raise ValueError("public_ipv4_required")
+    current = int(time.time()) if now is None else int(now)
+    state = store.read("wan-egress-v4.json", {})
+    if not isinstance(state, dict):
+        state = {}
+    records = state.setdefault("devices", {})
+    if not isinstance(records, dict):
+        records = {}
+        state["devices"] = records
+    records[str(device)] = {
+        "address": str(address),
+        "observed_at": current,
+        "expires_at": current + WAN_EGRESS_TTL,
+    }
+    store.write("wan-egress-v4.json", state)
+    return dict(records[str(device)])
+
+
+def wan_egress_for_device(
+    store: JsonStore,
+    device: str,
+    *,
+    now: int | None = None,
+) -> dict[str, Any] | None:
+    current = int(time.time()) if now is None else int(now)
+    state = store.read("wan-egress-v4.json", {})
+    records = state.get("devices") if isinstance(state, dict) else None
+    item = records.get(str(device)) if isinstance(records, dict) else None
+    if not isinstance(item, dict) or int(item.get("expires_at", 0) or 0) <= current:
+        return None
+    address = _safe_ip(item.get("address"))
+    if not address:
+        return None
+    parsed = ipaddress.ip_address(address)
+    if parsed.version != 4 or not parsed.is_global:
+        return None
+    return {
+        "address": address,
+        "observed_at": int(item.get("observed_at", 0) or 0),
+        "expires_at": int(item.get("expires_at", 0) or 0),
+    }
 
 
 def normalize_inventory(store: JsonStore) -> dict[str, Any]:
@@ -178,14 +234,23 @@ def build_endpoints(store: JsonStore) -> list[dict[str, Any]]:
             continue
         name = str(wan.get("name") or "")
         device = str(wan.get("device") or "")
+        local_v4 = []
+        has_direct_v4 = False
+        for entry in wan.get("ipv4", []):
+            if not isinstance(entry, dict):
+                continue
+            address = _safe_ip(entry.get("address"))
+            if not address:
+                continue
+            local_v4.append(address)
+            if ipaddress.ip_address(address).is_global:
+                has_direct_v4 = True
+
+        egress = None if has_direct_v4 else wan_egress_for_device(store, device)
+
         for wg in wireguards:
             port = int(wg["listen_port"])
-            for entry in wan.get("ipv4", []):
-                if not isinstance(entry, dict):
-                    continue
-                address = _safe_ip(entry.get("address"))
-                if not address:
-                    continue
+            for address in local_v4:
                 direct = ipaddress.ip_address(address).is_global
                 endpoints.append({
                     "id": _endpoint_id(["native", name, device, "ipv4", address, str(port), wg["name"]]),
@@ -200,6 +265,25 @@ def build_endpoints(store: JsonStore) -> list[dict[str, Any]]:
                     "reachability": "direct" if direct else "private",
                     "priority": 0 if direct else 90,
                 })
+
+            if egress:
+                endpoints.append({
+                    "id": _endpoint_id([
+                        "egress_probe", name, device, str(egress["address"]), str(port), wg["name"]
+                    ]),
+                    "wan": name,
+                    "device": device,
+                    "family": "ipv4",
+                    "provider": "egress_probe",
+                    "external_address": str(egress["address"]),
+                    "external_port": port,
+                    "local_port": port,
+                    "wireguard": wg["name"],
+                    "reachability": "egress_probe",
+                    "priority": 30,
+                    "observed_at": int(egress["observed_at"]),
+                })
+
             for entry in wan.get("ipv6", []):
                 if not isinstance(entry, dict):
                     continue
