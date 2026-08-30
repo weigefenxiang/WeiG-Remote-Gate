@@ -122,7 +122,7 @@
 }
 
 /*
- * Compact workspace mode deliberately does not use display:contents.
+ * Compact workspace mode does not flatten the desktop zones into the same grid.
  * JS moves every card into workspace-flow in a deterministic order so tablet
  * and mobile layout cannot inherit desktop zone/span state and overlap.
  */
