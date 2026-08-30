@@ -71,6 +71,17 @@ class FirewallBackendTests(unittest.TestCase):
         self.assertIn('ip6tables -X "$FW3_CHAIN_V6" >/dev/null 2>&1 || true', source)
         self.assertIn('ip6tables -C INPUT -j "$FW3_CHAIN_V6" >/dev/null 2>&1 && return 1', source)
 
+    def test_authorization_is_revoked_when_endpoint_policy_changes(self):
+        source = FIREWALL.read_text(encoding="utf-8")
+        self.assertIn("auth_policy_current()", source)
+        self.assertIn('grep -Fqx "$AUTH_DEVICE" "$device_file"', source)
+        self.assertIn('grep -Fqx "$AUTH_PORT" "$PORTS_FILE"', source)
+        self.assertIn("reconcile_auth_policy", source)
+        self.assertIn("temporary authorization revoked because protected WAN/port policy changed", source)
+        self.assertIn("fw3_ensure_sets\n    reconcile_auth_policy", source)
+        self.assertIn("fw4_add_lines weig_remote_gate_protected_udp_port", source)
+        self.assertIn("    reconcile_auth_policy\n    [ -n \"$AUTH_IP\" ] || return 0", source)
+
     def test_scope_can_keep_ping_closed(self):
         source = FIREWALL.read_text(encoding="utf-8")
         self.assertIn('if [ "$AUTH_SCOPE" = "wg_ping" ]', source)
