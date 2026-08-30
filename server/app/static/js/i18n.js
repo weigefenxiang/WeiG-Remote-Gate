@@ -12,6 +12,10 @@
       'common.notReady': 'Not ready',
       'common.enabled': 'Enabled',
       'common.disabled': 'Disabled',
+      'common.online': 'Online',
+      'common.waiting': 'Waiting',
+      'common.justNow': 'Just now',
+
       'header.secureRemoteAccess': 'Secure Remote Access',
       'header.systemOnline': 'System online',
       'header.openwrtOnline': 'OpenWrt online',
@@ -26,8 +30,10 @@
       'theme.auto': 'Auto',
       'theme.light': 'Light',
       'theme.dark': 'Dark',
+
       'dashboard.title': 'Remote access console',
-      'dashboard.subtitle': 'Private by default. Open only the current client when needed.',
+      'dashboard.subtitle': 'Private by default. Open only a trusted client source when needed.',
+
       'gate.eyebrow': 'REMOTE GATE',
       'gate.title': 'Temporary WAN access',
       'gate.closed': 'Closed',
@@ -39,31 +45,32 @@
       'gate.expiresIn': 'Expires in {value}',
       'gate.error': 'Error',
       'gate.agentFailed': 'Agent command failed',
-      'gate.publicWan': 'Public WAN',
       'gate.wireguard': 'WireGuard',
+      'gate.endpoint': 'Access Endpoint',
       'gate.family': 'IP Family',
-      'gate.familyIpv4': 'IPv4',
-      'gate.familyIpv6': 'IPv6',
-      'gate.familyDual': 'Dual',
-      'gate.familyNoteIpv4': 'IPv4 Gate is enabled only when this control request itself is using IPv4.',
-      'gate.familyNoteIpv6': 'IPv6 is displayed but data-plane authorization is not enabled in this verified release.',
       'gate.duration': 'Access duration',
+      'gate.scope': 'Access Scope',
+      'gate.scopeWg': 'WireGuard only',
+      'gate.scopeWgPing': 'WireGuard + Ping',
+      'gate.recommended': 'Recommended',
       'gate.activate': 'Activate remote access',
       'gate.close': 'Close access now',
       'gate.closedBadge': 'CLOSED',
       'gate.pendingBadge': 'PENDING',
       'gate.authorizedBadge': 'AUTHORIZED',
       'gate.errorBadge': 'ERROR',
+      'gate.familySourceMissing': '{family} cannot be selected until this signed-in session is recently observed over {family}.',
+      'gate.ipv6Unavailable': 'IPv6 Gate is disabled or unavailable on this OpenWrt.',
+      'gate.familyEndpointMissing': 'No reachable {family} WireGuard endpoint is currently reported.',
+      'gate.familyReady': '{family} ready · trusted source {source} · {count} reachable endpoint(s) · current request {request}.',
+
       'client.eyebrow': 'CURRENT CLIENT',
-      'client.title': 'Observed addresses',
-      'client.requestVia': 'Request via',
-      'client.ipv4': 'IPv4',
-      'client.ipv6': 'IPv6',
+      'client.title': 'Trusted sources',
       'client.authorization': 'Gate authorization',
       'client.currentRequest': 'Current request',
-      'client.browserObserved': 'Observed by this browser',
-      'client.displayOnly': 'Display only',
-      'client.trustNote': 'Browser-saved addresses are display-only and are never trusted as authorization input.',
+      'client.serverObserved': 'Observed by VPS',
+      'client.trustNote': 'Only addresses recently observed by the VPS through Cloudflare can be authorized. Browser-supplied IPs are never trusted.',
+
       'wg.eyebrow': 'WIREGUARD',
       'wg.title': 'Secure tunnel',
       'wg.interface': 'Interface',
@@ -77,28 +84,33 @@
       'wg.noHandshake': 'No recent Handshake',
       'wg.lanHint': 'LAN access',
       'wg.lanHintValue': 'Verify client AllowedIPs and WG → LAN forwarding',
-      'wan.eyebrow': 'PUBLIC WAN',
-      'wan.title': 'Interfaces',
+
+      'wan.eyebrow': 'MULTI-WAN',
+      'wan.title': 'Access paths',
+      'wan.path': 'WAN PATH',
       'wan.waiting': 'Waiting for OpenWrt report…',
-      'wan.noInterfaces': 'No WAN interfaces reported yet.',
-      'wan.public': 'PUBLIC WAN',
+      'wan.noInterfaces': 'No WAN paths reported yet.',
+      'wan.direct': 'DIRECT',
       'wan.private': 'PRIVATE / CGNAT',
+      'wan.nonGlobal': 'NON-GLOBAL',
       'wan.active': 'ACTIVE',
       'wan.inactive': 'INACTIVE',
-      'wan.reported': 'Reported {value}',
-      'wan.neverReported': 'Never reported',
       'wan.unknownDevice': 'Unknown device',
+      'wan.noDefaultRoute': 'No default route',
+
       'activity.eyebrow': 'SECURITY EVENT STREAM',
       'activity.title': 'Recent activity',
       'activity.empty': 'No security events yet.',
+
       'system.eyebrow': 'SYSTEM',
       'system.title': 'Runtime',
       'system.agent': 'Agent',
       'system.requestFamily': 'Request family',
-      'system.gateMode': 'Gate mode',
-      'system.gateModeValue': 'Verified IPv4',
-      'system.refresh': 'Refresh',
-      'system.every5s': 'Every 5s',
+      'system.ipv4Gate': 'IPv4 Gate',
+      'system.ipv6Gate': 'IPv6 Gate',
+      'system.firewall': 'Firewall',
+      'system.transport': 'Control path',
+
       'event.login_success': 'Signed in',
       'event.login_failed': 'Sign-in failed',
       'event.gate_requested': 'Gate activation requested',
@@ -106,11 +118,18 @@
       'event.command_done': 'OpenWrt command completed',
       'event.command_failed': 'OpenWrt command failed',
       'event.command_expired': 'Command expired',
-      'toast.ipCopied': 'IPv4 copied',
+
+      'toast.ipCopied': 'Address copied',
       'toast.clipboardUnavailable': 'Clipboard unavailable',
       'toast.closeQueued': 'Close command queued',
       'toast.authQueued': 'Authorization command queued',
-      'toast.ipv4Required': 'Open this control page over IPv4 before activating the verified IPv4 Gate.',
+      'toast.sourceNotObserved': 'The selected IP family has not been observed recently for this signed-in session.',
+      'toast.ipv6Unavailable': 'IPv6 Gate is disabled or unavailable on OpenWrt.',
+      'toast.endpointUnavailable': 'The selected access endpoint is no longer reachable.',
+      'toast.agentUpgradeRequired': 'OpenWrt Agent must be upgraded before using this dual-stack feature.',
+      'toast.familyMismatch': 'Trusted client source and endpoint IP families do not match.',
+      'toast.invalidScope': 'Invalid access scope.',
+
       'workspace.moveEarlier': 'Move earlier',
       'workspace.moveLater': 'Move later',
       'workspace.size': 'Card size',
@@ -118,6 +137,7 @@
       'workspace.normal': 'Normal',
       'workspace.wide': 'Wide',
       'workspace.drag': 'Drag card',
+
       'login.controlPlane': 'PRIVATE CONTROL PLANE',
       'login.description': 'Enter through Cloudflare only. The home WAN does not expose an HTTP/HTTPS management endpoint for this project.',
       'login.username': 'Username',
@@ -126,6 +146,7 @@
       'login.signIn': 'Sign in securely',
       'login.loopback': 'Loopback-only backend'
     },
+
     zh: {
       'common.unavailable': '不可用',
       'common.unknown': '未知',
@@ -137,6 +158,10 @@
       'common.notReady': 'Not ready',
       'common.enabled': '已启用',
       'common.disabled': '已禁用',
+      'common.online': 'Online',
+      'common.waiting': '等待中',
+      'common.justNow': '刚刚',
+
       'header.secureRemoteAccess': 'Secure Remote Access',
       'header.systemOnline': 'System online',
       'header.openwrtOnline': 'OpenWrt online',
@@ -151,8 +176,10 @@
       'theme.auto': 'Auto',
       'theme.light': 'Light',
       'theme.dark': 'Dark',
+
       'dashboard.title': 'Remote access console',
-      'dashboard.subtitle': '默认保持私有，仅在需要时临时开放当前 Client。',
+      'dashboard.subtitle': '默认保持私有，仅在需要时临时开放 VPS 已可信观察到的 Client。',
+
       'gate.eyebrow': 'REMOTE GATE',
       'gate.title': '临时 WAN 访问',
       'gate.closed': 'Closed',
@@ -164,31 +191,32 @@
       'gate.expiresIn': '{value} 后关闭',
       'gate.error': 'Error',
       'gate.agentFailed': 'Agent 命令失败',
-      'gate.publicWan': 'Public WAN',
       'gate.wireguard': 'WireGuard',
+      'gate.endpoint': 'Access Endpoint',
       'gate.family': 'IP Family',
-      'gate.familyIpv4': 'IPv4',
-      'gate.familyIpv6': 'IPv6',
-      'gate.familyDual': 'Dual',
-      'gate.familyNoteIpv4': '只有当前控制请求本身使用 IPv4 时，才允许启用已验证的 IPv4 Gate。',
-      'gate.familyNoteIpv6': 'IPv6 支持显示；本验证版本暂未启用 IPv6 数据面授权。',
       'gate.duration': '访问时长',
+      'gate.scope': 'Access Scope',
+      'gate.scopeWg': '仅 WireGuard',
+      'gate.scopeWgPing': 'WireGuard + Ping',
+      'gate.recommended': '推荐',
       'gate.activate': 'Activate remote access',
       'gate.close': '立即关闭访问',
       'gate.closedBadge': 'CLOSED',
       'gate.pendingBadge': 'PENDING',
       'gate.authorizedBadge': 'AUTHORIZED',
       'gate.errorBadge': 'ERROR',
+      'gate.familySourceMissing': '当前登录 Session 最近没有通过 {family} 被 VPS 可信观察到，因此暂不能选择 {family}。',
+      'gate.ipv6Unavailable': '此 OpenWrt 的 IPv6 Gate 已禁用或当前不可用。',
+      'gate.familyEndpointMissing': '当前没有上报可达的 {family} WireGuard Endpoint。',
+      'gate.familyReady': '{family} Ready · 可信 Source {source} · {count} 个可达 Endpoint · 当前网页请求 {request}。',
+
       'client.eyebrow': 'CURRENT CLIENT',
-      'client.title': '已观察地址',
-      'client.requestVia': '当前请求',
-      'client.ipv4': 'IPv4',
-      'client.ipv6': 'IPv6',
+      'client.title': '可信 Source',
       'client.authorization': 'Gate authorization',
       'client.currentRequest': '当前请求',
-      'client.browserObserved': '本浏览器曾观察到',
-      'client.displayOnly': '仅显示',
-      'client.trustNote': '浏览器本地保存的地址只用于显示，绝不会作为可信授权输入。',
+      'client.serverObserved': 'VPS 已观察',
+      'client.trustNote': '只有 VPS 经 Cloudflare 最近真实观察到的地址才能授权；浏览器提交或本地保存的 IP 永远不作为可信输入。',
+
       'wg.eyebrow': 'WIREGUARD',
       'wg.title': 'Secure tunnel',
       'wg.interface': 'Interface',
@@ -202,28 +230,33 @@
       'wg.noHandshake': '暂无最近 Handshake',
       'wg.lanHint': 'LAN access',
       'wg.lanHintValue': '请确认 Client AllowedIPs 与 WG → LAN forwarding',
-      'wan.eyebrow': 'PUBLIC WAN',
-      'wan.title': 'Interfaces',
+
+      'wan.eyebrow': 'MULTI-WAN',
+      'wan.title': 'Access paths',
+      'wan.path': 'WAN PATH',
       'wan.waiting': '等待 OpenWrt 上报…',
-      'wan.noInterfaces': '尚无 WAN Interface 上报。',
-      'wan.public': 'PUBLIC WAN',
+      'wan.noInterfaces': '尚无 WAN Path 上报。',
+      'wan.direct': 'DIRECT',
       'wan.private': 'PRIVATE / CGNAT',
+      'wan.nonGlobal': 'NON-GLOBAL',
       'wan.active': 'ACTIVE',
       'wan.inactive': 'INACTIVE',
-      'wan.reported': '{value} 前上报',
-      'wan.neverReported': '从未上报',
       'wan.unknownDevice': '未知 device',
+      'wan.noDefaultRoute': '无 default route',
+
       'activity.eyebrow': 'SECURITY EVENT STREAM',
       'activity.title': '最近 Activity',
       'activity.empty': '暂无 Security event。',
+
       'system.eyebrow': 'SYSTEM',
       'system.title': 'Runtime',
       'system.agent': 'Agent',
       'system.requestFamily': 'Request family',
-      'system.gateMode': 'Gate mode',
-      'system.gateModeValue': '已验证 IPv4',
-      'system.refresh': 'Refresh',
-      'system.every5s': '每 5 秒',
+      'system.ipv4Gate': 'IPv4 Gate',
+      'system.ipv6Gate': 'IPv6 Gate',
+      'system.firewall': 'Firewall',
+      'system.transport': 'Control path',
+
       'event.login_success': '已登录',
       'event.login_failed': '登录失败',
       'event.gate_requested': '已请求 Gate activation',
@@ -231,11 +264,18 @@
       'event.command_done': 'OpenWrt 命令已完成',
       'event.command_failed': 'OpenWrt 命令失败',
       'event.command_expired': '命令已过期',
-      'toast.ipCopied': 'IPv4 已复制',
+
+      'toast.ipCopied': '地址已复制',
       'toast.clipboardUnavailable': 'Clipboard 不可用',
       'toast.closeQueued': '关闭命令已排队',
       'toast.authQueued': '授权命令已排队',
-      'toast.ipv4Required': '请让控制页通过 IPv4 连接后，再启用已验证的 IPv4 Gate。',
+      'toast.sourceNotObserved': '当前登录 Session 最近没有可信观察到所选 IP Family 的 Client source。',
+      'toast.ipv6Unavailable': 'OpenWrt 的 IPv6 Gate 已禁用或不可用。',
+      'toast.endpointUnavailable': '所选 Access Endpoint 已不可达。',
+      'toast.agentUpgradeRequired': '需要先升级 OpenWrt Agent 才能使用该双栈功能。',
+      'toast.familyMismatch': '可信 Client source 与 Endpoint 的 IP Family 不一致。',
+      'toast.invalidScope': 'Access Scope 无效。',
+
       'workspace.moveEarlier': '向前移动',
       'workspace.moveLater': '向后移动',
       'workspace.size': '卡片尺寸',
@@ -243,6 +283,7 @@
       'workspace.normal': 'Normal',
       'workspace.wide': 'Wide',
       'workspace.drag': '拖动卡片',
+
       'login.controlPlane': 'PRIVATE CONTROL PLANE',
       'login.description': '仅通过 Cloudflare 进入控制面；家庭 WAN 不暴露本项目的 HTTP/HTTPS 管理入口。',
       'login.username': 'Username',
@@ -284,8 +325,9 @@
     document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
     document.documentElement.dataset.lang = language;
     document.querySelectorAll('[data-lang-choice]').forEach((button) => {
-      button.classList.toggle('active', button.dataset.langChoice === language);
-      button.setAttribute('aria-pressed', button.dataset.langChoice === language ? 'true' : 'false');
+      const active = button.dataset.langChoice === language;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
     });
   }
 
@@ -304,9 +346,7 @@
     if (button) setLanguage(button.dataset.langChoice);
   });
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => apply(), {once: true});
-  } else {
-    apply();
-  }
+  const ready = () => apply();
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready, {once: true});
+  else ready();
 })();
