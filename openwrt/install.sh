@@ -89,9 +89,17 @@ fi
 
 grep -Fqx "$CRON_LINE" /etc/crontabs/root 2>/dev/null || \
     printf '%s\n' "$CRON_LINE" >> /etc/crontabs/root
-[ -x /etc/init.d/cron ] && /etc/init.d/cron restart || true
+if [ -x /etc/init.d/cron ]; then
+    /etc/init.d/cron restart >/dev/null 2>&1 || true
+fi
+
 "$INIT_FILE" enable
-"$INIT_FILE" restart
+# A first-install `restart` asks procd to stop an instance that does not yet
+# exist and some older OpenWrt/ImmortalWrt releases print `Command failed:
+# Not found`. Stop quietly, then require a clean start instead.
+"$INIT_FILE" stop >/dev/null 2>&1 || true
+"$INIT_FILE" start || fail "Remote Gate agent failed to start."
+
 FORCE=1 FORCE_INVENTORY=1 "$LIB_DIR/remote-gate-report.sh" || true
 "$LIB_DIR/remote-gate-agent.sh" once || true
 
