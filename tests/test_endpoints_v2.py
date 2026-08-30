@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from server.app.endpoints import build_endpoints, validate_inventory_v2
+from server.app.endpoints import build_endpoints, observe_wan_egress, validate_inventory_v2
 from server.app.gate import queue_activate
 from server.app.store import JsonStore
 
@@ -67,6 +67,39 @@ class EndpointTests(unittest.TestCase):
         endpoints = build_endpoints(self.store)
         wan_v6 = [x for x in endpoints if x["wan"] == "WAN" and x["family"] == "ipv6"][0]
         self.assertEqual(wan_v6["reachability"], "direct")
+
+    def test_private_wan_egress_probe_creates_public_try_endpoint(self):
+        observe_wan_egress(self.store, "pppoe-WAN", "1.1.1.1", now=100)
+        endpoints = build_endpoints(self.store)
+        egress = [x for x in endpoints if x.get("provider") == "egress_probe"][0]
+        self.assertEqual(egress["wan"], "WAN")
+        self.assertEqual(egress["device"], "pppoe-WAN")
+        self.assertEqual(egress["external_address"], "1.1.1.1")
+        self.assertEqual(egress["external_port"], 51820)
+        self.assertEqual(egress["reachability"], "egress_probe")
+        self.assertLess(egress["priority"], 90)
+
+    def test_egress_probe_endpoint_can_be_attempted(self):
+        observe_wan_egress(self.store, "pppoe-WAN", "1.1.1.1")
+        endpoint = [x for x in build_endpoints(self.store) if x.get("provider") == "egress_probe"][0]
+        command = queue_activate(
+            self.store,
+            source_ip="8.8.4.4",
+            endpoint_id=endpoint["id"],
+            family="ipv4",
+            scope="wg",
+            ttl=300,
+        )
+        self.assertEqual(command["provider"], "egress_probe")
+        self.assertEqual(command["reachability"], "egress_probe")
+        self.assertEqual(command["external_address"], "1.1.1.1")
+        self.assertEqual(command["device"], "pppoe-WAN")
+
+    def test_expired_egress_probe_is_not_an_endpoint(self):
+        observe_wan_egress(self.store, "pppoe-WAN", "1.1.1.1", now=100)
+        # Store timestamps are deliberately old compared with wall clock.
+        endpoints = build_endpoints(self.store)
+        self.assertFalse(any(x.get("provider") == "egress_probe" for x in endpoints))
 
     def test_ipv6_activation_uses_exact_source_and_wg_only_scope(self):
         endpoint = [x for x in build_endpoints(self.store) if x["wan"] == "WAN" and x["family"] == "ipv6"][0]
