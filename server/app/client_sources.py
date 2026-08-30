@@ -68,6 +68,53 @@ def observe_source(
     return {"family": family, **families[family]}
 
 
+def observe_network_probe(
+    store: JsonStore,
+    session_token: str,
+    source_ip: str,
+    *,
+    family: str | None = None,
+    now: int | None = None,
+    ttl: int = PROBE_TTL,
+) -> dict[str, Any]:
+    """Remember an IPv4/IPv6 external-address probe without replacing verified data.
+
+    Probe values intentionally have lower confidence than Cloudflare observations.
+    They complement IPv4-first or IPv6-first sessions so both families can remain
+    selectable when the browser has usable connectivity for both.
+    """
+    address = ipaddress.ip_address(source_ip)
+    detected = "ipv4" if address.version == 4 else "ipv6"
+    if family is not None and family != detected:
+        raise ValueError("probe_family_mismatch")
+    if detected not in {"ipv4", "ipv6"} or not address.is_global:
+        raise ValueError("global_ip_required")
+
+    current = int(time.time()) if now is None else int(now)
+    key = _session_key(session_token)
+    state, sessions = _state(store, current)
+    record = sessions.setdefault(key, {"families": {}})
+    families = record.setdefault("families", {})
+
+    existing = families.get(detected)
+    if (
+        isinstance(existing, dict)
+        and existing.get("source") == "cloudflare"
+        and int(existing.get("expires_at", 0) or 0) > current
+    ):
+        return {"family": detected, **existing}
+
+    families[detected] = {
+        "address": str(address),
+        "observed_at": current,
+        "expires_at": current + max(30, min(int(ttl), PROBE_TTL)),
+        "source": "carrier_probe" if detected == "ipv4" else "network_probe",
+        "confidence": "heuristic",
+    }
+    store.write("client-sources.json", state)
+    return {"family": detected, **families[detected]}
+
+
 def observe_ipv4_probe(
     store: JsonStore,
     session_token: str,
@@ -76,39 +123,15 @@ def observe_ipv4_probe(
     now: int | None = None,
     ttl: int = PROBE_TTL,
 ) -> dict[str, Any]:
-    """Remember a browser-reported IPv4-only probe result for a short window.
-
-    This is intentionally marked heuristic. It exists for IPv6-first/mobile
-    carrier networks where the dashboard request itself never exposes the
-    carrier NAT IPv4 egress address.
-    """
-    address = ipaddress.ip_address(source_ip)
-    if address.version != 4 or not address.is_global:
-        raise ValueError("public_ipv4_required")
-
-    current = int(time.time()) if now is None else int(now)
-    key = _session_key(session_token)
-    state, sessions = _state(store, current)
-    record = sessions.setdefault(key, {"families": {}})
-    families = record.setdefault("families", {})
-
-    existing = families.get("ipv4")
-    if (
-        isinstance(existing, dict)
-        and existing.get("source") == "cloudflare"
-        and int(existing.get("expires_at", 0) or 0) > current
-    ):
-        return {"family": "ipv4", **existing}
-
-    families["ipv4"] = {
-        "address": str(address),
-        "observed_at": current,
-        "expires_at": current + max(30, min(int(ttl), PROBE_TTL)),
-        "source": "carrier_probe",
-        "confidence": "heuristic",
-    }
-    store.write("client-sources.json", state)
-    return {"family": "ipv4", **families["ipv4"]}
+    """Compatibility wrapper for the v0.3.0 IPv4-only probe contract."""
+    return observe_network_probe(
+        store,
+        session_token,
+        source_ip,
+        family="ipv4",
+        now=now,
+        ttl=ttl,
+    )
 
 
 def trusted_sources(
