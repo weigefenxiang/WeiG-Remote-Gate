@@ -183,10 +183,18 @@ fw4_check_order() {
     [ -n "$gate_line" ] && [ -n "$state_line" ] && [ "$gate_line" -lt "$state_line" ]
 }
 
+fw3_ensure_set() {
+    name="$1"; family="$2"
+    if ipset list "$name" >/dev/null 2>&1; then
+        return 0
+    fi
+    ipset create "$name" hash:ip family "$family" timeout 1800 >/dev/null
+}
+
 fw3_ensure_sets() {
-    ipset -exist create "$FW3_AUTH_SET_V4" hash:ip family inet timeout 43200 >/dev/null
+    fw3_ensure_set "$FW3_AUTH_SET_V4" inet
     if fw3_ipv6_capable; then
-        ipset -exist create "$FW3_AUTH_SET_V6" hash:ip family inet6 timeout 43200 >/dev/null
+        fw3_ensure_set "$FW3_AUTH_SET_V6" inet6
     fi
 }
 
