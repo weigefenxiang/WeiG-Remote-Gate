@@ -352,12 +352,12 @@ fw3_rebuild() {
 
 fw3_verify() {
     iptables -C INPUT -j "$FW3_CHAIN_V4" >/dev/null 2>&1 || return 1
-    first_rule="$(iptables -S INPUT | sed -n '2p')"
+    first_rule="$(iptables -S INPUT | awk '$1 == "-A" && $2 == "INPUT" { print; exit }')"
     [ "$first_rule" = "-A INPUT -j $FW3_CHAIN_V4" ] || return 1
     if [ -s "$DEVICES_V6_FILE" ]; then
         fw3_ipv6_capable || return 1
         ip6tables -C INPUT -j "$FW3_CHAIN_V6" >/dev/null 2>&1 || return 1
-        first_rule6="$(ip6tables -S INPUT | sed -n '2p')"
+        first_rule6="$(ip6tables -S INPUT | awk '$1 == "-A" && $2 == "INPUT" { print; exit }')"
         [ "$first_rule6" = "-A INPUT -j $FW3_CHAIN_V6" ] || return 1
     elif command -v ip6tables >/dev/null 2>&1; then
         ip6tables -C INPUT -j "$FW3_CHAIN_V6" >/dev/null 2>&1 && return 1

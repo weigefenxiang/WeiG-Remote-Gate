@@ -82,6 +82,12 @@ class FirewallBackendTests(unittest.TestCase):
         self.assertIn("fw4_add_lines weig_remote_gate_protected_udp_port", source)
         self.assertIn("    reconcile_auth_policy\n    [ -n \"$AUTH_IP\" ] || return 0", source)
 
+    def test_fw3_first_rule_verification_ignores_optional_policy_line(self):
+        source = FIREWALL.read_text(encoding="utf-8")
+        self.assertIn("awk '$1 == \"-A\" && $2 == \"INPUT\" { print; exit }'", source)
+        self.assertNotIn("iptables -S INPUT | sed -n '2p'", source)
+        self.assertNotIn("ip6tables -S INPUT | sed -n '2p'", source)
+
     def test_scope_can_keep_ping_closed(self):
         source = FIREWALL.read_text(encoding="utf-8")
         self.assertIn('if [ "$AUTH_SCOPE" = "wg_ping" ]', source)
