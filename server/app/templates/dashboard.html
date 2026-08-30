@@ -21,14 +21,14 @@
   <header class="topbar">
     <div class="topbar-inner">
       <div class="mobile-brand-line">
-        <a class="brand compact" href="/" aria-label="WeiG Remote Gate home">
-          <div class="brand-mark" aria-hidden="true">WG</div>
-          <div>
+        <div class="brand compact">
+          <button class="brand-mark brand-trigger" id="utility-trigger" type="button" aria-haspopup="dialog" aria-controls="utility-layer" aria-expanded="false" title="WeiG Remote Gate settings">WG</button>
+          <a class="brand-copy" href="/" aria-label="WeiG Remote Gate home">
             <strong>WeiG Remote Gate</strong>
             <span data-i18n="header.secureRemoteAccess">Secure Remote Access</span>
-          </div>
-        </a>
-        <button class="icon-button mobile-logout" data-action="logout" type="button" data-i18n-title="header.signOut" title="Sign out" aria-label="Sign out">↗</button>
+          </a>
+        </div>
+        <button class="icon-button mobile-theme-toggle" id="mobile-theme-toggle" data-theme-toggle type="button" aria-label="Toggle light and dark theme" title="Toggle light and dark theme"><span aria-hidden="true">◐</span></button>
       </div>
 
       <div class="top-actions">
@@ -59,6 +59,7 @@
     </section>
 
     <section class="card-workspace" id="workspace">
+      <div class="workspace-zone workspace-main" data-workspace-zone="main" aria-label="Primary controls">
       <article class="workspace-card gate-card depth-card" data-card-id="gate" data-default-size="wide" data-size="wide">
         <div class="panel-head">
           <div>
@@ -123,7 +124,36 @@
           <span>TTL <strong id="fw-expires">—</strong></span>
         </div>
       </article>
+      <article class="workspace-card depth-card" data-card-id="wireguard" data-default-size="normal" data-size="normal">
+        <div class="panel-head tight">
+          <div>
+            <span class="eyebrow" data-i18n="wg.eyebrow">WIREGUARD</span>
+            <h2 data-i18n="wg.title">Secure tunnel</h2>
+          </div>
+          <span class="status-dot neutral" id="wg-dot"></span>
+        </div>
+        <div class="metric-grid">
+          <div><span class="label" data-i18n="wg.interface">Interface</span><strong id="wg-name">—</strong></div>
+          <div><span class="label" data-i18n="wg.listenPort">Listen port</span><strong id="wg-port">—</strong></div>
+          <div><span class="label" data-i18n="wg.handshake">Latest Handshake</span><strong id="wg-handshake">Never</strong></div>
+          <div><span class="label" data-i18n="wg.traffic">Traffic</span><strong id="wg-traffic">—</strong></div>
+          <div class="metric-wide"><span class="label" data-i18n="wg.status">Status</span><strong id="wg-status">—</strong></div>
+          <div class="metric-wide"><span class="label" data-i18n="wg.lanHint">LAN access</span><strong id="wg-lan-hint" data-i18n="wg.lanHintValue">Verify client AllowedIPs and WG → LAN forwarding</strong></div>
+        </div>
+      </article>
+      <article class="workspace-card depth-card" data-card-id="wan" data-default-size="normal" data-size="normal">
+        <div class="panel-head tight">
+          <div>
+            <span class="eyebrow" data-i18n="wan.eyebrow">PUBLIC WAN</span>
+            <h2 data-i18n="wan.title">Interfaces</h2>
+          </div>
+          <span class="muted small" id="wan-refresh" data-i18n="wan.waiting">Waiting for OpenWrt report…</span>
+        </div>
+        <div class="wan-list" id="wan-list"></div>
+      </article>
+      </div>
 
+      <aside class="workspace-zone workspace-rail" data-workspace-zone="rail" aria-label="Status and activity">
       <article class="workspace-card client-card depth-card" data-card-id="client" data-default-size="normal" data-size="normal">
         <div class="panel-head tight">
           <div>
@@ -156,46 +186,6 @@
         </div>
         <p class="trust-note" data-i18n="client.trustNote">Browser-saved addresses are display-only and are never trusted as authorization input.</p>
       </article>
-
-      <article class="workspace-card depth-card" data-card-id="wireguard" data-default-size="normal" data-size="normal">
-        <div class="panel-head tight">
-          <div>
-            <span class="eyebrow" data-i18n="wg.eyebrow">WIREGUARD</span>
-            <h2 data-i18n="wg.title">Secure tunnel</h2>
-          </div>
-          <span class="status-dot neutral" id="wg-dot"></span>
-        </div>
-        <div class="metric-grid">
-          <div><span class="label" data-i18n="wg.interface">Interface</span><strong id="wg-name">—</strong></div>
-          <div><span class="label" data-i18n="wg.listenPort">Listen port</span><strong id="wg-port">—</strong></div>
-          <div><span class="label" data-i18n="wg.handshake">Latest Handshake</span><strong id="wg-handshake">Never</strong></div>
-          <div><span class="label" data-i18n="wg.traffic">Traffic</span><strong id="wg-traffic">—</strong></div>
-          <div class="metric-wide"><span class="label" data-i18n="wg.status">Status</span><strong id="wg-status">—</strong></div>
-          <div class="metric-wide"><span class="label" data-i18n="wg.lanHint">LAN access</span><strong id="wg-lan-hint" data-i18n="wg.lanHintValue">Verify client AllowedIPs and WG → LAN forwarding</strong></div>
-        </div>
-      </article>
-
-      <article class="workspace-card depth-card" data-card-id="wan" data-default-size="normal" data-size="normal">
-        <div class="panel-head tight">
-          <div>
-            <span class="eyebrow" data-i18n="wan.eyebrow">PUBLIC WAN</span>
-            <h2 data-i18n="wan.title">Interfaces</h2>
-          </div>
-          <span class="muted small" id="wan-refresh" data-i18n="wan.waiting">Waiting for OpenWrt report…</span>
-        </div>
-        <div class="wan-list" id="wan-list"></div>
-      </article>
-
-      <article class="workspace-card depth-card" data-card-id="activity" data-default-size="wide" data-size="wide">
-        <div class="panel-head tight">
-          <div>
-            <span class="eyebrow" data-i18n="activity.eyebrow">SECURITY EVENT STREAM</span>
-            <h2 data-i18n="activity.title">Recent activity</h2>
-          </div>
-        </div>
-        <div class="activity" id="activity-list"></div>
-      </article>
-
       <article class="workspace-card depth-card" data-card-id="system" data-default-size="normal" data-size="normal">
         <div class="panel-head tight">
           <div>
@@ -211,12 +201,52 @@
           <div class="system-row"><span data-i18n="system.refresh">Refresh</span><strong data-i18n="system.every5s">Every 5s</strong></div>
         </div>
       </article>
+      <article class="workspace-card depth-card" data-card-id="activity" data-default-size="normal" data-size="normal">
+        <div class="panel-head tight">
+          <div>
+            <span class="eyebrow" data-i18n="activity.eyebrow">SECURITY EVENT STREAM</span>
+            <h2 data-i18n="activity.title">Recent activity</h2>
+          </div>
+        </div>
+        <div class="activity" id="activity-list"></div>
+      </article>
+      </aside>
     </section>
   </main>
+
+  <div class="utility-layer" id="utility-layer" hidden>
+    <button class="utility-backdrop" type="button" data-utility-close aria-label="Close settings"></button>
+    <section class="utility-sheet depth-card" id="utility-sheet" role="dialog" aria-modal="true" aria-labelledby="utility-title" tabindex="-1">
+      <div class="utility-sheet-head">
+        <div>
+          <span class="eyebrow">WEIG REMOTE GATE</span>
+          <h2 id="utility-title">Settings</h2>
+        </div>
+        <button class="icon-button utility-close" type="button" data-utility-close aria-label="Close settings">×</button>
+      </div>
+      <div class="utility-group">
+        <span class="label" data-i18n="header.language">Language</span>
+        <div class="mini-switch utility-switch" role="group" aria-label="Language">
+          <button type="button" data-lang-choice="en">English</button>
+          <button type="button" data-lang-choice="zh">简体中文</button>
+        </div>
+      </div>
+      <div class="utility-group">
+        <span class="label" data-i18n="header.appearance">Appearance</span>
+        <div class="theme-switch utility-switch" role="group" aria-label="Appearance">
+          <button type="button" data-theme-choice="auto" data-i18n="theme.auto">Auto</button>
+          <button type="button" data-theme-choice="light" data-i18n="theme.light">Light</button>
+          <button type="button" data-theme-choice="dark" data-i18n="theme.dark">Dark</button>
+        </div>
+      </div>
+      <button class="button utility-signout" data-action="logout" type="button" data-i18n="header.signOut">Sign out</button>
+    </section>
+  </div>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="/static/js/theme.js"></script>
+  <script src="/static/js/utility-panel.js"></script>
   <script src="/static/js/fit-text.js"></script>
   <script src="/static/js/workspace.js"></script>
   <script src="/static/js/activity.js"></script>

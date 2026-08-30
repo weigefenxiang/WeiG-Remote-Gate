@@ -1,5 +1,5 @@
 ---
-version: 3
+version: 4
 name: WeiG-Remote-Gate
 description: "A dense, tactile, adaptive network-security workspace with standardized spatial depth, large readable controls, and a distinct WeiG security identity."
 ---
@@ -33,20 +33,10 @@ Canonical card priority:
 6. System
 
 Desktop behavior:
-- Use a 12-column grid with `grid-auto-flow: dense`.
 - Wide windows should use available space instead of leaving large empty regions.
-- Narrow windows reflow from 3 columns to 2 columns and then 1 column.
 - Cards may naturally extend below the current viewport; vertical scrolling is valid.
 - The page must not gain whole-page horizontal scrolling.
-- Do not shrink all typography simply to force every card into the viewport.
-
-Canonical wide-screen layout:
-- Remote Gate: 8 columns.
-- Current Client: 4 columns.
-- WireGuard: 4 columns.
-- Public WAN: 4 columns.
-- System: 4 columns.
-- Activity: full row when its size is `Wide`.
+- Do not shrink typography simply to force every card into the viewport.
 
 Desktop arrangement mode:
 - Arrangement is opt-in; normal controls must never accidentally drag cards.
@@ -60,7 +50,29 @@ Mobile behavior:
 - Drag/reorder mode is disabled.
 - Mobile uses the canonical fixed priority order.
 - Touch scrolling must never conflict with card rearrangement.
-- Header controls reflow below the brand; controls must never obscure the product name.
+- Persistent mobile controls must never obscure the product name; low-frequency settings belong in the Utility Sheet.
+
+## v0.2.9 workspace zones
+
+Wide desktop uses two semantic workspace zones:
+- `Main Canvas`: Remote Gate, WireGuard, and Public WAN by default.
+- `Utility Rail`: Current Client, System, and Activity by default.
+
+Rules:
+- Activity must not consume a full desktop row by default; it belongs below System in the Utility Rail.
+- Arrange mode may move cards between Main Canvas and Utility Rail.
+- Workspace persistence stores zone, order, and preset size only; never secrets.
+- Below the wide-desktop breakpoint, zones collapse back into the normal responsive grid.
+- Mobile ignores saved zone placement and renders the canonical order: Gate, Client, WireGuard, WAN, Activity, System.
+
+## Mobile utility controls
+
+Mobile keeps low-frequency settings out of the persistent header:
+- visible header: WG brand, product name, and one circular Light/Dark toggle only;
+- browser language detection remains automatic;
+- manual Language, Auto/Light/Dark, and Sign out live in a Utility Sheet opened from the WG mark;
+- the circular theme control toggles the currently resolved Light/Dark state and turns that choice into an explicit browser-local preference;
+- the Utility Sheet must be keyboard dismissible, focus-contained while open, and must not alter Gate security state.
 
 # 3. Color and surface tokens
 
@@ -84,11 +96,9 @@ No component may invent its own unrelated depth language.
 # 4. Typography
 
 Use native system fonts only:
-
 `Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif`
 
 Monospace:
-
 `"SFMono-Regular", Consolas, "Liberation Mono", monospace`
 
 Desktop targets:
@@ -292,12 +302,12 @@ Theme bootstrap executes before first paint.
 # 15. Responsive behavior
 
 >= 1440px:
-- dense 12-column workspace;
+- Main Canvas + Utility Rail workspace;
 - large readable typography;
 - primary workspace should normally require little or no scrolling.
 
 1024-1439px:
-- adaptive 2-3 column workspace;
+- zones collapse into an adaptive 2-3 column workspace;
 - preserve desktop-readable typography.
 
 768-1023px:
@@ -309,7 +319,7 @@ Theme bootstrap executes before first paint.
 - canonical single-column card order;
 - arrangement controls disabled;
 - brand occupies its own header row;
-- Language and Theme controls move below the brand and use large centered segmented bars;
+- persistent mobile controls show only the brand and one circular Light/Dark toggle; Language and full Appearance controls live in the WG Utility Sheet;
 - primary controls use 44px-class or larger touch targets;
 - no hover-dependent essential information;
 - full IPv6 remains one line by dynamic font fitting.
@@ -331,15 +341,16 @@ CSS:
 - `tokens.css`: color, typography, spacing, radius and elevation.
 - `base.css`: reset, global typography and accessibility.
 - `components.css`: buttons, segmented controls, inputs, badges and reusable surfaces.
-- `layout.css`: workspace grid, card sizing, drag layout and responsive structure.
+- `layout.css`: workspace zones, card sizing, drag layout and responsive structure.
 - `dashboard.css`: Gate, Client, WireGuard, WAN, Activity and System presentation only.
 
 JavaScript:
 - `theme-bootstrap.js`: pre-paint theme bootstrap.
-- `theme.js`: theme interaction.
+- `theme.js`: theme state, full Appearance controls, and the compact resolved Light/Dark toggle.
+- `utility-panel.js`: WG Utility Sheet open/close, focus containment, and low-frequency settings surface.
 - `i18n.js`: language state and dictionaries.
 - `fit-text.js`: long single-line fitting such as IPv6.
-- `workspace.js`: card order, sizes, drag mode and local persistence.
+- `workspace.js`: zone, card order, preset sizes, drag mode and local persistence.
 - `gate-controls.js`: Gate orb, Activate, Close, TTL and IP Family interactions.
 - `activity.js`: compact event summaries and expansion.
 - `app.js`: API state, data refresh and render orchestration.

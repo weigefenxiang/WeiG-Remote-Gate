@@ -97,6 +97,7 @@ FILES=(
   "server/app/static/js/theme-bootstrap.js"
   "server/app/static/js/i18n.js"
   "server/app/static/js/theme.js"
+  "server/app/static/js/utility-panel.js"
   "server/app/static/js/fit-text.js"
   "server/app/static/js/workspace.js"
   "server/app/static/js/activity.js"
