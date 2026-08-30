@@ -1,0 +1,82 @@
+name: v0.3 Maintenance Helper
+
+on:
+  push:
+    branches:
+      - dev/v0.3.0
+    paths:
+      - .github/workflows/v030-maintenance.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.head_commit.message == 'ci: stage v0.3 maintenance helper'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev/v0.3.0
+          fetch-depth: 1
+
+      - name: Remove idle fw3 IPv6 guard
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('openwrt/remote-gate-firewall.sh')
+          source = path.read_text(encoding='utf-8')
+          old = '''fw3_rebuild_v6() {
+              fw3_ipv6_capable || {
+                  fw3_remove_jump_v6
+                  return 0
+              }
+              ip6tables -N "$FW3_CHAIN_V6" >/dev/null 2>&1 || true
+          '''
+          new = '''fw3_rebuild_v6() {
+              fw3_ipv6_capable || {
+                  fw3_remove_jump_v6
+                  return 0
+              }
+              if [ ! -s "$DEVICES_V6_FILE" ]; then
+                  fw3_remove_jump_v6
+                  ip6tables -F "$FW3_CHAIN_V6" >/dev/null 2>&1 || true
+                  ip6tables -X "$FW3_CHAIN_V6" >/dev/null 2>&1 || true
+                  ipset flush "$FW3_AUTH_SET_V6" >/dev/null 2>&1 || true
+                  return 0
+              fi
+              ip6tables -N "$FW3_CHAIN_V6" >/dev/null 2>&1 || true
+          '''
+          if old not in source:
+              raise SystemExit('expected fw3_rebuild_v6 block not found')
+          path.write_text(source.replace(old, new, 1), encoding='utf-8')
+
+      - name: Sync canonical Wei.G icon
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL 'https://raw.githubusercontent.com/weigefenxiang/weige-share-blog/main/source/wrt/Wei.G.ico' \
+            -o server/app/static/Wei.G.ico
+          expected='1f57041c74d9fa141deaf531d7f2db525bc9655c'
+          actual="$(git hash-object server/app/static/Wei.G.ico)"
+          test "$actual" = "$expected"
+          printf 'Verified Wei.G.ico Git blob: %s\n' "$actual"
+
+      - name: Validate changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh -n openwrt/remote-gate-firewall.sh
+          git diff --check
+
+      - name: Commit maintenance changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'weigefenxiang'
+          git config user.email '119787190+weigefenxiang@users.noreply.github.com'
+          git add openwrt/remote-gate-firewall.sh server/app/static/Wei.G.ico
+          git diff --cached --quiet && exit 0
+          git commit -m 'fix: disable idle IPv6 guard and sync favicon'
+          git push origin HEAD:dev/v0.3.0
