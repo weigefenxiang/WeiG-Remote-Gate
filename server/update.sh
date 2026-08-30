@@ -65,6 +65,7 @@ FILES=(
   "server/app/main.py"
   "server/app/templates/login.html"
   "server/app/templates/dashboard.html"
+  "server/app/static/Wei.G.ico"
   "server/app/static/css/tokens.css"
   "server/app/static/css/base.css"
   "server/app/static/css/components.css"
