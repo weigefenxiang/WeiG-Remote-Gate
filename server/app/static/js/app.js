@@ -68,7 +68,7 @@
     return list.filter((item) =>
       item &&
       item.family === family &&
-      ['direct', 'mapped', 'private'].includes(item.reachability) &&
+      ['direct', 'mapped', 'private', 'egress_probe'].includes(item.reachability) &&
       (!wgName || item.wireguard === wgName)
     );
   }
@@ -88,6 +88,7 @@
     const family = item.family === 'ipv6' ? 'IPv6' : 'IPv4';
     let provider = 'Direct';
     if (item.provider === 'natmap') provider = 'NATMap';
+    else if (item.provider === 'egress_probe') provider = 'NAT egress · Try';
     else if (item.reachability === 'private') provider = 'Private/CGNAT · Try';
     return `${item.wan} · ${family} · ${provider} · ${endpointAddress(item)}`;
   }
@@ -239,6 +240,37 @@
     container.append(row);
   }
 
+  function renderEgressLine(container, endpoint) {
+    const address = String(endpoint?.external_address || '');
+    if (!address) return;
+    const row = document.createElement('div');
+    row.className = 'wan-address-row';
+
+    const label = document.createElement('span');
+    label.className = 'wan-address-family';
+    label.textContent = 'NAT IPv4';
+
+    const value = document.createElement('button');
+    value.type = 'button';
+    value.className = 'wan-address-copy fit-single-line';
+    value.textContent = address;
+    value.title = address;
+    value.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(address);
+        toast(t('toast.ipCopied'));
+      } catch (_) {
+        toast(t('toast.clipboardUnavailable'), 'error');
+      }
+    });
+
+    const badge = document.createElement('span');
+    badge.className = 'endpoint-kind private';
+    badge.textContent = document.documentElement.dataset.lang === 'zh' ? '出口 · 尝试' : 'Egress · Try';
+    row.append(label, value, badge);
+    container.append(row);
+  }
+
   function renderWans(data) {
     const list = $('wan-list');
     if (!list) return;
@@ -265,6 +297,7 @@
         if (eps.some((x) => x.family === 'ipv4' && x.reachability === 'direct')) return 0;
         if (eps.some((x) => x.family === 'ipv6' && x.reachability === 'direct')) return 1;
         if (eps.some((x) => x.reachability === 'mapped')) return 2;
+        if (eps.some((x) => x.reachability === 'egress_probe')) return 3;
         if (eps.some((x) => x.reachability === 'private')) return 8;
         return 9;
       };
@@ -294,6 +327,14 @@
       addresses.className = 'wan-addresses';
       (Array.isArray(wan.ipv4) ? wan.ipv4 : []).forEach((entry) => renderAddressLine(addresses, entry, 'ipv4'));
       (Array.isArray(wan.ipv6) ? wan.ipv6 : []).forEach((entry) => renderAddressLine(addresses, entry, 'ipv6'));
+      const seenEgress = new Set();
+      (endpointMap.get(wan.name) || [])
+        .filter((endpoint) => endpoint?.provider === 'egress_probe')
+        .forEach((endpoint) => {
+          if (seenEgress.has(endpoint.external_address)) return;
+          seenEgress.add(endpoint.external_address);
+          renderEgressLine(addresses, endpoint);
+        });
       if (!addresses.children.length) {
         const empty = document.createElement('span');
         empty.className = 'muted small';
