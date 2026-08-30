@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+umask 077
 
 RAW_BASE="${REMOTE_GATE_RAW_BASE:-https://raw.githubusercontent.com/weigefenxiang/WeiG-Remote-Gate/main}"
 ETC_DIR="/etc/remote-gate"
@@ -28,10 +29,13 @@ rollback() {
     if [ "$SUCCESS" -ne 1 ] && [ -n "$BACKUP" ] && [ -d "$BACKUP" ]; then
         printf '\nUpdate failed; restoring previous Remote Gate files...\n' >&2
         systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
-        [ -d "$BACKUP/app" ] && { rm -rf "$LIB_DIR/app"; cp -a "$BACKUP/app" "$LIB_DIR/app"; }
-        [ -f "$BACKUP/remote-gate.py" ] && cp -a "$BACKUP/remote-gate.py" "$LIB_DIR/remote-gate.py"
-        [ -f "$BACKUP/remote-gate.service" ] && cp -a "$BACKUP/remote-gate.service" "$SERVICE_FILE"
-        [ -f "$BACKUP/VERSION" ] && cp -a "$BACKUP/VERSION" "$LIB_DIR/VERSION"
+        rm -rf "$LIB_DIR"
+        [ -d "$BACKUP/lib" ] && cp -a "$BACKUP/lib" "$LIB_DIR"
+        if [ -f "$BACKUP/remote-gate.service" ]; then
+            cp -a "$BACKUP/remote-gate.service" "$SERVICE_FILE"
+        else
+            rm -f "$SERVICE_FILE"
+        fi
         systemctl daemon-reload || true
         systemctl start "$SERVICE_NAME" || true
         printf 'Backup retained at: %s\n' "$BACKUP" >&2
@@ -50,10 +54,13 @@ fetch_raw() {
 FILES=(
   "server/remote-gate.py"
   "server/remote-gate.service"
+  "server/uninstall.sh"
   "server/app/__init__.py"
   "server/app/config.py"
   "server/app/store.py"
   "server/app/security.py"
+  "server/app/client_sources.py"
+  "server/app/endpoints.py"
   "server/app/gate.py"
   "server/app/main.py"
   "server/app/templates/login.html"
@@ -82,6 +89,7 @@ for rel in "${FILES[@]}"; do
     fetch_raw "$rel" "$TMP_DIR/$rel"
 done
 python3 -m py_compile "$TMP_DIR"/server/app/*.py "$TMP_DIR/server/remote-gate.py"
+bash -n "$TMP_DIR/server/uninstall.sh"
 
 REMOTE_VERSION="$(sed -n '1p' "$TMP_DIR/VERSION")"
 LOCAL_VERSION="$(cat "$LIB_DIR/VERSION" 2>/dev/null || echo unknown)"
@@ -96,16 +104,16 @@ fi
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUP="$BACKUP_ROOT/$stamp"
 install -d -o root -g root -m 0700 "$BACKUP_ROOT" "$BACKUP"
-[ -d "$LIB_DIR/app" ] && cp -a "$LIB_DIR/app" "$BACKUP/app"
-[ -f "$LIB_DIR/remote-gate.py" ] && cp -a "$LIB_DIR/remote-gate.py" "$BACKUP/remote-gate.py"
+[ -d "$LIB_DIR" ] && cp -a "$LIB_DIR" "$BACKUP/lib"
 [ -f "$SERVICE_FILE" ] && cp -a "$SERVICE_FILE" "$BACKUP/remote-gate.service"
-[ -f "$LIB_DIR/VERSION" ] && cp -a "$LIB_DIR/VERSION" "$BACKUP/VERSION"
+chmod -R go-rwx "$BACKUP"
 
-install -d -o root -g root -m 0755 "$LIB_DIR/app/templates" "$LIB_DIR/app/static/css" "$LIB_DIR/app/static/js"
-install -o root -g root -m 0755 "$TMP_DIR/server/remote-gate.py" "$LIB_DIR/remote-gate.py"
-install -o root -g root -m 0644 "$TMP_DIR/server/remote-gate.service" "$SERVICE_FILE"
-rm -rf "$LIB_DIR/app"
+systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+rm -rf "$LIB_DIR"
 install -d -o root -g root -m 0755 "$LIB_DIR/app"
+install -o root -g root -m 0755 "$TMP_DIR/server/remote-gate.py" "$LIB_DIR/remote-gate.py"
+install -o root -g root -m 0755 "$TMP_DIR/server/uninstall.sh" "$LIB_DIR/uninstall.sh"
+install -o root -g root -m 0644 "$TMP_DIR/server/remote-gate.service" "$SERVICE_FILE"
 cp -a "$TMP_DIR/server/app/." "$LIB_DIR/app/"
 find "$LIB_DIR/app" -type d -exec chmod 0755 {} +
 find "$LIB_DIR/app" -type f -exec chmod 0644 {} +
@@ -148,3 +156,4 @@ rm -rf "$TMP_DIR"
 unset WRITE_TOKEN
 printf 'WeiG Remote Gate updated: %s -> %s\n' "$LOCAL_VERSION" "$REMOTE_VERSION"
 printf 'Backup: %s\n' "$BACKUP"
+printf 'Safe uninstall: %s/uninstall.sh --dry-run\n' "$LIB_DIR"
