@@ -1,0 +1,66 @@
+name: Maintenance - fix empty IPv6 verifier
+
+on:
+  push:
+    branches:
+      - dev/v0.3.1
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message == 'chore: apply empty IPv6 verifier maintenance'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev/v0.3.1
+          fetch-depth: 0
+      - name: Patch fw3 verifier exit status
+        shell: python3 {0}
+        run: |
+          from pathlib import Path
+
+          fw = Path('openwrt/remote-gate-firewall.sh')
+          s = fw.read_text(encoding='utf-8')
+          old = '''    elif command -v ip6tables >/dev/null 2>&1; then
+              ip6tables -C INPUT -j "$FW3_CHAIN_V6" >/dev/null 2>&1 && return 1
+          fi
+          }
+          '''
+          new = '''    elif command -v ip6tables >/dev/null 2>&1; then
+              if ip6tables -C INPUT -j "$FW3_CHAIN_V6" >/dev/null 2>&1; then
+                  return 1
+              fi
+          fi
+          return 0
+          }
+          '''
+          if s.count(old) != 1:
+              raise SystemExit('empty IPv6 verifier block not found exactly once')
+          fw.write_text(s.replace(old, new), encoding='utf-8')
+
+          test = Path('tests/test_firewall_backends.py')
+          s = test.read_text(encoding='utf-8')
+          old = '''        self.assertIn('ip6tables -C INPUT -j "$FW3_CHAIN_V6" >/dev/null 2>&1 && return 1', source)
+          '''
+          new = '''        self.assertIn('if ip6tables -C INPUT -j "$FW3_CHAIN_V6" >/dev/null 2>&1; then', source)
+              self.assertIn('    return 1\\n        fi\\n    fi\\n    return 0', source)
+          '''
+          if s.count(old) != 1:
+              raise SystemExit('empty IPv6 verifier test assertion not found exactly once')
+          test.write_text(s.replace(old, new), encoding='utf-8')
+
+          Path('.github/workflows/maintenance-fix-empty-v6-verify.yml').unlink()
+      - name: Validate patch
+        run: |
+          sh -n openwrt/remote-gate-firewall.sh
+          python3 -m unittest tests.test_firewall_backends
+      - name: Commit patch
+        run: |
+          git config user.name "weigefenxiang"
+          git config user.email "119787190+weigefenxiang@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: return success for empty IPv6 fw3 policy"
+          git push origin HEAD:dev/v0.3.1
