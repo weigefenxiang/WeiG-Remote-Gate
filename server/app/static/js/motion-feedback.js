@@ -33,7 +33,6 @@
     const oscillator = context.createOscillator();
     const gain = context.createGain();
     const highpass = context.createBiquadFilter();
-
     oscillator.type = 'triangle';
     oscillator.frequency.setValueAtTime(1180 + Math.min(1, Math.max(0, strength)) * 260, now);
     oscillator.frequency.exponentialRampToValueAtTime(620, now + 0.026);
@@ -42,7 +41,6 @@
     gain.gain.setValueAtTime(0.0001, now);
     gain.gain.exponentialRampToValueAtTime(0.026, now + 0.003);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.032);
-
     oscillator.connect(highpass);
     highpass.connect(gain);
     gain.connect(context.destination);
@@ -74,6 +72,32 @@
     if (state.haptic) haptic(8);
   }
 
+  function ensureControls() {
+    const sheet = document.getElementById('utility-sheet');
+    if (!sheet || document.getElementById('feedback-sound')) return;
+    const signout = sheet.querySelector('[data-action="logout"]');
+    const group = document.createElement('div');
+    group.className = 'utility-group feedback-settings';
+    group.innerHTML = `
+      <span class="label">Interaction feedback</span>
+      <div class="feedback-setting-row">
+        <span>Sound</span>
+        <div class="mini-switch utility-switch" id="feedback-sound" role="group" aria-label="Sound feedback">
+          <button type="button" data-feedback-sound="on">On</button>
+          <button type="button" data-feedback-sound="off">Off</button>
+        </div>
+      </div>
+      <div class="feedback-setting-row">
+        <span>Haptics</span>
+        <div class="mini-switch utility-switch" id="feedback-haptic" role="group" aria-label="Haptic feedback">
+          <button type="button" data-feedback-haptic="on">On</button>
+          <button type="button" data-feedback-haptic="off">Off</button>
+        </div>
+      </div>`;
+    if (signout) sheet.insertBefore(group, signout);
+    else sheet.append(group);
+  }
+
   function syncGroup(root, enabled, attr) {
     root?.querySelectorAll(`[${attr}]`).forEach((button) => {
       const desired = button.getAttribute(attr) === 'on';
@@ -89,6 +113,7 @@
   }
 
   function bind() {
+    ensureControls();
     document.getElementById('feedback-sound')?.addEventListener('click', (event) => {
       const button = event.target.closest('[data-feedback-sound]');
       if (!button) return;
