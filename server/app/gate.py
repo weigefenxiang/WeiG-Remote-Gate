@@ -5,10 +5,12 @@ import secrets
 import time
 from typing import Any
 
+from .endpoints import endpoint_by_id, normalize_inventory
 from .store import JsonStore
 
 
 ALLOWED_TTLS = {60, 300, 900, 1800}
+ALLOWED_SCOPES = {"wg", "wg_ping"}
 
 
 class GateError(ValueError):
@@ -26,6 +28,7 @@ def normalize_current(store: JsonStore) -> dict[str, Any]:
 
 
 def public_wan(store: JsonStore, name: str) -> dict[str, Any]:
+    """Schema-1 compatibility path used during rolling upgrades."""
     state = normalize_current(store)
     record = state["interfaces"].get(name)
     if not isinstance(record, dict) or not record.get("active"):
@@ -44,52 +47,140 @@ def wireguard_interface(store: JsonStore, name: str) -> dict[str, Any]:
         raise GateError("wireguard_unavailable")
     for item in interfaces:
         if isinstance(item, dict) and item.get("name") == name:
-            port = int(item.get("listen_port", 0) or 0)
+            try:
+                port = int(item.get("listen_port", 0) or 0)
+            except (TypeError, ValueError):
+                continue
             if 1 <= port <= 65535:
                 return item
     raise GateError("wireguard_unavailable")
+
+
+def _agent_schema(store: JsonStore) -> int:
+    status = store.read("agent-status.json", {})
+    if not isinstance(status, dict):
+        return 1
+    try:
+        return max(1, int(status.get("schema", 1) or 1))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _source_address(source_ip: str, family: str | None = None):
+    try:
+        address = ipaddress.ip_address(source_ip)
+    except ValueError as exc:
+        raise GateError("invalid_source_ip") from exc
+    expected = family or ("ipv4" if address.version == 4 else "ipv6")
+    if expected not in {"ipv4", "ipv6"}:
+        raise GateError("invalid_family")
+    if (expected == "ipv4" and address.version != 4) or (expected == "ipv6" and address.version != 6):
+        raise GateError("source_family_mismatch")
+    return address
 
 
 def queue_activate(
     store: JsonStore,
     *,
     source_ip: str,
-    wan_name: str,
-    wg_name: str,
     ttl: int,
+    endpoint_id: str | None = None,
+    family: str | None = None,
+    scope: str = "wg_ping",
+    wan_name: str | None = None,
+    wg_name: str | None = None,
 ) -> dict[str, Any]:
-    try:
-        address = ipaddress.ip_address(source_ip)
-    except ValueError as exc:
-        raise GateError("invalid_source_ip") from exc
-    if address.version != 4:
-        raise GateError("ipv4_required")
+    """Queue one temporary authorization.
+
+    New schema-2 callers provide endpoint_id/family/scope. Schema-1 callers may
+    continue to provide wan_name/wg_name while the VPS is upgraded first.
+    """
     if ttl not in ALLOWED_TTLS:
         raise GateError("invalid_ttl")
+    if scope not in ALLOWED_SCOPES:
+        raise GateError("invalid_scope")
 
-    wan = public_wan(store, wan_name)
-    wg = wireguard_interface(store, wg_name)
-    now = int(time.time())
-    command = {
-        "id": secrets.token_hex(16),
-        "action": "activate",
-        "created_at": now,
-        "expires_at": now + 60,
-        "source_ip": str(address),
-        "wan": wan_name,
-        "device": str(wan["device"]),
-        "wireguard": wg_name,
-        "wg_port": int(wg["listen_port"]),
-        "ttl": ttl,
-        "state": "pending",
-    }
+    if endpoint_id:
+        endpoint = endpoint_by_id(store, endpoint_id)
+        endpoint_family = str(endpoint.get("family"))
+        address = _source_address(source_ip, family or endpoint_family)
+        if endpoint_family != ("ipv4" if address.version == 4 else "ipv6"):
+            raise GateError("endpoint_family_mismatch")
+        if family and family != endpoint_family:
+            raise GateError("endpoint_family_mismatch")
+        if endpoint.get("reachability") not in {"direct", "mapped"}:
+            raise GateError("endpoint_not_reachable")
+
+        inventory = normalize_inventory(store)
+        caps = inventory.get("capabilities") if isinstance(inventory, dict) else {}
+        if endpoint_family == "ipv6" and isinstance(caps, dict) and not bool(caps.get("gate_ipv6", False)):
+            raise GateError("ipv6_gate_unavailable")
+
+        agent_schema = _agent_schema(store)
+        advanced = (
+            endpoint_family == "ipv6"
+            or scope != "wg_ping"
+            or endpoint.get("provider") != "native"
+        )
+        if advanced and agent_schema < 2:
+            raise GateError("agent_upgrade_required")
+
+        now = int(time.time())
+        command = {
+            "schema": 2,
+            "id": secrets.token_hex(16),
+            "action": "activate",
+            "created_at": now,
+            "expires_at": now + 60,
+            "source_ip": str(address),
+            "family": endpoint_family,
+            "scope": scope,
+            "endpoint_id": str(endpoint["id"]),
+            "provider": str(endpoint.get("provider", "native")),
+            "wan": str(endpoint.get("wan", "")),
+            "device": str(endpoint["device"]),
+            "wireguard": str(endpoint["wireguard"]),
+            "wg_port": int(endpoint["local_port"]),
+            "external_address": str(endpoint.get("external_address", "")),
+            "external_port": int(endpoint.get("external_port", endpoint["local_port"])),
+            "ttl": ttl,
+            "state": "pending",
+        }
+    else:
+        # Compatibility with the current v0.2.x server/browser contract.
+        address = _source_address(source_ip, "ipv4")
+        if not wan_name or not wg_name:
+            raise GateError("endpoint_required")
+        wan = public_wan(store, wan_name)
+        wg = wireguard_interface(store, wg_name)
+        now = int(time.time())
+        command = {
+            "schema": 1,
+            "id": secrets.token_hex(16),
+            "action": "activate",
+            "created_at": now,
+            "expires_at": now + 60,
+            "source_ip": str(address),
+            "family": "ipv4",
+            "scope": "wg_ping",
+            "wan": wan_name,
+            "device": str(wan["device"]),
+            "wireguard": wg_name,
+            "wg_port": int(wg["listen_port"]),
+            "ttl": ttl,
+            "state": "pending",
+        }
+
     store.write("commands.json", {"pending": command, "last": None})
     store.append_activity(
         {
             "type": "gate_requested",
-            "source_ip": str(address),
-            "wan": wan_name,
-            "wireguard": wg_name,
+            "source_ip": command["source_ip"],
+            "family": command["family"],
+            "scope": command["scope"],
+            "wan": command.get("wan", ""),
+            "wireguard": command.get("wireguard", ""),
+            "endpoint_id": command.get("endpoint_id", ""),
             "ttl": ttl,
         }
     )
@@ -97,17 +188,20 @@ def queue_activate(
 
 
 def queue_close(store: JsonStore, *, source_ip: str) -> dict[str, Any]:
+    address = _source_address(source_ip)
     now = int(time.time())
     command = {
+        "schema": 2,
         "id": secrets.token_hex(16),
         "action": "close",
         "created_at": now,
         "expires_at": now + 60,
-        "source_ip": source_ip,
+        "source_ip": str(address),
+        "family": "ipv4" if address.version == 4 else "ipv6",
         "state": "pending",
     }
     store.write("commands.json", {"pending": command, "last": None})
-    store.append_activity({"type": "gate_close_requested", "source_ip": source_ip})
+    store.append_activity({"type": "gate_close_requested", "source_ip": str(address)})
     return command
 
 
