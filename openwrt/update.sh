@@ -56,7 +56,7 @@ fetch() {
     curl -fsSL -H 'Cache-Control: no-cache' "${RAW_BASE}/openwrt/${rel}?_=$(date +%s)" -o "$out"
 }
 
-FILES="remote-gate-report.sh remote-gate-agent.sh remote-gate-firewall.sh remote-gate-firewall-include.sh remote-gate-audit.sh remote-gate-agent.init remote-gate-hotplug.sh uninstall.sh update.sh"
+FILES="remote-gate-report.sh remote-gate-agent.sh remote-gate-egress-probe.sh remote-gate-firewall.sh remote-gate-firewall-include.sh remote-gate-audit.sh remote-gate-agent.init remote-gate-hotplug.sh uninstall.sh update.sh"
 info "Downloading OpenWrt update."
 for rel in $FILES; do
     fetch "$rel" "$TMP_DIR/$rel"
@@ -100,6 +100,7 @@ info "Backup created: $BACKUP"
 mkdir -p "$LIB_DIR" "$(dirname "$HOTPLUG_FILE")" "$STATE_DIR"
 cp "$TMP_DIR/remote-gate-report.sh" "$LIB_DIR/remote-gate-report.sh"
 cp "$TMP_DIR/remote-gate-agent.sh" "$LIB_DIR/remote-gate-agent.sh"
+cp "$TMP_DIR/remote-gate-egress-probe.sh" "$LIB_DIR/remote-gate-egress-probe.sh"
 cp "$TMP_DIR/remote-gate-firewall.sh" "$LIB_DIR/remote-gate-firewall.sh"
 cp "$TMP_DIR/remote-gate-firewall-include.sh" "$LIB_DIR/remote-gate-firewall-include.sh"
 cp "$TMP_DIR/remote-gate-audit.sh" "$LIB_DIR/remote-gate-audit.sh"
@@ -141,6 +142,8 @@ printf '%s\n' "$status" | grep -q '"ready":true' || fail "Firewall self-check di
 
 "$INIT_FILE" enable >/dev/null 2>&1 || true
 "$INIT_FILE" start || fail "Remote Gate agent failed to start."
+# Probe private/CGNAT WAN IPv4 egress once; failure is non-fatal.
+"$LIB_DIR/remote-gate-egress-probe.sh" >/dev/null 2>&1 || true
 # The procd service immediately begins the run loop and performs the first
 # pull itself. Do not launch a second one-shot pull during the update window.
 
@@ -150,5 +153,6 @@ rm -rf "$TMP_DIR"
 printf 'WeiG Remote Gate OpenWrt updated: %s -> %s\n' "$local_version" "$remote_version"
 printf 'Backup: %s\n' "$BACKUP"
 printf 'IPv6 Gate mode: %s\n' "$(sed -n "s/^GATE_IPV6='\([^']*\)'/\1/p" "$CONFIG_FILE" | sed -n '1p')"
+printf 'Private/CGNAT WAN IPv4 egress probe: enabled\n'
 printf 'Read-only audit: %s/remote-gate-audit.sh\n' "$LIB_DIR"
 printf 'WireGuard configuration was preserved.\n'
