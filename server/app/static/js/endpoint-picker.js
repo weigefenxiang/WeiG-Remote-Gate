@@ -16,9 +16,43 @@
     };
   }
 
+  function escapeHtml(value) {
+    return String(value || '').replace(/[&<>'"]/g, (char) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+    })[char]);
+  }
+
   function selectedOption() {
     const select = $('endpoint-select');
     return select?.selectedOptions?.[0] || null;
+  }
+
+  function ensureTrigger() {
+    const select = $('endpoint-select');
+    if (!select) return null;
+    let trigger = $('endpoint-picker-trigger');
+    if (trigger) return trigger;
+
+    select.classList.add('endpoint-native-select');
+    select.tabIndex = -1;
+    select.setAttribute('aria-hidden', 'true');
+
+    trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.id = 'endpoint-picker-trigger';
+    trigger.className = 'endpoint-picker-trigger';
+    trigger.setAttribute('aria-haspopup', 'dialog');
+    trigger.setAttribute('aria-controls', 'endpoint-picker-layer');
+    trigger.setAttribute('aria-expanded', 'false');
+    trigger.innerHTML = `
+      <span class="endpoint-trigger-copy">
+        <strong data-endpoint-wan>—</strong>
+        <span data-endpoint-kind></span>
+        <span class="endpoint-trigger-address" data-endpoint-address></span>
+      </span>
+      <span class="endpoint-trigger-chevron" aria-hidden="true">⌄</span>`;
+    select.insertAdjacentElement('afterend', trigger);
+    return trigger;
   }
 
   function ensureLayer() {
@@ -114,15 +148,9 @@
     }
   }
 
-  function escapeHtml(value) {
-    return String(value || '').replace(/[&<>'"]/g, (char) => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
-    })[char]);
-  }
-
   function syncTrigger() {
     const select = $('endpoint-select');
-    const trigger = $('endpoint-picker-trigger');
+    const trigger = ensureTrigger();
     if (!select || !trigger) return;
     const option = selectedOption();
     const parsed = splitLabel(option?.textContent || '');
@@ -140,7 +168,7 @@
 
   function open() {
     const select = $('endpoint-select');
-    const trigger = $('endpoint-picker-trigger');
+    const trigger = ensureTrigger();
     if (!select || select.disabled || !select.value || !trigger) return;
     ensureLayer();
     lastFocus = document.activeElement;
@@ -177,7 +205,7 @@
 
   function bind() {
     const select = $('endpoint-select');
-    const trigger = $('endpoint-picker-trigger');
+    const trigger = ensureTrigger();
     if (!select || !trigger) return;
     trigger.addEventListener('click', open);
     select.addEventListener('change', sync);
