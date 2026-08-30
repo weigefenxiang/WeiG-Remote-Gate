@@ -45,6 +45,14 @@ valid_device() { case "$1" in ''|*[!A-Za-z0-9_.:@+-]*) return 1 ;; *) return 0 ;
 valid_uint() { case "$1" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
 valid_family() { case "$1" in ipv4|ipv6) return 0 ;; *) return 1 ;; esac; }
 valid_scope() { case "$1" in wg|wg_ping) return 0 ;; *) return 1 ;; esac; }
+valid_ttl() {
+    valid_uint "$1" || return 1
+    case "$1" in
+        60|300|900|1800) return 0 ;;
+    esac
+    [ "$1" -ge 1800 ] && [ "$1" -le 43200 ] || return 1
+    [ $((1 % 1800)) -eq 0 ]
+}
 
 fw3_ipv6_capable() {
     command -v ip6tables >/dev/null 2>&1 || return 1
@@ -176,9 +184,9 @@ fw4_check_order() {
 }
 
 fw3_ensure_sets() {
-    ipset -exist create "$FW3_AUTH_SET_V4" hash:ip family inet timeout 1800 >/dev/null
+    ipset -exist create "$FW3_AUTH_SET_V4" hash:ip family inet timeout 43200 >/dev/null
     if fw3_ipv6_capable; then
-        ipset -exist create "$FW3_AUTH_SET_V6" hash:ip family inet6 timeout 1800 >/dev/null
+        ipset -exist create "$FW3_AUTH_SET_V6" hash:ip family inet6 timeout 43200 >/dev/null
     fi
 }
 
@@ -486,7 +494,7 @@ activate() {
     valid_uint "$port" || fail "invalid UDP port"
     valid_uint "$ttl" || fail "invalid TTL"
     [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || fail "UDP port out of range"
-    [ "$ttl" -ge 30 ] && [ "$ttl" -le 1800 ] || fail "TTL must be between 30 and 1800 seconds"
+    valid_ttl "$ttl" || fail "TTL must be 1m/5m/15m/30m or 30m steps up to 12h"
     ip link show "$device" >/dev/null 2>&1 || fail "WAN device does not exist: $device"
     grep -Fqx "$device" "$device_file" 2>/dev/null || fail "WAN device is not in the protected $family policy: $device"
     grep -Fqx "$port" "$PORTS_FILE" 2>/dev/null || fail "UDP port is not a discovered WireGuard listen port: $port"
