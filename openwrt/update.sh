@@ -56,14 +56,14 @@ fetch() {
     curl -fsSL -H 'Cache-Control: no-cache' "${RAW_BASE}/openwrt/${rel}?_=$(date +%s)" -o "$out"
 }
 
-FILES="remote-gate-report.sh remote-gate-agent.sh remote-gate-firewall.sh remote-gate-firewall-include.sh remote-gate-agent.init remote-gate-hotplug.sh uninstall.sh"
+FILES="remote-gate-report.sh remote-gate-agent.sh remote-gate-firewall.sh remote-gate-firewall-include.sh remote-gate-agent.init remote-gate-hotplug.sh uninstall.sh update.sh"
 info "Downloading OpenWrt update."
 for rel in $FILES; do
     fetch "$rel" "$TMP_DIR/$rel"
 done
 curl -fsSL -H 'Cache-Control: no-cache' "${RAW_BASE}/VERSION?_=$(date +%s)" -o "$TMP_DIR/VERSION"
 
-for rel in remote-gate-report.sh remote-gate-agent.sh remote-gate-firewall.sh remote-gate-firewall-include.sh remote-gate-agent.init remote-gate-hotplug.sh uninstall.sh; do
+for rel in $FILES; do
     sh -n "$TMP_DIR/$rel" || fail "Shell syntax check failed: $rel"
 done
 
@@ -103,6 +103,7 @@ cp "$TMP_DIR/remote-gate-agent.sh" "$LIB_DIR/remote-gate-agent.sh"
 cp "$TMP_DIR/remote-gate-firewall.sh" "$LIB_DIR/remote-gate-firewall.sh"
 cp "$TMP_DIR/remote-gate-firewall-include.sh" "$LIB_DIR/remote-gate-firewall-include.sh"
 cp "$TMP_DIR/uninstall.sh" "$LIB_DIR/uninstall.sh"
+cp "$TMP_DIR/update.sh" "$LIB_DIR/update.sh"
 cp "$TMP_DIR/remote-gate-agent.init" "$INIT_FILE"
 cp "$TMP_DIR/remote-gate-hotplug.sh" "$HOTPLUG_FILE"
 cp "$TMP_DIR/VERSION" "$LIB_DIR/VERSION"
