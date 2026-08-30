@@ -6,6 +6,8 @@ ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "server/app/templates/dashboard.html"
 APP = ROOT / "server/app/static/js/app.js"
 GATE = ROOT / "server/app/static/js/gate-controls.js"
+BOOTSTRAP = ROOT / "server/app/static/js/theme-bootstrap.js"
+FAVICON = ROOT / "server/app/static/Wei.G.ico"
 LAYOUT = ROOT / "server/app/static/css/layout.css"
 SPATIAL = ROOT / "server/app/static/css/spatial.css"
 I18N = ROOT / "server/app/static/js/i18n.js"
@@ -73,6 +75,16 @@ class UIContractTests(unittest.TestCase):
         for path in (INSTALL, UPDATE):
             source = path.read_text(encoding="utf-8")
             self.assertIn("server/app/static/css/spatial.css", source, path.name)
+
+    def test_canonical_favicon_is_bootstrapped_and_deployed(self):
+        self.assertTrue(FAVICON.is_file())
+        self.assertEqual(FAVICON.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
+        bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
+        self.assertIn("/static/Wei.G.ico", bootstrap)
+        self.assertIn("favicon.type = 'image/png'", bootstrap)
+        for path in (INSTALL, UPDATE):
+            source = path.read_text(encoding="utf-8")
+            self.assertIn("server/app/static/Wei.G.ico", source, path.name)
 
 
 if __name__ == "__main__":
