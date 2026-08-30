@@ -10,7 +10,7 @@ NEW_STATE="/var/lib/remote-gate"
 NEW_LIB="/usr/local/lib/remote-gate"
 NEW_SERVICE_FILE="/etc/systemd/system/remote-gate.service"
 NEW_SERVICE="remote-gate.service"
-BACKUP_ROOT="/var/lib/wan2-vault/migration-backups"
+BACKUP_ROOT="/var/backups/weig-remote-gate-migration"
 CACHE_BUST="${REMOTE_GATE_CACHE_BUST:-$(date +%s)}"
 
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -25,6 +25,10 @@ done
 for f in config.json auth.json secrets.json; do
     [ -r "$OLD_ETC/$f" ] || fail "Missing legacy file: $OLD_ETC/$f"
 done
+
+case "$BACKUP_ROOT/" in
+    "$OLD_STATE/"*) fail "Migration backup root must be outside $OLD_STATE" ;;
+esac
 
 OLD_ACTIVE=0
 OLD_ENABLED=0
@@ -103,6 +107,7 @@ PY
 
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"
 BACKUP="$BACKUP_ROOT/$stamp"
+install -d -o root -g root -m 0700 "$BACKUP_ROOT"
 install -d -o root -g root -m 0700 "$BACKUP"
 cp -a "$OLD_ETC" "$BACKUP/etc-wan2-vault"
 [ -d "$OLD_STATE" ] && cp -a "$OLD_STATE" "$BACKUP/state-wan2-vault"
