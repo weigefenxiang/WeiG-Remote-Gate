@@ -143,13 +143,8 @@ v4_protected_devices() {
         [ -f "$file" ] || continue
         base="${file%.device}"
         dev="$(sed -n '1p' "$file")"
-        [ -f "$base.v4" ] || continue
-        while IFS= read -r address; do
-            if is_public_ipv4 "$address"; then
-                printf '%s\n' "$dev"
-                break
-            fi
-        done < "$base.v4"
+        [ -s "$base.v4" ] || continue
+        printf '%s\n' "$dev"
     done | sort -u
 }
 
