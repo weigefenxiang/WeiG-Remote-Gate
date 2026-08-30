@@ -139,7 +139,8 @@ printf '%s\n' "$status" | grep -q '"ready":true' || fail "Firewall self-check di
 
 "$INIT_FILE" enable >/dev/null 2>&1 || true
 "$INIT_FILE" start || fail "Remote Gate agent failed to start."
-"$LIB_DIR/remote-gate-agent.sh" once || true
+# The procd service immediately begins the run loop and performs the first
+# pull itself. Do not launch a second one-shot pull during the update window.
 
 SUCCESS=1
 trap - EXIT INT TERM
