@@ -1,24 +1,37 @@
 (() => {
-  const KEY = 'remote-gate:workspace:v3';
-  const LEGACY_KEYS = ['remote-gate:workspace:v2', 'remote-gate:workspace:v1'];
+  const KEY = 'remote-gate:workspace:v4';
+  const LEGACY_KEYS = ['remote-gate:workspace:v3', 'remote-gate:workspace:v2', 'remote-gate:workspace:v1'];
   const workspace = document.getElementById('workspace');
   const arrangeButton = document.getElementById('arrange-button');
   const resetButton = document.getElementById('reset-layout-button');
   if (!workspace || !arrangeButton) return;
 
-  const desktop = window.matchMedia('(min-width: 768px)');
+  const wide = window.matchMedia('(min-width: 1200px)');
   const t = (key) => window.RemoteGateI18n?.t(key) || key;
-  const zones = () => Array.from(workspace.querySelectorAll('[data-workspace-zone]'));
+  const mainZone = workspace.querySelector('[data-workspace-zone="main"]');
+  const railZone = workspace.querySelector('[data-workspace-zone="rail"]');
+
+  const flowZone = document.createElement('div');
+  flowZone.className = 'workspace-zone workspace-flow';
+  flowZone.dataset.workspaceZone = 'flow';
+  flowZone.setAttribute('aria-label', 'Responsive card flow');
+  workspace.append(flowZone);
+
+  const desktopZones = () => [mainZone, railZone].filter(Boolean);
   const zoneByName = (name) => workspace.querySelector(`[data-workspace-zone="${name}"]`);
   const cards = () => Array.from(workspace.querySelectorAll('[data-card-id]'));
+  const FLOW_ORDER = ['gate', 'client', 'wireguard', 'wan', 'activity', 'system'];
   const DEFAULTS = {
     main: ['gate', 'wireguard', 'wan'],
     rail: ['client', 'system', 'activity']
   };
-  const DEFAULT_ZONE = Object.fromEntries(Object.entries(DEFAULTS).flatMap(([zone, ids]) => ids.map((id) => [id, zone])));
+  const DEFAULT_ZONE = Object.fromEntries(
+    Object.entries(DEFAULTS).flatMap(([zone, ids]) => ids.map((id) => [id, zone]))
+  );
 
   let arranging = false;
   let draggedCard = null;
+  let desktopState = null;
 
   function parseState(raw) {
     try {
@@ -29,33 +42,84 @@
     }
   }
 
-  function legacySizes() {
+  function loadState() {
+    const current = parseState(localStorage.getItem(KEY));
+    if (Object.keys(current).length) return current;
     for (const key of LEGACY_KEYS) {
-      const value = parseState(localStorage.getItem(key));
-      if (value.sizes && typeof value.sizes === 'object') return value.sizes;
+      const legacy = parseState(localStorage.getItem(key));
+      if (Object.keys(legacy).length) return legacy;
     }
     return {};
   }
 
-  function loadState() {
-    return parseState(localStorage.getItem(KEY));
-  }
-
   function zoneCards(zone) {
+    if (!zone) return [];
     return Array.from(zone.children).filter((node) => node.dataset?.cardId);
   }
 
-  function saveState() {
-    const value = {
-      zones: Object.fromEntries(cards().map((card) => [card.dataset.cardId, card.closest('[data-workspace-zone]')?.dataset.workspaceZone || DEFAULT_ZONE[card.dataset.cardId]])),
-      order: Object.fromEntries(zones().map((zone) => [zone.dataset.workspaceZone, zoneCards(zone).map((card) => card.dataset.cardId)])),
+  function cardMap() {
+    return new Map(cards().map((card) => [card.dataset.cardId, card]));
+  }
+
+  function defaultDesktopState() {
+    return {
+      zones: Object.fromEntries(Object.entries(DEFAULT_ZONE)),
+      order: {
+        main: [...DEFAULTS.main],
+        rail: [...DEFAULTS.rail]
+      },
+      sizes: Object.fromEntries(cards().map((card) => [card.dataset.cardId, card.dataset.defaultSize || 'normal']))
+    };
+  }
+
+  function normalizeDesktopState(raw) {
+    const base = defaultDesktopState();
+    if (!raw || typeof raw !== 'object') return base;
+
+    for (const card of cards()) {
+      const id = card.dataset.cardId;
+      const zone = raw.zones?.[id];
+      if (zone === 'main' || zone === 'rail') base.zones[id] = zone;
+      const size = raw.sizes?.[id];
+      if (['compact', 'normal', 'wide'].includes(size)) base.sizes[id] = size;
+    }
+
+    for (const zoneName of ['main', 'rail']) {
+      const rawOrder = raw.order?.[zoneName];
+      if (!Array.isArray(rawOrder)) continue;
+      const allowed = rawOrder.filter((id) => base.zones[id] === zoneName && cards().some((card) => card.dataset.cardId === id));
+      const missing = cards()
+        .map((card) => card.dataset.cardId)
+        .filter((id) => base.zones[id] === zoneName && !allowed.includes(id));
+      base.order[zoneName] = [...allowed, ...missing];
+    }
+    return base;
+  }
+
+  function snapshotDesktop() {
+    if (!wide.matches) return desktopState;
+    return {
+      zones: Object.fromEntries(cards().map((card) => [
+        card.dataset.cardId,
+        card.closest('[data-workspace-zone]')?.dataset.workspaceZone === 'rail' ? 'rail' : 'main'
+      ])),
+      order: Object.fromEntries(desktopZones().map((zone) => [
+        zone.dataset.workspaceZone,
+        zoneCards(zone).map((card) => card.dataset.cardId)
+      ])),
       sizes: Object.fromEntries(cards().map((card) => [card.dataset.cardId, card.dataset.size || 'normal']))
     };
-    localStorage.setItem(KEY, JSON.stringify(value));
+  }
+
+  function persistDesktop() {
+    if (!wide.matches) return;
+    desktopState = normalizeDesktopState(snapshotDesktop());
+    localStorage.setItem(KEY, JSON.stringify(desktopState));
     workspace.dispatchEvent(new CustomEvent('workspacechange'));
   }
 
   function addTools(card) {
+    if (card.querySelector('.workspace-card-tools')) return;
     const tools = document.createElement('div');
     tools.className = 'workspace-card-tools';
 
@@ -106,86 +170,97 @@
     });
   }
 
-  function placeDefaults() {
-    const map = new Map(cards().map((card) => [card.dataset.cardId, card]));
-    Object.entries(DEFAULTS).forEach(([zoneName, order]) => {
-      const zone = zoneByName(zoneName);
-      order.forEach((id) => { if (zone && map.has(id)) zone.append(map.get(id)); });
+  function restoreDesktop() {
+    const map = cardMap();
+    desktopState = normalizeDesktopState(desktopState || loadState());
+
+    cards().forEach((card) => {
+      const id = card.dataset.cardId;
+      const zone = zoneByName(desktopState.zones[id] || DEFAULT_ZONE[id]);
+      if (zone === mainZone || zone === railZone) zone.append(card);
+      card.dataset.size = desktopState.sizes[id] || card.dataset.defaultSize || 'normal';
     });
+
+    for (const zoneName of ['main', 'rail']) {
+      const zone = zoneByName(zoneName);
+      const order = desktopState.order[zoneName] || [];
+      order.forEach((id) => {
+        if (map.has(id) && map.get(id).parentElement === zone) zone.append(map.get(id));
+      });
+    }
+    updateTools();
+  }
+
+  function placeFlow() {
+    const map = cardMap();
+    FLOW_ORDER.forEach((id) => {
+      const card = map.get(id);
+      if (card) flowZone.append(card);
+    });
+    cards().forEach((card) => {
+      if (card.parentElement !== flowZone) flowZone.append(card);
+      card.draggable = false;
+    });
+    workspace.dispatchEvent(new CustomEvent('workspacechange'));
   }
 
   cards().forEach((card) => {
     card.dataset.size = card.dataset.defaultSize || 'normal';
     addTools(card);
   });
-
-  const saved = loadState();
-  const fallbackSizes = Object.keys(saved).length ? {} : legacySizes();
-  if (saved.zones && typeof saved.zones === 'object') {
-    cards().forEach((card) => {
-      const zoneName = saved.zones[card.dataset.cardId];
-      const zone = zoneByName(zoneName);
-      if (zone) zone.append(card);
-    });
-  } else {
-    placeDefaults();
-  }
-
-  if (saved.order && typeof saved.order === 'object') {
-    Object.entries(saved.order).forEach(([zoneName, order]) => {
-      const zone = zoneByName(zoneName);
-      if (!zone || !Array.isArray(order)) return;
-      const map = new Map(zoneCards(zone).map((card) => [card.dataset.cardId, card]));
-      order.forEach((id) => { if (map.has(id)) zone.append(map.get(id)); });
-    });
-  }
-
-  cards().forEach((card) => {
-    const value = saved.sizes?.[card.dataset.cardId] || fallbackSizes?.[card.dataset.cardId];
-    if (['compact', 'normal', 'wide'].includes(value)) card.dataset.size = value;
-    if (card.dataset.cardId === 'activity' && !saved.sizes) card.dataset.size = 'normal';
-  });
-  updateTools();
+  desktopState = normalizeDesktopState(loadState());
 
   function setArrange(value) {
-    arranging = Boolean(value && desktop.matches);
+    arranging = Boolean(value && wide.matches);
     workspace.classList.toggle('arranging', arranging);
     arrangeButton.classList.toggle('active', arranging);
     arrangeButton.textContent = arranging ? t('header.done') : t('header.arrange');
+    arrangeButton.disabled = !wide.matches;
     cards().forEach((card) => { card.draggable = arranging; });
   }
 
+  function applyMode() {
+    setArrange(false);
+    if (wide.matches) restoreDesktop();
+    else placeFlow();
+    arrangeButton.disabled = !wide.matches;
+    resetButton?.toggleAttribute('disabled', !wide.matches);
+    requestAnimationFrame(() => workspace.dispatchEvent(new CustomEvent('workspacechange')));
+  }
+
   function move(card, delta) {
+    if (!wide.matches) return;
     const zone = card.closest('[data-workspace-zone]');
-    if (!zone) return;
+    if (zone !== mainZone && zone !== railZone) return;
     const list = zoneCards(zone);
     const current = list.indexOf(card);
     const next = current + delta;
     if (current < 0 || next < 0 || next >= list.length) return;
     if (delta < 0) zone.insertBefore(card, list[next]);
     else zone.insertBefore(list[next], card);
-    saveState();
+    persistDesktop();
   }
 
   function moveZone(card) {
-    const current = card.closest('[data-workspace-zone]')?.dataset.workspaceZone;
-    const target = zoneByName(current === 'rail' ? 'main' : 'rail');
-    if (!target) return;
-    target.append(card);
-    saveState();
+    if (!wide.matches) return;
+    const current = card.closest('[data-workspace-zone]');
+    const target = current === railZone ? mainZone : railZone;
+    target?.append(card);
+    persistDesktop();
   }
 
   function cycleSize(card) {
+    if (!wide.matches) return;
     const values = ['compact', 'normal', 'wide'];
     const index = Math.max(0, values.indexOf(card.dataset.size || 'normal'));
     card.dataset.size = values[(index + 1) % values.length];
     updateTools();
-    saveState();
+    persistDesktop();
   }
 
   function clearDropTargets() {
     cards().forEach((card) => card.classList.remove('drop-target'));
-    zones().forEach((zone) => zone.classList.remove('zone-drop-target'));
+    desktopZones().forEach((zone) => zone.classList.remove('zone-drop-target'));
   }
 
   arrangeButton.addEventListener('click', () => setArrange(!arranging));
@@ -193,16 +268,17 @@
   resetButton?.addEventListener('click', () => {
     localStorage.removeItem(KEY);
     LEGACY_KEYS.forEach((key) => localStorage.removeItem(key));
-    placeDefaults();
-    cards().forEach((card) => { card.dataset.size = card.dataset.defaultSize || 'normal'; });
-    const activity = workspace.querySelector('[data-card-id="activity"]');
-    if (activity) activity.dataset.size = 'normal';
-    updateTools();
-    saveState();
+    desktopState = defaultDesktopState();
+    if (wide.matches) {
+      restoreDesktop();
+      persistDesktop();
+    } else {
+      placeFlow();
+    }
   });
 
   workspace.addEventListener('click', (event) => {
-    if (!arranging) return;
+    if (!arranging || !wide.matches) return;
     const card = event.target.closest('[data-card-id]');
     if (!card) return;
     const moveButton = event.target.closest('[data-move]');
@@ -212,15 +288,15 @@
   });
 
   workspace.addEventListener('dragstart', (event) => {
-    if (!arranging) return event.preventDefault();
+    if (!arranging || !wide.matches) return event.preventDefault();
     draggedCard = event.target.closest('[data-card-id]');
     draggedCard?.classList.add('dragging');
   });
 
   workspace.addEventListener('dragover', (event) => {
-    if (!draggedCard || !arranging) return;
+    if (!draggedCard || !arranging || !wide.matches) return;
     const zone = event.target.closest('[data-workspace-zone]');
-    if (!zone) return;
+    if (zone !== mainZone && zone !== railZone) return;
     event.preventDefault();
     clearDropTargets();
 
@@ -242,12 +318,14 @@
     if (!draggedCard) return;
     draggedCard.classList.remove('dragging');
     draggedCard = null;
-    saveState();
+    persistDesktop();
   });
 
-  desktop.addEventListener?.('change', (event) => { if (!event.matches) setArrange(false); });
+  wide.addEventListener?.('change', applyMode);
   window.addEventListener('remote-gate-language', () => {
     setArrange(arranging);
     updateTools();
   });
+
+  applyMode();
 })();
