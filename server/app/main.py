@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, urlparse
 
 from .client_sources import delete_sources, observe_ipv4_probe, observe_source, source_for_family, trusted_sources
 from .config import load_settings
-from .endpoints import build_endpoints, normalize_inventory, validate_inventory_v2
+from .endpoints import build_endpoints, normalize_inventory, observe_wan_egress, validate_inventory_v2
 from .gate import GateError, ack_command, gate_view, pull_command, queue_activate, queue_close
 from .security import (
     bearer_matches,
@@ -355,6 +355,23 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(400, {"error": "invalid_ipv4_probe"})
                 return
             self._json(200, {"family": "ipv4", **record})
+            return
+
+        if path == "/api/v1/agent/egress-probe":
+            if not self._require_agent():
+                return
+            source = self._trusted_client_ip()
+            try:
+                address = ipaddress.ip_address(str(source or ""))
+                if address.version != 4 or not address.is_global:
+                    raise ValueError("public_ipv4_required")
+                query = parse_qs(urlparse(self.path).query)
+                device = _safe_device((query.get("device") or [""])[0])
+                observe_wan_egress(STORE, device, str(address))
+            except ValueError:
+                self._json(400, {"error": "invalid_egress_probe"})
+                return
+            self._empty(204)
             return
 
         if path == "/api/v1/gate/activate":
