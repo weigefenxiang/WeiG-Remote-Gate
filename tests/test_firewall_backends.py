@@ -100,6 +100,13 @@ class FirewallBackendTests(unittest.TestCase):
         self.assertNotIn("cat /etc/config/natmap", audit)
         self.assertNotIn("cat /etc/remote-gate.conf", audit)
 
+    def test_openwrt_startup_does_not_launch_duplicate_pull(self):
+        install = OPENWRT_INSTALL.read_text(encoding="utf-8")
+        update = OPENWRT_UPDATE.read_text(encoding="utf-8")
+        self.assertNotIn('"$LIB_DIR/remote-gate-agent.sh" once', install)
+        self.assertNotIn('"$LIB_DIR/remote-gate-agent.sh" once', update)
+        self.assertIn('"$LIB_DIR/remote-gate-agent.sh" report || true', install)
+
 
 if __name__ == "__main__":
     unittest.main()
