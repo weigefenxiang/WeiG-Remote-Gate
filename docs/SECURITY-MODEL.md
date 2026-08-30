@@ -2,49 +2,63 @@
 
 ## Default state
 
-WeiG-Remote-Gate does not create a home-WAN HTTP or HTTPS service.
+The WAN hosts no WeiG-Remote-Gate HTTP/HTTPS service.
 
-The temporary access sets are empty by default. WAN behavior therefore falls through to the router's existing firewall policy.
+On every active public WAN, the firewall guard protects:
+
+- ICMP echo-request;
+- every locally discovered WireGuard UDP listen port.
+
+Unauthorized matching traffic is dropped before the normal firewall established/related shortcut.
+
+All other traffic falls through to the original firewall unchanged.
+
+## qBittorrent / BT isolation
+
+Remote Gate never installs rules in `FORWARD`. A typical qBittorrent inbound connection follows:
+
+```text
+WAN -> PREROUTING/DNAT or UPnP -> FORWARD -> LAN host
+```
+
+Remote Gate follows:
+
+```text
+WAN -> INPUT -> router-local ICMP/WireGuard
+```
+
+The two paths are intentionally separate.
 
 ## Gate activation
 
-The browser submits:
-- selected reported public WAN name
-- selected agent-reported WireGuard interface
-- one of the fixed TTL values
+The browser submits only:
 
-The browser does **not** submit the IP address to allow.
+- selected reported public WAN name;
+- selected agent-reported WireGuard interface;
+- one fixed TTL.
 
-The server takes the source from the trusted Cloudflare header path and queues:
-- source IPv4
-- WAN logical name and last reported `l3_device`
-- WireGuard interface and reported UDP listen port
-- TTL
-- command ID and expiry
+The source IPv4 is server-derived. The OpenWrt agent accepts an activation only when the selected WAN device is in the locally synchronized public-WAN protection set and the selected UDP port is a locally discovered WireGuard listen port.
 
-The OpenWrt agent verifies basic input syntax, confirms the WAN device currently exists, then updates nftables timeout sets.
+## Backend parity
 
-## Replay protection
+### fw3
 
-Only one command is pending at a time.
-Each command has:
-- random ID
-- creation time
-- expiry time
-- state
+- root `INPUT` jumps to `WEIG_REMOTE_GATE` at position 1;
+- ipset contains the authorized source with timeout;
+- tuple-specific ACCEPT rules precede generic protected ICMP/WireGuard DROP rules;
+- final RETURN hands unrelated INPUT traffic back to fw3.
 
-After acknowledgement it is moved out of the pending slot. Re-acknowledging the same ID returns a conflict.
+### fw4
 
-## Remaining production checks
+- automatic nft includes define protected/auth sets;
+- `chain-pre/input` rules run before inbound conntrack state acceptance;
+- auth source uses a timeout element;
+- unrelated traffic continues through normal fw4 rules.
 
-Before production use:
-1. Confirm the target router uses firewall4, not firewall3.
-2. Confirm firewall4 automatic includes are enabled.
-3. Run `fw4 check`.
-4. Confirm the installed rules appear in `fw4 print`.
-5. Confirm the named sets exist after firewall reload.
-6. Test from a non-authorized external IPv4 that ICMP and the WireGuard UDP port remain unreachable.
-7. Test that expiry removes set membership.
-8. Test behavior across a firewall reload while Gate is active.
+## Firewall reload and reboot
 
-The installer performs checks 2-5. External-path testing remains deployment-specific.
+Protected devices/ports and the authorization expiry timestamp are kept in local state. A firewall include restores the guard after a firewall rebuild. Expired authorization state is discarded instead of being reopened.
+
+## Uninstall
+
+Uninstall removes only Remote Gate's chain/set/include objects. It does not delete the user's Allow-Ping, qBittorrent, UPnP, DNAT or other UCI firewall configuration.
