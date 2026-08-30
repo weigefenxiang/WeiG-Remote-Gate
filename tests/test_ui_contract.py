@@ -50,12 +50,16 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("PROBE_TIMEOUT", source)
         self.assertIn("client_sources?.ipv4", source)
 
-    def test_private_wan_paths_are_manual_try_options(self):
+    def test_private_and_egress_wan_paths_are_manual_try_options(self):
         app = APP.read_text(encoding="utf-8")
         gate = GATE.read_text(encoding="utf-8")
-        self.assertIn("['direct', 'mapped', 'private']", app)
-        self.assertIn("['direct', 'mapped', 'private']", gate)
+        expected = "['direct', 'mapped', 'private', 'egress_probe']"
+        self.assertIn(expected, app)
+        self.assertIn(expected, gate)
         self.assertIn("Private/CGNAT · Try", app)
+        self.assertIn("NAT egress · Try", app)
+        self.assertIn("NAT IPv4", app)
+        self.assertIn("Egress · Try", app)
 
     def test_manual_family_is_not_locked_to_current_request(self):
         source = GATE.read_text(encoding="utf-8")
