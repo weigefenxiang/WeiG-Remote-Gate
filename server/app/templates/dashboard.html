@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#090b10">
   <title>WeiG Remote Gate</title>
   <script src="/static/js/theme-bootstrap.js"></script>
   <script src="/static/js/i18n.js"></script>
@@ -55,161 +56,181 @@
         <div class="eyebrow">REMOTE ACCESS CONTROL</div>
         <h1 data-i18n="dashboard.title">Remote access console</h1>
       </div>
-      <p data-i18n="dashboard.subtitle">Private by default. Open only the current client when needed.</p>
+      <p data-i18n="dashboard.subtitle">Private by default. Open only a trusted client source when needed.</p>
     </section>
 
     <section class="card-workspace" id="workspace">
       <div class="workspace-zone workspace-main" data-workspace-zone="main" aria-label="Primary controls">
-      <article class="workspace-card gate-card depth-card" data-card-id="gate" data-default-size="wide" data-size="wide">
-        <div class="panel-head">
-          <div>
-            <span class="eyebrow" data-i18n="gate.eyebrow">REMOTE GATE</span>
-            <h2 data-i18n="gate.title">Temporary WAN access</h2>
-          </div>
-          <span class="state-badge" id="gate-state-badge">CLOSED</span>
-        </div>
-
-        <div class="gate-layout">
-          <div class="gate-orb-wrap">
-            <button class="gate-orb" id="gate-orb" data-state="closed" type="button" aria-live="polite" aria-label="Activate remote access">
-              <span class="gate-ring ring-a" aria-hidden="true"></span>
-              <span class="gate-ring ring-b" aria-hidden="true"></span>
-              <span class="gate-core">
-                <span class="gate-lock" id="gate-lock" aria-hidden="true">◆</span>
-                <strong id="gate-state">Closed</strong>
-                <small id="gate-substate">WAN input stays hidden</small>
-              </span>
-            </button>
-          </div>
-
-          <div class="gate-form">
-            <div class="field compact-field full-row">
-              <span data-i18n="gate.family">IP Family</span>
-              <div class="segment family-segment" id="family-segment">
-                <button type="button" data-family="ipv4" class="active">IPv4</button>
-                <button type="button" data-family="ipv6" disabled>IPv6</button>
-                <button type="button" data-family="dual" disabled>Dual</button>
-              </div>
+        <article class="workspace-card gate-card depth-card" data-card-id="gate" data-default-size="wide" data-size="wide">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow" data-i18n="gate.eyebrow">REMOTE GATE</span>
+              <h2 data-i18n="gate.title">Temporary WAN access</h2>
             </div>
-            <label class="field compact-field">
-              <span data-i18n="gate.publicWan">Public WAN</span>
-              <select id="wan-select"></select>
-            </label>
-            <label class="field compact-field">
-              <span data-i18n="gate.wireguard">WireGuard</span>
-              <select id="wg-select"></select>
-            </label>
-            <div class="field compact-field full-row">
-              <span data-i18n="gate.duration">Access duration</span>
-              <div class="segment" id="ttl-segment">
-                <button type="button" data-ttl="60">1m</button>
-                <button type="button" data-ttl="300" class="active">5m</button>
-                <button type="button" data-ttl="900">15m</button>
-                <button type="button" data-ttl="1800">30m</button>
-              </div>
-            </div>
-            <p class="family-note full-row" id="family-note" data-i18n="gate.familyNoteIpv4">IPv4 Gate is enabled only when this control request itself is using IPv4.</p>
-            <button class="button primary gate-action full-row" id="activate-button" type="button">
-              <span data-i18n="gate.activate">Activate remote access</span>
-              <span aria-hidden="true">→</span>
-            </button>
-            <button class="button danger subtle full-row hidden" id="close-button" type="button" data-i18n="gate.close">Close access now</button>
+            <span class="state-badge" id="gate-state-badge">CLOSED</span>
           </div>
-        </div>
 
-        <div class="gate-status-strip">
-          <span>ICMP <strong id="icmp-state">DROP</strong></span>
-          <span>WireGuard UDP <strong id="udp-state">DROP</strong></span>
-          <span><span data-i18n="client.authorization">Gate authorization</span> <strong id="fw-source">—</strong></span>
-          <span>TTL <strong id="fw-expires">—</strong></span>
-        </div>
-      </article>
-      <article class="workspace-card depth-card" data-card-id="wireguard" data-default-size="normal" data-size="normal">
-        <div class="panel-head tight">
-          <div>
-            <span class="eyebrow" data-i18n="wg.eyebrow">WIREGUARD</span>
-            <h2 data-i18n="wg.title">Secure tunnel</h2>
+          <div class="gate-layout">
+            <div class="gate-orb-wrap">
+              <button class="gate-orb" id="gate-orb" data-state="closed" type="button" aria-live="polite" aria-label="Activate remote access">
+                <span class="gate-ring ring-a" aria-hidden="true"></span>
+                <span class="gate-ring ring-b" aria-hidden="true"></span>
+                <span class="gate-core">
+                  <span class="gate-lock" id="gate-lock" aria-hidden="true">◆</span>
+                  <strong id="gate-state">Closed</strong>
+                  <small id="gate-substate">WAN input stays hidden</small>
+                </span>
+              </button>
+            </div>
+
+            <div class="gate-form">
+              <div class="field compact-field full-row">
+                <span data-i18n="gate.family">IP Family</span>
+                <div class="segment family-segment" id="family-segment" role="group" aria-label="IP Family">
+                  <button type="button" data-family="ipv4" aria-pressed="false">IPv4</button>
+                  <button type="button" data-family="ipv6" aria-pressed="false">IPv6</button>
+                </div>
+              </div>
+
+              <label class="field compact-field full-row">
+                <span data-i18n="gate.endpoint">Access Endpoint</span>
+                <select id="endpoint-select"></select>
+              </label>
+
+              <label class="field compact-field full-row">
+                <span data-i18n="gate.wireguard">WireGuard</span>
+                <select id="wg-select"></select>
+              </label>
+
+              <div class="field compact-field full-row">
+                <span data-i18n="gate.scope">Access Scope</span>
+                <div class="segment scope-segment" id="scope-segment" role="group" aria-label="Access Scope">
+                  <button type="button" data-scope="wg" class="active" aria-pressed="true">
+                    <span data-i18n="gate.scopeWg">WireGuard only</span>
+                    <small data-i18n="gate.recommended">Recommended</small>
+                  </button>
+                  <button type="button" data-scope="wg_ping" aria-pressed="false" data-i18n="gate.scopeWgPing">WireGuard + Ping</button>
+                </div>
+              </div>
+
+              <div class="field compact-field full-row">
+                <span data-i18n="gate.duration">Access duration</span>
+                <div class="segment" id="ttl-segment" role="group" aria-label="Access duration">
+                  <button type="button" data-ttl="60">1m</button>
+                  <button type="button" data-ttl="300" class="active">5m</button>
+                  <button type="button" data-ttl="900">15m</button>
+                  <button type="button" data-ttl="1800">30m</button>
+                </div>
+              </div>
+
+              <p class="family-note full-row" id="family-note" aria-live="polite">Checking trusted source and endpoint capability…</p>
+              <button class="button primary gate-action full-row" id="activate-button" type="button">
+                <span data-i18n="gate.activate">Activate remote access</span>
+                <span aria-hidden="true">→</span>
+              </button>
+              <button class="button danger subtle full-row hidden" id="close-button" type="button" data-i18n="gate.close">Close access now</button>
+            </div>
           </div>
-          <span class="status-dot neutral" id="wg-dot"></span>
-        </div>
-        <div class="metric-grid">
-          <div><span class="label" data-i18n="wg.interface">Interface</span><strong id="wg-name">—</strong></div>
-          <div><span class="label" data-i18n="wg.listenPort">Listen port</span><strong id="wg-port">—</strong></div>
-          <div><span class="label" data-i18n="wg.handshake">Latest Handshake</span><strong id="wg-handshake">Never</strong></div>
-          <div><span class="label" data-i18n="wg.traffic">Traffic</span><strong id="wg-traffic">—</strong></div>
-          <div class="metric-wide"><span class="label" data-i18n="wg.status">Status</span><strong id="wg-status">—</strong></div>
-          <div class="metric-wide"><span class="label" data-i18n="wg.lanHint">LAN access</span><strong id="wg-lan-hint" data-i18n="wg.lanHintValue">Verify client AllowedIPs and WG → LAN forwarding</strong></div>
-        </div>
-      </article>
-      <article class="workspace-card depth-card" data-card-id="wan" data-default-size="normal" data-size="normal">
-        <div class="panel-head tight">
-          <div>
-            <span class="eyebrow" data-i18n="wan.eyebrow">PUBLIC WAN</span>
-            <h2 data-i18n="wan.title">Interfaces</h2>
+
+          <div class="gate-status-strip">
+            <span>Ping <strong id="icmp-state">DROP</strong></span>
+            <span>WireGuard UDP <strong id="udp-state">DROP</strong></span>
+            <span><span data-i18n="client.authorization">Gate authorization</span> <strong id="fw-source">—</strong></span>
+            <span>TTL <strong id="fw-expires">—</strong></span>
           </div>
-          <span class="muted small" id="wan-refresh" data-i18n="wan.waiting">Waiting for OpenWrt report…</span>
-        </div>
-        <div class="wan-list" id="wan-list"></div>
-      </article>
+        </article>
+
+        <article class="workspace-card depth-card" data-card-id="wireguard" data-default-size="normal" data-size="normal">
+          <div class="panel-head tight">
+            <div>
+              <span class="eyebrow" data-i18n="wg.eyebrow">WIREGUARD</span>
+              <h2 data-i18n="wg.title">Secure tunnel</h2>
+            </div>
+            <span class="status-dot neutral" id="wg-dot"></span>
+          </div>
+          <div class="metric-grid">
+            <div><span class="label" data-i18n="wg.interface">Interface</span><strong id="wg-name">—</strong></div>
+            <div><span class="label" data-i18n="wg.listenPort">Listen port</span><strong id="wg-port">—</strong></div>
+            <div><span class="label" data-i18n="wg.handshake">Latest Handshake</span><strong id="wg-handshake">Never</strong></div>
+            <div><span class="label" data-i18n="wg.traffic">Traffic</span><strong id="wg-traffic">—</strong></div>
+            <div class="metric-wide"><span class="label" data-i18n="wg.status">Status</span><strong id="wg-status">—</strong></div>
+            <div class="metric-wide"><span class="label" data-i18n="wg.lanHint">LAN access</span><strong id="wg-lan-hint" data-i18n="wg.lanHintValue">Verify client AllowedIPs and WG → LAN forwarding</strong></div>
+          </div>
+        </article>
+
+        <article class="workspace-card depth-card" data-card-id="wan" data-default-size="normal" data-size="normal">
+          <div class="panel-head tight">
+            <div>
+              <span class="eyebrow" data-i18n="wan.eyebrow">MULTI-WAN</span>
+              <h2 data-i18n="wan.title">Access paths</h2>
+            </div>
+            <span class="muted small" id="wan-refresh" data-i18n="wan.waiting">Waiting for OpenWrt report…</span>
+          </div>
+          <div class="wan-list" id="wan-list"></div>
+        </article>
       </div>
 
       <aside class="workspace-zone workspace-rail" data-workspace-zone="rail" aria-label="Status and activity">
-      <article class="workspace-card client-card depth-card" data-card-id="client" data-default-size="normal" data-size="normal">
-        <div class="panel-head tight">
-          <div>
-            <span class="eyebrow" data-i18n="client.eyebrow">CURRENT CLIENT</span>
-            <h2 data-i18n="client.title">Observed addresses</h2>
-          </div>
-          <span class="state-badge request-family" id="request-family">—</span>
-        </div>
-        <div class="address-stack">
-          <div class="address-row">
-            <div class="address-line">
-              <span class="label">IPv4</span>
-              <strong class="address-value fit-single-line" id="client-ipv4" data-fit-max="20" data-fit-min="10">—</strong>
+        <article class="workspace-card client-card depth-card" data-card-id="client" data-default-size="normal" data-size="normal">
+          <div class="panel-head tight">
+            <div>
+              <span class="eyebrow" data-i18n="client.eyebrow">CURRENT CLIENT</span>
+              <h2 data-i18n="client.title">Trusted sources</h2>
             </div>
-            <div class="address-meta" id="client-ipv4-meta">Not observed</div>
+            <span class="state-badge request-family" id="request-family">—</span>
           </div>
-          <div class="address-row">
-            <div class="address-line">
-              <span class="label">IPv6</span>
-              <strong class="address-value fit-single-line" id="client-ipv6" data-fit-max="20" data-fit-min="7.5">—</strong>
+          <div class="address-stack">
+            <div class="address-row">
+              <div class="address-line">
+                <span class="label">IPv4</span>
+                <strong class="address-value fit-single-line" id="client-ipv4" data-fit-max="20" data-fit-min="10">—</strong>
+              </div>
+              <div class="address-meta" id="client-ipv4-meta">Not observed</div>
             </div>
-            <div class="address-meta" id="client-ipv6-meta">Not observed</div>
-          </div>
-          <div class="address-row">
-            <div class="address-line">
-              <span class="label" data-i18n="client.authorization">Gate authorization</span>
-              <strong class="address-value fit-single-line" id="authorization-source" data-fit-max="18" data-fit-min="8">—</strong>
+            <div class="address-row">
+              <div class="address-line">
+                <span class="label">IPv6</span>
+                <strong class="address-value fit-single-line" id="client-ipv6" data-fit-max="20" data-fit-min="7.5">—</strong>
+              </div>
+              <div class="address-meta" id="client-ipv6-meta">Not observed</div>
+            </div>
+            <div class="address-row">
+              <div class="address-line">
+                <span class="label" data-i18n="client.authorization">Gate authorization</span>
+                <strong class="address-value fit-single-line" id="authorization-source" data-fit-max="18" data-fit-min="8">—</strong>
+              </div>
             </div>
           </div>
-        </div>
-        <p class="trust-note" data-i18n="client.trustNote">Browser-saved addresses are display-only and are never trusted as authorization input.</p>
-      </article>
-      <article class="workspace-card depth-card" data-card-id="system" data-default-size="normal" data-size="normal">
-        <div class="panel-head tight">
-          <div>
-            <span class="eyebrow" data-i18n="system.eyebrow">SYSTEM</span>
-            <h2 data-i18n="system.title">Runtime</h2>
+          <p class="trust-note" data-i18n="client.trustNote">Only addresses recently observed by the VPS through Cloudflare can be authorized. Browser-supplied IPs are never trusted.</p>
+        </article>
+
+        <article class="workspace-card depth-card" data-card-id="system" data-default-size="normal" data-size="normal">
+          <div class="panel-head tight">
+            <div>
+              <span class="eyebrow" data-i18n="system.eyebrow">SYSTEM</span>
+              <h2 data-i18n="system.title">Runtime</h2>
+            </div>
+            <span class="status-dot neutral" id="system-dot"></span>
           </div>
-          <span class="status-dot neutral" id="system-dot"></span>
-        </div>
-        <div class="system-list">
-          <div class="system-row"><span data-i18n="system.agent">Agent</span><strong id="agent-state">—</strong></div>
-          <div class="system-row"><span data-i18n="system.requestFamily">Request family</span><strong id="system-request-family">—</strong></div>
-          <div class="system-row"><span data-i18n="system.gateMode">Gate mode</span><strong data-i18n="system.gateModeValue">Verified IPv4</strong></div>
-          <div class="system-row"><span data-i18n="system.refresh">Refresh</span><strong data-i18n="system.every5s">Every 5s</strong></div>
-        </div>
-      </article>
-      <article class="workspace-card depth-card" data-card-id="activity" data-default-size="normal" data-size="normal">
-        <div class="panel-head tight">
-          <div>
-            <span class="eyebrow" data-i18n="activity.eyebrow">SECURITY EVENT STREAM</span>
-            <h2 data-i18n="activity.title">Recent activity</h2>
+          <div class="system-list">
+            <div class="system-row"><span data-i18n="system.agent">Agent</span><strong id="agent-state">—</strong></div>
+            <div class="system-row"><span data-i18n="system.requestFamily">Request family</span><strong id="system-request-family">—</strong></div>
+            <div class="system-row"><span data-i18n="system.ipv4Gate">IPv4 Gate</span><strong id="system-ipv4-gate">—</strong></div>
+            <div class="system-row"><span data-i18n="system.ipv6Gate">IPv6 Gate</span><strong id="system-ipv6-gate">—</strong></div>
+            <div class="system-row"><span data-i18n="system.firewall">Firewall</span><strong id="system-firewall">—</strong></div>
+            <div class="system-row"><span data-i18n="system.transport">Control path</span><strong id="system-transport">—</strong></div>
           </div>
-        </div>
-        <div class="activity" id="activity-list"></div>
-      </article>
+        </article>
+
+        <article class="workspace-card activity-card depth-card" data-card-id="activity" data-default-size="normal" data-size="normal">
+          <div class="panel-head tight">
+            <div>
+              <span class="eyebrow" data-i18n="activity.eyebrow">SECURITY EVENT STREAM</span>
+              <h2 data-i18n="activity.title">Recent activity</h2>
+            </div>
+          </div>
+          <div class="activity" id="activity-list"></div>
+        </article>
       </aside>
     </section>
   </main>
