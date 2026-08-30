@@ -59,13 +59,23 @@ public_wan_devices() {
 }
 
 wireguard_ports() {
-    command -v wg >/dev/null 2>&1 || return 0
-    for name in $(wg show interfaces 2>/dev/null); do
-        port="$(wg show "$name" listen-port 2>/dev/null | sed -n '1p')"
-        case "$port" in ''|*[!0-9]*) continue ;; esac
-        [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || continue
-        printf '%s\n' "$port"
-    done | sort -nu
+    {
+        # Protect configured listen ports even before a WireGuard interface is up.
+        for section in $(uci -q show network 2>/dev/null | sed -n "s/^network\.\([^.=]*\)\.proto='wireguard'$/\1/p"); do
+            port="$(uci -q get "network.${section}.listen_port" 2>/dev/null || true)"
+            case "$port" in ''|*[!0-9]*) continue ;; esac
+            [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || continue
+            printf '%s\n' "$port"
+        done
+        if command -v wg >/dev/null 2>&1; then
+            for name in $(wg show interfaces 2>/dev/null); do
+                port="$(wg show "$name" listen-port 2>/dev/null | sed -n '1p')"
+                case "$port" in ''|*[!0-9]*) continue ;; esac
+                [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || continue
+                printf '%s\n' "$port"
+            done
+        fi
+    } | sort -nu
 }
 
 sync_firewall_policy() {
