@@ -6,7 +6,7 @@
 
 WeiG-Remote-Gate is a Cloudflare-fronted control plane for Multi-WAN status and temporary private remote access. The home WAN does **not** host an HTTP/HTTPS management service. OpenWrt reports inventory/status and pulls short-lived commands over outbound HTTPS.
 
-## Security goal
+## Security and traffic ownership
 
 Remote Gate owns only two kinds of traffic destined to the router itself on protected WAN endpoints:
 
@@ -15,64 +15,14 @@ ICMP / ICMPv6 Echo Request   -> closed by default
 WireGuard UDP listen ports   -> closed by default
 ```
 
-The preferred client source is the address recently observed for the same authenticated browser session through Cloudflare. If an IPv6-first/mobile session has no observed IPv4, v0.3 can additionally run an IPv4-only carrier probe and temporarily record the reported NAT egress IPv4 as a lower-confidence `carrier_probe` source.
-
-The normal Activate request still does not accept a raw authorization IP. The VPS resolves the selected family from the session source store. Cloudflare-observed sources are marked `verified` and preferred; carrier-probe IPv4 is deliberately marked `heuristic` and uses a shorter TTL.
-
-The temporary authorization is scoped to:
-
-```text
-(source IP family + selected source IP + WAN device + WireGuard UDP port)
-```
+It deliberately operates on router **INPUT** only. It does not install filtering rules in `FORWARD`, does not own NAT, and does not manage unrelated TCP/UDP ports. qBittorrent, DHT/PeX, UPnP/NAT-PMP, DNAT/manual port forwards and forwarded NAS/PC services therefore remain under the original firewall policy.
 
 Two access scopes are available:
 
 - **WireGuard only** — recommended; Ping remains closed.
-- **WireGuard + Ping** — also permits Echo Request from the authorized source.
+- **WireGuard + Ping** — also permits Echo Request from the selected source.
 
-Authorization expires automatically after 1, 5, 15 or 30 minutes, or can be closed explicitly.
-
-## It does not blanket-filter WAN traffic
-
-Remote Gate deliberately operates only on the router's **INPUT** path. It does not install filtering rules in `FORWARD`, does not take ownership of NAT, and does not manage unrelated TCP/UDP ports.
-
-Therefore existing services remain under the original firewall policy, including:
-
-- qBittorrent / BitTorrent TCP and UDP;
-- DHT / PeX;
-- UPnP / NAT-PMP;
-- DNAT and manual port forwards;
-- forwarded NAS / PC services;
-- unrelated router-local ports.
-
-A qBittorrent port forward normally follows PREROUTING/DNAT + FORWARD and never enters the Remote Gate INPUT guard.
-
-## Firewall compatibility
-
-The OpenWrt installer auto-detects the firewall implementation:
-
-| Platform | Remote Gate backend |
-| --- | --- |
-| firewall3 / `fw3` | `iptables` + `ipset` timeout |
-| firewall4 / `fw4` | `nftables` timeout sets |
-
-Unsupported systems fail closed during installation. The user does not need to migrate firewall generations for this project.
-
-Known target classes:
-
-- ImmortalWrt / OpenWrt 21.02 class systems -> fw3 backend;
-- modern OpenWrt / ImmortalWrt -> fw4 backend.
-
-### Rule priority
-
-The Gate guard is evaluated before the normal `ESTABLISHED,RELATED` shortcut. This prevents an expired WireGuard authorization from surviving through an old conntrack entry.
-
-- fw3: `WEIG_REMOTE_GATE` is inserted at IPv4 `INPUT` position 1; the IPv6 guard is inserted only while an IPv6 protected-device policy exists.
-- fw4: the guard uses `chain-pre/input`, before fw4's inbound conntrack state rule.
-
-Existing UCI rules such as `Allow-Ping` are **not deleted**. While Remote Gate is installed, its earlier guard wins for the traffic it owns. Uninstall restores the original firewall behavior.
-
-For IPv6, Remote Gate controls only Echo Request and the selected router-local WireGuard UDP port. Neighbor Discovery, Router Advertisement, Packet Too Big and other ICMPv6 control traffic fall through to the original firewall policy.
+For IPv6, Remote Gate controls only Echo Request and the selected router-local WireGuard UDP port. NDP, Router Advertisement, Packet Too Big and other ICMPv6 control traffic fall through to the original firewall policy.
 
 ## Architecture
 
@@ -99,105 +49,127 @@ OpenWrt
    `-- optional runtime capability discovery
 ```
 
-The Cloudflare hostname is the **control plane**. WireGuard traffic is the **data plane** and must reach the selected home endpoint directly. Do not point a WireGuard UDP endpoint at a Cloudflare Tunnel hostname.
+The Cloudflare hostname is the **control plane**. WireGuard is the **data plane** and must reach the selected home endpoint directly. Never use the Cloudflare Tunnel hostname as a WireGuard UDP endpoint.
 
-## v0.3 endpoint and source model
+## Firewall compatibility
 
-The v0.3 inventory uses a schema-2 endpoint model instead of assuming one IPv4 WAN.
+| Platform | Remote Gate backend |
+| --- | --- |
+| firewall3 / `fw3` | `iptables` + `ipset` timeout |
+| firewall4 / `fw4` | `nftables` timeout sets |
 
-A native endpoint may be:
+The Gate guard is evaluated before the normal `ESTABLISHED,RELATED` shortcut. Existing UCI rules such as `Allow-Ping` are not deleted; the earlier Remote Gate guard wins only for traffic owned by the Gate, and uninstall restores the original firewall behavior.
 
-- a directly reachable public IPv4 on an active WAN;
-- a directly reachable global IPv6 on an active WAN, when the local firewall backend reports IPv6 Gate capability;
-- a private/CGNAT IPv4 WAN path, exposed as a **manual experimental attempt** and sorted after direct/mapped endpoints.
+Known target classes include ImmortalWrt/OpenWrt 21.02-class fw3 systems and modern fw4 systems. Unsupported backends fail closed during installation.
 
-A private/CGNAT WAN IPv4 is not claimed to be Internet-reachable. It can still be selected so users may test upstream mappings, provider-specific behavior, or later NATMap integration without changing the Gate model again.
+## Schema-2 Multi-WAN endpoint model
 
-### Client source acquisition
+The server no longer assumes one public IPv4 WAN. An endpoint may be:
 
-The VPS keeps IPv4 and IPv6 source records per authenticated browser session:
+- public IPv4 `Direct`;
+- global IPv6 `Direct` when IPv6 Gate capability is enabled;
+- NATMap/mapped IPv4 when a supported discovery provider supplies it;
+- per-WAN observed IPv4 `NAT egress · Try`;
+- private/CGNAT IPv4 `Try` for manual experiments.
 
-1. **Cloudflare observation (`verified`)** — preferred. The control request's `CF-Connecting-IP` becomes the source for that family.
-2. **IPv4-only carrier probe (`heuristic`)** — fallback when the session has no IPv4 observation. The browser requests the IPv4-only `api.ipify.org` endpoint and posts the returned public IPv4 to the authenticated/CSRF-protected probe endpoint. The source is stored for a short window and may then be manually selected for IPv4 Gate.
+Direct/mapped paths are recommended ahead of heuristic/private paths. Private/CGNAT addresses are not falsely described as Internet-reachable; they remain selectable because upstream mappings, NATMap or provider-specific networks may make a path usable.
 
-This fallback is intended for mobile carrier NAT, IPv6-first networks, CGNAT broadband, NAT64/464XLAT environments, and other cases where the dashboard itself reaches Cloudflare over IPv6 while IPv4 Internet traffic still exits through an operator NAT address.
+The OpenWrt agent continuously derives protected IPv4 devices, eligible IPv6 devices and discovered WireGuard listen ports. A temporary authorization is revoked immediately if its WAN device or WireGuard port leaves the current protected policy, even before its TTL expires.
 
-A later direct Cloudflare IPv4 observation replaces the heuristic probe value automatically.
+## Dual-stack client sources
 
-The OpenWrt control agent can use healthy IPv4 or IPv6 default-route candidates across Multi-WAN links for its outbound HTTPS control traffic. This control path is independent from the WireGuard data-plane endpoint selected by the user.
+IPv4 and IPv6 are independent records for the authenticated browser session. Learning one family never deletes the other.
 
-### NATMap status
+Source priority:
 
-The schema and server endpoint builder understand a mapped IPv4 endpoint provider, but Remote Gate does not install or depend on NATMap. On the current 21.02 compatibility path, the agent does not advertise a mapped endpoint unless a supported discovery implementation supplies one.
+1. **Cloudflare observation (`verified`)** — the current request's `CF-Connecting-IP`.
+2. **Network probe (`heuristic`)** — a short-lived fallback/complement when one family is missing.
 
-The read-only audit can inspect existing `/var/run/natmap/*.json` runtime status without printing NATMap configuration content or Remote Gate secrets. Absence of NATMap is normal and has no effect on native IPv4/IPv6 operation.
+v0.3.1 probes missing families independently:
+
+- IPv4: IPv4-only `api.ipify.org`, useful for mobile carrier NAT/CGNAT/NAT64/464XLAT paths;
+- IPv6: IPv6-only `api6.ipify.org`, useful when the dashboard itself currently reaches Cloudflare through IPv4 but the device also has usable IPv6.
+
+The authenticated browser posts only the probe result to a session+CSRF-protected endpoint. A later Cloudflare observation for the same family replaces the heuristic value. The normal Activate request still does not carry a raw authorization IP as authority; the VPS resolves the selected family from the session source store.
+
+When both families are usable, the UI **recommends IPv4 first**, but this is not a lock. After the user manually selects IPv6, refreshes preserve that selection while IPv6 remains usable.
+
+## v0.3.1 tactile interaction system
+
+The dashboard follows the design-system discipline documented in [`DESIGN.md`](DESIGN.md), with visual changes reviewed against the hierarchy/spacing/elevation/motion/accessibility approach used by `awesome-design-md` rather than applying isolated shadows or ad-hoc CSS.
+
+### Canonical Wei.G brand icon
+
+The persistent header control and favicon both use the canonical `server/app/static/Wei.G.ico`. The header renders it in a rounded tactile chassis with restrained rim light, contact shadow, hover lift and pressed compression. Clicking it still opens the Utility Sheet.
+
+### EndpointPicker
+
+The browser-native endpoint `<select>` remains only as an internal state bridge and is hidden from the visible UI. `EndpointPicker` provides:
+
+- a structured closed trigger with WAN, family/provider and address/port;
+- tactile EndpointCards with Primary/Try state and selected feedback;
+- a compact anchored interaction surface on desktop;
+- a safe-area-aware Bottom Sheet on mobile;
+- Escape/backdrop close, focus containment and ARIA selected state;
+- reduced-motion support.
+
+### DurationControl
+
+Quick presets are exactly:
+
+```text
+1m | 5m | 15m | 30m | Custom
+```
+
+There is no 1h preset.
+
+`Custom` opens a tactile DurationCrown range:
+
+```text
+minimum  0.5h
+maximum  12h
+step     0.5h
+```
+
+Every custom detent can provide a short synthesized mechanical tick plus optional light haptic feedback. Sound and haptics are independently switchable in Utility Sheet and stored only as browser-local preferences.
+
+The browser is not the duration authority. Both VPS and OpenWrt firewall independently validate `1m/5m/15m/30m` or half-hour custom steps up to 12h.
 
 ## Remote Gate flow
 
 1. Sign in to the Cloudflare-fronted dashboard.
-2. The server records the current Cloudflare-observed source. If IPv4 is missing, the browser may automatically obtain an IPv4 carrier/NAT egress address through the IPv4-only probe and register it as a short-lived heuristic source.
-3. Choose IPv4 or IPv6, an available access endpoint, a WireGuard interface, access scope and TTL.
-4. The VPS resolves the chosen endpoint and selected session source server-side and queues one short-lived command. The Activate payload does not carry a raw authorization IP, WAN device or WireGuard port as authority.
-5. The OpenWrt agent pulls the command over outbound HTTPS.
-6. The firewall backend validates that the WAN device and WireGuard port are currently protected, then authorizes only the selected source tuple.
-7. The agent ACKs the command; a pending command cannot be silently overwritten by a second Activate/Close request.
-8. TTL expiry or **Close now** returns the Gate to the closed state.
+2. VPS records the current Cloudflare-observed source; the browser best-effort completes the missing IPv4/IPv6 family with a short-lived probe.
+3. Choose IPv4 or IPv6, an Endpoint, WireGuard interface, Access Scope and duration.
+4. VPS resolves the selected session source and endpoint server-side and queues one short-lived command.
+5. OpenWrt pulls the command over outbound HTTPS.
+6. The firewall validates that the selected WAN device and WireGuard port are still protected, then authorizes only the selected source tuple.
+7. OpenWrt ACKs the one-time command. A pending command cannot be silently overwritten.
+8. TTL expiry or **Close access now** closes the Gate.
 
-## Continuous protection and firewall reloads
+## Optional IPv6 Gate
 
-The agent continuously synchronizes active WAN devices with IPv4 addresses, global IPv6-capable WAN devices, and locally configured/listening WireGuard UDP ports. Both public and private/CGNAT IPv4 WAN devices can therefore participate in the Gate policy; endpoint priority and reachability labels remain separate from firewall protection.
+IPv6 is an optional data-plane capability. Fresh installs default to `GATE_IPV6=auto`; legacy upgrades preserve conservative behavior by adding `GATE_IPV6=disabled` until the operator enables/tests it. IPv4 operation does not depend on IPv6 support.
 
-The project registers a firewall include so the guard is restored after firewall reload/restart. Authorization state is restored only for the remaining TTL; expired state is not reopened.
+The outbound control transport is separate from IPv6 Gate. The agent can use healthy IPv4/IPv6 Multi-WAN paths for report/pull/ack even when IPv6 data-plane Gate is disabled.
 
-When `GATE_IPV6=disabled`, or when there are no IPv6 protected devices, fw3 removes the idle IPv6 INPUT jump instead of leaving an empty guard chain attached.
+## NATMap status
 
-## WireGuard note for OpenWrt / ImmortalWrt 21.02
+Remote Gate understands mapped endpoint records but does not install or require NATMap. The 21.02 compatibility path can safely operate without it. The read-only audit may inspect existing `/var/run/natmap/*.json` runtime status without printing NATMap configuration or Remote Gate secrets.
 
-On some 21.02-class builds, adding a new UCI interface with `proto='wireguard'` and running only:
+## Adaptive workspace
 
-```sh
-/etc/init.d/network reload
-```
+- Desktop: Main Canvas + Utility Rail; Activity/System stay readable instead of shrinking into tiny utility cards.
+- Mobile/tablet: independent fixed flow `Gate -> Client -> WireGuard -> WAN -> Activity -> System`; desktop drag/span state cannot overlap mobile cards.
+- IPv6 remains complete on one line and dynamically fits available width.
+- Activity records remain one-line summaries with expandable details.
+- CLOSED Gate orb and Activate button share the same eligibility/action path.
+- Auto/Light/Dark, language, interaction feedback and Sign out remain standardized utility controls.
 
-can leave the interface in a `proto: none` / `NO_DEVICE` state even when `/lib/netifd/proto/wireguard.sh` exists. A full network restart may be required once:
+## Safe update
 
-```sh
-/etc/init.d/network restart
-```
+### VPS
 
-This briefly reconnects WAN interfaces. Do not run it remotely without a recovery path. Verify afterward with:
-
-```sh
-ifstatus <wireguard-interface>
-wg show interfaces
-wg show all listen-port
-```
-
-## Adaptive dashboard workspace
-
-The dashboard is English-first with automatic Simplified Chinese support and manual language override.
-
-Current UI behavior includes:
-
-- Auto / Light / Dark appearance; on mobile the frequent control is a compact theme button and lower-frequency controls live in the utility sheet;
-- adaptive desktop Main Canvas + Utility Rail, with System and Activity kept together instead of wasting a full-width row;
-- Arrange mode and browser-local layout preferences on desktop;
-- fixed mobile card order with drag disabled for reliable touch scrolling;
-- IPv4 and IPv6 client sources displayed independently;
-- automatic IPv4 carrier-NAT probing when the signed-in session is IPv6-only;
-- complete single-line IPv6 display with dynamic font fitting;
-- public/mapped endpoints first, with private/CGNAT IPv4 paths available as lower-priority manual `Try` options;
-- endpoint, family, scope and TTL selection driven by reported capabilities;
-- one-line expandable activity records;
-- the CLOSED Gate orb and the Activate button sharing the same activation eligibility and action path.
-
-Browser-local UI preferences are not security authority. Carrier-probe IPv4 is intentionally a separate lower-confidence source class rather than being presented as a Cloudflare-verified observation.
-
-## Updating an existing VPS
-
-### v0.2.x -> v0.3 transition
-
-Do **not** rely on the old v0.2.x installed updater for the first v0.3 transition: its fixed file list predates the new schema-2 modules. Bootstrap with the updater from the target release instead:
+For a first transition from an old v0.2.x installation, download the current updater instead of relying on the old fixed file list:
 
 ```bash
 curl -fsSL \
@@ -208,63 +180,52 @@ bash -n /tmp/remote-gate-update.sh
 bash /tmp/remote-gate-update.sh
 ```
 
-The updater preserves the existing hostname, login credentials, `WRITE_TOKEN`, sessions and state, creates a rollback backup under `/var/backups/weig-remote-gate/`, restarts the localhost-only service, verifies `/healthz` and the Agent API, and restores the previous application on failure.
-
-Starting with v0.3, the updater is installed and preserved at:
+From v0.3 onward the local updater is preserved at:
 
 ```bash
 /usr/local/lib/remote-gate/update.sh
 ```
 
-so later releases can use the local updater directly.
+The updater preserves hostname, login credentials, `WRITE_TOKEN`, sessions/state, creates a rollback backup under `/var/backups/weig-remote-gate/`, restarts the localhost-only service, checks `/healthz` plus the Agent API and restores the old application on failure.
 
-## Updating an existing OpenWrt installation
+### OpenWrt
 
-Older installations may not yet contain `/usr/lib/remote-gate/update.sh`. For the first transition, download the updater from the target release and run that temporary copy. v0.3 then installs and preserves its own updater, uninstaller and read-only audit utility.
+Older installs may need to download the current `openwrt/update.sh` once. v0.3+ then installs/preserves its own updater, uninstaller and read-only audit utility. Update creates application/config/state plus firewall/network backups, preserves WireGuard configuration, validates shell syntax, rebuilds only Remote Gate-owned INPUT objects and fails back to the previous installation if validation fails.
 
-The OpenWrt updater backs up application/config/state plus firewall/network snapshots for recovery, preserves existing WireGuard configuration, validates shell syntax before replacement, rebuilds only Remote Gate-owned INPUT objects, and verifies `ready=true` before restarting the agent.
+## Safe uninstall
+
+Both VPS and OpenWrt have one-command uninstallers with dry-run support. They create local backups first, remove only resources owned by Remote Gate and perform residual checks. OpenWrt does **not** blindly restore an old whole-firewall snapshot and does not remove WireGuard by default. Cloudflare Tunnel resources are not automatically deleted.
 
 ## Current version
 
-See [`VERSION`](VERSION). Development builds remain marked `0.3.0-dev` until staging and real-device validation are complete.
+See [`VERSION`](VERSION). Development commits use the `-dev` suffix. The release workflow for this repository is: develop on the version branch, require Core + Chromium regression CI to pass, audit the final diff, then fast-forward `main`.
 
 ## Validation status
 
-### Already hardware-validated
+### Hardware validated
 
-The fw3 IPv4 path has been validated end-to-end on a real ImmortalWrt 21.02-class router using `iptables` legacy + `ipset`, PPPoE public WAN, Cloudflare Tunnel control plane and a router-local WireGuard UDP listener.
+The fw3 IPv4 path has been validated end-to-end on a real ImmortalWrt 21.02-class router using iptables legacy + ipset, PPPoE public WAN, Cloudflare control plane and a router-local WireGuard listener. Verified behavior included CLOSED blocking, source-specific Activate, real WireGuard traffic, TTL expiry, fresh-handshake failure after expiry, and preservation of the INPUT-only boundary.
 
-Verified sequence:
+### Implemented and automated-CI tested
 
-```text
-CLOSED
-  -> public IPv4 ICMP Echo blocked
-  -> public WireGuard UDP blocked
+Current automated coverage includes:
 
-ACTIVATE
-  -> only the dashboard-derived trusted IPv4 entered the timeout authorization
-  -> source-specific ACCEPT preceded the general DROP
-  -> WireGuard handshake and real traffic succeeded
+- schema-2 IPv4/IPv6 endpoint building and ordering;
+- public/private/CGNAT/NAT-egress Try paths;
+- independent IPv4/IPv6 session sources and probe replacement rules;
+- IPv4-first recommendation with manual IPv6 preservation;
+- `WireGuard only` / `WireGuard + Ping` scopes;
+- custom TTL validation through 12h in VPS and OpenWrt policy;
+- fw3/fw4 contract checks and IPv6 Echo-only policy;
+- Android/mobile layout overlap regression;
+- custom EndpointPicker, Wei.G BrandIcon and DurationControl interaction contracts;
+- Chromium regression at 320x800, 360x800, 390x844, 412x915, 768x1024, 1024x768, 1366x768, 1440x900 and 1920x1080.
 
-TTL EXPIRED
-  -> authorization disappeared
-  -> ICMP and WireGuard UDP returned to DROP
-  -> a fresh WireGuard handshake could not be established
-```
+IPv6 Gate, carrier/NAT source behavior, NAT-egress Try paths and fw4 remain subject to real-network/hardware validation before being described as hardware validated.
 
-During that validation, the Gate remained INPUT-only. Existing qBittorrent / UPnP / DNAT / FORWARD behavior was not taken over by Remote Gate.
+## Production checks
 
-### Implemented and CI-tested, pending final hardware validation
-
-v0.3 implements the corresponding IPv6 Gate path for fw3/fw4, exact IPv6 source authorization, Echo-Request-only ICMPv6 handling, IPv6 WireGuard UDP protection, empty-policy jump cleanup, IPv4/IPv6 Multi-WAN control transport, automatic carrier-NAT IPv4 source probing, and manual private/CGNAT IPv4 WAN attempts.
-
-The new carrier-probe and private-WAN paths are covered by unit/contract CI, but they must still be validated against real mobile carrier NAT behavior and the intended private-WAN/NATMap scenarios before being described as hardware-validated.
-
-The fw4/nftables backend follows the same Gate model but likewise is not part of the documented fw3 real-device validation above.
-
-## Production validation
-
-Start with the read-only audit and firewall state:
+Read-only OpenWrt diagnostics:
 
 ```sh
 /usr/lib/remote-gate/remote-gate-audit.sh
@@ -272,7 +233,7 @@ Start with the read-only audit and firewall state:
 /usr/lib/remote-gate/remote-gate-firewall.sh status-json
 ```
 
-For fw3 IPv4:
+fw3 IPv4:
 
 ```sh
 iptables -S INPUT | sed -n '1,8p'
@@ -280,7 +241,7 @@ ipset list weig_remote_gate_auth_v4
 iptables -S WEIG_REMOTE_GATE
 ```
 
-For fw3 IPv6 when enabled:
+fw3 IPv6 when enabled:
 
 ```sh
 ip6tables -S INPUT | sed -n '1,8p'
@@ -288,18 +249,7 @@ ipset list weig_remote_gate_auth_v6
 ip6tables -S WEIG_REMOTE_GATE_V6
 ```
 
-For fw4:
-
-```sh
-fw4 check
-fw4 print | grep -n 'WeiG Remote Gate'
-nft list set inet fw4 weig_remote_gate_protected_ifname_v4
-nft list set inet fw4 weig_remote_gate_protected_ifname_v6
-```
-
-For each tested family, verify that only the authorized external source reaches the selected WireGuard endpoint during the TTL and that a fresh handshake fails after expiry. Separately verify the existing qBittorrent listening/forwarded port remains reachable exactly as before.
-
-For an IPv6-first phone, confirm the Current Client card obtains an IPv4 record marked `Carrier NAT probe`, select IPv4 + the public WAN endpoint, Activate, and verify whether the resulting WireGuard flow uses the same operator NAT egress address. For a private/CGNAT home WAN, a successful Gate authorization only confirms the router firewall accepted the source; actual Internet reachability still depends on an upstream mapping/NATMap/provider path.
+For each family verify CLOSED -> Activate -> actual WireGuard traffic -> TTL -> CLOSED, and separately confirm existing qBittorrent/UPnP/DNAT/FORWARD behavior remains unchanged.
 
 ## License
 
