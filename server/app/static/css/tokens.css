@@ -20,16 +20,17 @@
   --space-10: 40px;
   --space-12: 48px;
 
-  --type-page: clamp(28px, 2vw, 34px);
-  --type-card: 21px;
+  --type-page: clamp(29px, 2vw, 36px);
+  --type-card: 22px;
   --type-value: 18px;
   --type-body: 15px;
-  --type-label: 12px;
-  --type-caption: 11px;
+  --type-label: 13px;
+  --type-caption: 12px;
   --type-button: 15px;
 
-  --control-height: 44px;
-  --control-height-primary: 52px;
+  --control-height: 46px;
+  --control-height-primary: 54px;
+  --touch-min: 44px;
 
   --primary: #5965e8;
   --primary-hover: #6874f2;
@@ -37,32 +38,48 @@
   --warning: #d8871a;
   --danger: #d84a4a;
 
-  --canvas: #f5f7fb;
+  --canvas: #f3f5fa;
   --canvas-elevated: #ffffff;
-  --surface-1: rgba(255,255,255,.80);
-  --surface-2: rgba(255,255,255,.96);
+  --surface-0: rgba(239,242,248,.88);
+  --surface-1: rgba(255,255,255,.82);
+  --surface-2: rgba(255,255,255,.94);
   --surface-raised: rgba(255,255,255,.985);
-  --surface-recessed: rgba(236,239,248,.78);
+  --surface-recessed: rgba(232,236,245,.82);
   --ink: #11131a;
-  --ink-muted: #667085;
-  --ink-subtle: #98a2b3;
+  --ink-muted: #5f6879;
+  --ink-subtle: #8a94a6;
   --hairline: rgba(17,19,26,.10);
   --hairline-strong: rgba(17,19,26,.17);
-  --border-hover: rgba(89,101,232,.27);
-  --border-active: rgba(89,101,232,.40);
+  --border-hover: rgba(89,101,232,.29);
+  --border-active: rgba(89,101,232,.44);
 
-  --elevation-card-rest: 0 16px 38px rgba(31,38,65,.09), 0 3px 10px rgba(31,38,65,.045);
-  --elevation-card-hover: 0 28px 64px rgba(31,38,65,.14), 0 8px 20px rgba(31,38,65,.07);
-  --elevation-card-pressed: 0 10px 26px rgba(31,38,65,.08), 0 2px 7px rgba(31,38,65,.04);
-  --elevation-control-rest: 0 7px 18px rgba(47,56,130,.14), 0 2px 5px rgba(31,38,65,.05);
-  --elevation-control-hover: 0 13px 28px rgba(47,56,130,.21), 0 4px 9px rgba(31,38,65,.07);
-  --elevation-control-pressed: 0 3px 9px rgba(47,56,130,.12);
-  --elevation-recessed: inset 0 2px 7px rgba(31,38,65,.075), inset 0 1px 1px rgba(31,38,65,.04);
-  --highlight-top: inset 0 1px rgba(255,255,255,.78);
-  --highlight-control: inset 0 1px rgba(255,255,255,.62);
+  /* Spatial hierarchy: canvas -> chassis -> raised control -> active control. */
+  --depth-z0: 0 1px 2px rgba(24,31,52,.035);
+  --depth-z1: 0 10px 24px rgba(31,38,65,.070), 0 2px 6px rgba(31,38,65,.045);
+  --depth-z2: 0 18px 44px rgba(31,38,65,.105), 0 5px 14px rgba(31,38,65,.060);
+  --depth-z3: 0 30px 72px rgba(31,38,65,.155), 0 10px 24px rgba(31,38,65,.075);
+  --depth-z4: 0 42px 92px rgba(31,38,65,.19), 0 16px 34px rgba(31,38,65,.09);
+  --shadow-contact: 0 2px 5px rgba(31,38,65,.08);
+  --shadow-ambient: 0 18px 42px rgba(31,38,65,.10);
+  --shadow-hover: 0 30px 70px rgba(31,38,65,.16);
+  --rim-light: inset 0 1px rgba(255,255,255,.86), inset 1px 0 rgba(255,255,255,.28);
+  --rim-edge: inset 0 -1px rgba(29,36,61,.045);
+  --inner-highlight: inset 0 1px 0 rgba(255,255,255,.68);
+  --inner-recess: inset 0 2px 7px rgba(31,38,65,.085), inset 0 1px 1px rgba(31,38,65,.045);
 
-  --ambient-a: rgba(106,116,255,.19);
-  --ambient-b: rgba(53,205,167,.10);
+  /* Compatibility aliases used by existing components. */
+  --elevation-card-rest: var(--depth-z2);
+  --elevation-card-hover: var(--depth-z3);
+  --elevation-card-pressed: var(--depth-z1);
+  --elevation-control-rest: var(--depth-z1);
+  --elevation-control-hover: var(--depth-z2);
+  --elevation-control-pressed: var(--shadow-contact);
+  --elevation-recessed: var(--inner-recess);
+  --highlight-top: var(--rim-light), var(--rim-edge);
+  --highlight-control: var(--inner-highlight), var(--rim-edge);
+
+  --ambient-a: rgba(106,116,255,.18);
+  --ambient-b: rgba(53,205,167,.09);
 }
 
 html[data-theme="dark"] {
@@ -72,30 +89,44 @@ html[data-theme="dark"] {
   --warning: #f0aa48;
   --danger: #ff6b6b;
 
-  --canvas: #090b10;
-  --canvas-elevated: #0f1219;
-  --surface-1: rgba(20,24,33,.82);
-  --surface-2: rgba(25,30,41,.96);
-  --surface-raised: rgba(31,37,50,.98);
-  --surface-recessed: rgba(9,12,18,.72);
+  --canvas: #080a0f;
+  --canvas-elevated: #0e1118;
+  --surface-0: rgba(9,12,18,.90);
+  --surface-1: rgba(18,22,31,.86);
+  --surface-2: rgba(24,29,40,.96);
+  --surface-raised: rgba(31,37,50,.985);
+  --surface-recessed: rgba(7,10,15,.76);
   --ink: #f7f8fa;
-  --ink-muted: #a8b0be;
-  --ink-subtle: #737c8c;
+  --ink-muted: #b1b8c5;
+  --ink-subtle: #80899a;
   --hairline: rgba(255,255,255,.105);
   --hairline-strong: rgba(255,255,255,.18);
-  --border-hover: rgba(125,134,255,.34);
-  --border-active: rgba(125,134,255,.48);
+  --border-hover: rgba(125,134,255,.37);
+  --border-active: rgba(125,134,255,.52);
 
-  --elevation-card-rest: 0 22px 54px rgba(0,0,0,.32), 0 5px 15px rgba(0,0,0,.20);
-  --elevation-card-hover: 0 34px 76px rgba(0,0,0,.44), 0 10px 24px rgba(0,0,0,.26);
-  --elevation-card-pressed: 0 12px 30px rgba(0,0,0,.26), 0 3px 9px rgba(0,0,0,.18);
-  --elevation-control-rest: 0 8px 20px rgba(0,0,0,.24), 0 4px 12px rgba(56,64,180,.14);
-  --elevation-control-hover: 0 15px 32px rgba(0,0,0,.34), 0 6px 18px rgba(76,86,230,.20);
-  --elevation-control-pressed: 0 3px 10px rgba(0,0,0,.28);
-  --elevation-recessed: inset 0 2px 8px rgba(0,0,0,.34), inset 0 1px 2px rgba(0,0,0,.25);
-  --highlight-top: inset 0 1px rgba(255,255,255,.09);
-  --highlight-control: inset 0 1px rgba(255,255,255,.13);
+  --depth-z0: 0 1px 2px rgba(0,0,0,.22);
+  --depth-z1: 0 9px 22px rgba(0,0,0,.26), 0 3px 8px rgba(0,0,0,.20);
+  --depth-z2: 0 22px 54px rgba(0,0,0,.36), 0 6px 17px rgba(0,0,0,.23);
+  --depth-z3: 0 36px 82px rgba(0,0,0,.48), 0 12px 28px rgba(0,0,0,.29);
+  --depth-z4: 0 48px 110px rgba(0,0,0,.56), 0 18px 42px rgba(0,0,0,.34);
+  --shadow-contact: 0 3px 9px rgba(0,0,0,.30);
+  --shadow-ambient: 0 22px 54px rgba(0,0,0,.36);
+  --shadow-hover: 0 38px 88px rgba(0,0,0,.50);
+  --rim-light: inset 0 1px rgba(255,255,255,.115), inset 1px 0 rgba(255,255,255,.035);
+  --rim-edge: inset 0 -1px rgba(0,0,0,.34);
+  --inner-highlight: inset 0 1px rgba(255,255,255,.145);
+  --inner-recess: inset 0 2px 9px rgba(0,0,0,.40), inset 0 1px 2px rgba(0,0,0,.28);
+
+  --elevation-card-rest: var(--depth-z2);
+  --elevation-card-hover: var(--depth-z3);
+  --elevation-card-pressed: var(--depth-z1);
+  --elevation-control-rest: var(--depth-z1);
+  --elevation-control-hover: var(--depth-z2);
+  --elevation-control-pressed: var(--shadow-contact);
+  --elevation-recessed: var(--inner-recess);
+  --highlight-top: var(--rim-light), var(--rim-edge);
+  --highlight-control: var(--inner-highlight), var(--rim-edge);
 
   --ambient-a: rgba(89,101,232,.20);
-  --ambient-b: rgba(66,201,138,.08);
+  --ambient-b: rgba(66,201,138,.075);
 }
