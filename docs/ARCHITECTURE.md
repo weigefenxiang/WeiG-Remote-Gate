@@ -1,56 +1,60 @@
 # Architecture
 
-WeiG-Remote-Gate separates the public control plane from the home WAN data plane.
-
 ```text
-Browser
-  -> Cloudflare HTTPS
-  -> VPS localhost service
-  <- OpenWrt outbound HTTPS report / agent pull / ack
-  -> OpenWrt firewall4/nftables timeout sets
-  -> WireGuard
+Cloudflare HTTPS
+      |
+      v
+VPS control plane (loopback-only origin)
+      ^
+      |
+      | outbound HTTPS
+      |
+OpenWrt agent
+      |
+      +-- Multi-WAN report
+      +-- Public-WAN discovery
+      +-- WireGuard discovery
+      `-- Firewall abstraction
+            +-- fw3: iptables + ipset
+            `-- fw4: nftables
 ```
 
-## Control plane
+## Firewall abstraction contract
 
-The Python service binds to `127.0.0.1:29444` only.
-
-It stores:
-- WAN inventory and last report
-- agent-reported WireGuard status
-- one pending Gate command
-- recent security activity
-- hashed web sessions
-
-It never stores a WireGuard private key.
-
-## OpenWrt agent
-
-The agent:
-- reports WAN inventory every 5 minutes only when network inventory changes
-- posts WireGuard/firewall status
-- polls for a single pending command
-- executes `activate` or `close`
-- acknowledges the command once
-
-The agent is outbound-only.
-
-## firewall4 integration
-
-WeiG-Remote-Gate uses firewall4 automatic nft includes:
+`remote-gate-firewall.sh` exposes the same actions on both firewall generations:
 
 ```text
-/usr/share/nftables.d/table-pre/
-  90-weig-remote-gate-sets.nft
-
-/usr/share/nftables.d/chain-pre/input_wan/
-  90-weig-remote-gate.nft
+detect
+install
+sync <public-wan-devices> <wireguard-udp-ports>
+activate <source-ipv4> <wan-device> <udp-port> <ttl>
+clear
+restore
+status-json
+uninstall
 ```
 
-The first file defines timeout-capable sets. The second inserts the temporary ICMP and WireGuard UDP accepts at the beginning of `input_wan`, before the normal WAN drop/reject path.
+The agent does not need backend-specific logic.
 
-v0.1 supports one active authorization at a time. Activating a new client flushes the previous temporary set members before inserting the new source IPv4, WAN device and UDP port.
+## Guard boundary
+
+The abstraction is deliberately an INPUT-only guard. It is forbidden from installing Remote Gate filters in FORWARD, so router-local remote access policy is separated from forwarded applications such as qBittorrent.
+
+## Priority and timeout
+
+The guard executes before the normal established/related shortcut. This makes expiration immediate for subsequent ICMP/WireGuard packets even if conntrack still has an older flow entry.
+
+- fw3 inserts `WEIG_REMOTE_GATE` at root INPUT position 1 and uses an ipset source entry with timeout.
+- fw4 uses `chain-pre/input` and an nftables timeout source set.
+
+## Public-WAN and WireGuard synchronization
+
+The agent discovers active IPv4 default-route interfaces, keeps only public WAN devices, discovers local WireGuard listen ports, and synchronizes those values into the firewall backend. This means Ping is protected even before WireGuard is configured; newly started WireGuard interfaces become protected automatically.
+
+## Firewall reload recovery
+
+A firewall include runs the backend `restore` action after a firewall rebuild. Protected device/port state is restored. An active authorization is restored only for its remaining absolute TTL.
 
 ## Why there is no WAN HTTP probe
 
-A browser cannot emit raw ICMP Echo. Creating a browser-accessible probe on the public WAN would require a responding service such as HTTP/HTTPS/WebSocket, which violates this project's threat model. The dashboard therefore reports authorization state and real WireGuard handshake data instead of presenting a fake browser "ping".
+A browser cannot emit raw ICMP Echo. Creating a browser-accessible probe on the public WAN would require a responding service such as HTTP/HTTPS/WebSocket, which violates this project's threat model. The dashboard therefore reports authorization state and real WireGuard handshake data instead of presenting a fake browser ping.
