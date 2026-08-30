@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 import secrets
+import threading
 import time
 from typing import Any
 
@@ -11,6 +12,7 @@ from .store import JsonStore
 
 ALLOWED_TTLS = {60, 300, 900, 1800}
 ALLOWED_SCOPES = {"wg", "wg_ping"}
+QUEUE_LOCK = threading.RLock()
 
 
 class GateError(ValueError):
@@ -77,6 +79,26 @@ def _source_address(source_ip: str, family: str | None = None):
     if (expected == "ipv4" and address.version != 4) or (expected == "ipv6" and address.version != 6):
         raise GateError("source_family_mismatch")
     return address
+
+
+def _queue_for_write(store: JsonStore) -> dict[str, Any]:
+    queue = store.read("commands.json", {"pending": None, "last": None})
+    if not isinstance(queue, dict):
+        queue = {"pending": None, "last": None}
+    command = queue.get("pending")
+    if not isinstance(command, dict) or command.get("state") != "pending":
+        return queue
+
+    now = int(time.time())
+    if int(command.get("expires_at", 0) or 0) > now:
+        raise GateError("command_pending")
+
+    command["state"] = "expired"
+    queue["last"] = command
+    queue["pending"] = None
+    store.write("commands.json", queue)
+    store.append_activity({"type": "command_expired", "command_id": command.get("id", "")})
+    return queue
 
 
 def queue_activate(
@@ -171,19 +193,21 @@ def queue_activate(
             "state": "pending",
         }
 
-    store.write("commands.json", {"pending": command, "last": None})
-    store.append_activity(
-        {
-            "type": "gate_requested",
-            "source_ip": command["source_ip"],
-            "family": command["family"],
-            "scope": command["scope"],
-            "wan": command.get("wan", ""),
-            "wireguard": command.get("wireguard", ""),
-            "endpoint_id": command.get("endpoint_id", ""),
-            "ttl": ttl,
-        }
-    )
+    with QUEUE_LOCK:
+        _queue_for_write(store)
+        store.write("commands.json", {"pending": command, "last": None})
+        store.append_activity(
+            {
+                "type": "gate_requested",
+                "source_ip": command["source_ip"],
+                "family": command["family"],
+                "scope": command["scope"],
+                "wan": command.get("wan", ""),
+                "wireguard": command.get("wireguard", ""),
+                "endpoint_id": command.get("endpoint_id", ""),
+                "ttl": ttl,
+            }
+        )
     return command
 
 
@@ -200,52 +224,56 @@ def queue_close(store: JsonStore, *, source_ip: str) -> dict[str, Any]:
         "family": "ipv4" if address.version == 4 else "ipv6",
         "state": "pending",
     }
-    store.write("commands.json", {"pending": command, "last": None})
-    store.append_activity({"type": "gate_close_requested", "source_ip": str(address)})
+    with QUEUE_LOCK:
+        _queue_for_write(store)
+        store.write("commands.json", {"pending": command, "last": None})
+        store.append_activity({"type": "gate_close_requested", "source_ip": str(address)})
     return command
 
 
 def pull_command(store: JsonStore) -> dict[str, Any] | None:
-    queue = store.read("commands.json", {"pending": None, "last": None})
-    if not isinstance(queue, dict):
-        return None
-    command = queue.get("pending")
-    if not isinstance(command, dict):
-        return None
-    if command.get("state") != "pending":
-        return None
-    if int(command.get("expires_at", 0)) <= int(time.time()):
-        command["state"] = "expired"
-        queue["last"] = command
-        queue["pending"] = None
-        store.write("commands.json", queue)
-        store.append_activity({"type": "command_expired", "command_id": command.get("id", "")})
-        return None
-    return command
+    with QUEUE_LOCK:
+        queue = store.read("commands.json", {"pending": None, "last": None})
+        if not isinstance(queue, dict):
+            return None
+        command = queue.get("pending")
+        if not isinstance(command, dict):
+            return None
+        if command.get("state") != "pending":
+            return None
+        if int(command.get("expires_at", 0)) <= int(time.time()):
+            command["state"] = "expired"
+            queue["last"] = command
+            queue["pending"] = None
+            store.write("commands.json", queue)
+            store.append_activity({"type": "command_expired", "command_id": command.get("id", "")})
+            return None
+        return command
 
 
 def ack_command(store: JsonStore, command_id: str, ok: bool, detail: str = "") -> bool:
-    queue = store.read("commands.json", {"pending": None, "last": None})
-    if not isinstance(queue, dict):
-        return False
-    command = queue.get("pending")
-    if not isinstance(command, dict) or command.get("id") != command_id:
-        return False
-    command["state"] = "done" if ok else "failed"
-    command["acked_at"] = int(time.time())
-    command["detail"] = detail[:240]
-    queue["last"] = command
-    queue["pending"] = None
-    store.write("commands.json", queue)
-    store.append_activity(
-        {
-            "type": "command_done" if ok else "command_failed",
-            "command_id": command_id,
-            "action": command.get("action"),
-            "detail": detail[:120],
-        }
-    )
-    return True
+    with QUEUE_LOCK:
+        queue = store.read("commands.json", {"pending": None, "last": None})
+        if not isinstance(queue, dict):
+            return False
+        command = queue.get("pending")
+        if not isinstance(command, dict) or command.get("id") != command_id:
+            return False
+        command["state"] = "done" if ok else "failed"
+        command["acked_at"] = int(time.time())
+        command["detail"] = detail[:240]
+        queue["last"] = command
+        queue["pending"] = None
+        store.write("commands.json", queue)
+        store.append_activity(
+            {
+                "type": "command_done" if ok else "command_failed",
+                "command_id": command_id,
+                "action": command.get("action"),
+                "detail": detail[:120],
+            }
+        )
+        return True
 
 
 def gate_view(store: JsonStore) -> dict[str, Any]:
