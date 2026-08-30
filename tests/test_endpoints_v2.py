@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from server.app.endpoints import build_endpoints, validate_inventory_v2
-from server.app.gate import GateError, queue_activate
+from server.app.gate import queue_activate
 from server.app.store import JsonStore
 
 
@@ -84,24 +84,26 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(command["device"], "pppoe-WAN")
         self.assertEqual(command["wg_port"], 51820)
 
-    def test_private_ipv4_direct_endpoint_cannot_activate(self):
+    def test_private_ipv4_endpoint_can_be_attempted_manually(self):
         endpoint = [x for x in build_endpoints(self.store) if x["wan"] == "WAN" and x["family"] == "ipv4"][0]
-        with self.assertRaisesRegex(GateError, "endpoint_not_reachable"):
-            queue_activate(
-                self.store,
-                source_ip="1.1.1.1",
-                endpoint_id=endpoint["id"],
-                family="ipv4",
-                scope="wg",
-                ttl=300,
-            )
+        command = queue_activate(
+            self.store,
+            source_ip="1.1.1.1",
+            endpoint_id=endpoint["id"],
+            family="ipv4",
+            scope="wg",
+            ttl=300,
+        )
+        self.assertEqual(command["reachability"], "private")
+        self.assertEqual(command["device"], "pppoe-WAN")
+        self.assertEqual(command["external_address"], "172.20.111.32")
 
     def test_advanced_gate_waits_for_schema2_agent(self):
         self.store.write("agent-status.json", {
             "wireguard": [{"name": "WG_HOME", "listen_port": 51820}],
         })
         endpoint = [x for x in build_endpoints(self.store) if x["wan"] == "WAN" and x["family"] == "ipv6"][0]
-        with self.assertRaisesRegex(GateError, "agent_upgrade_required"):
+        with self.assertRaisesRegex(ValueError, "agent_upgrade_required"):
             queue_activate(
                 self.store,
                 source_ip="2001:4860:4860::8888",
