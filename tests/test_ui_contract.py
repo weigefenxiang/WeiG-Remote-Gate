@@ -86,6 +86,16 @@ class UIContractTests(unittest.TestCase):
             source = path.read_text(encoding="utf-8")
             self.assertIn("server/app/static/Wei.G.ico", source, path.name)
 
+    def test_vps_updater_is_installed_and_preserved(self):
+        install = INSTALL.read_text(encoding="utf-8")
+        update = UPDATE.read_text(encoding="utf-8")
+        for source in (install, update):
+            self.assertIn('"server/update.sh"', source)
+            self.assertIn('bash -n "$TMP_DIR/server/update.sh"', source)
+            self.assertIn('"$LIB_DIR/update.sh"', source)
+        self.assertIn('install -o root -g root -m 0755 "$TMP_DIR/server/update.sh" "$LIB_DIR/update.sh"', install)
+        self.assertIn('install -o root -g root -m 0755 "$TMP_DIR/server/update.sh" "$LIB_DIR/update.sh"', update)
+
 
 if __name__ == "__main__":
     unittest.main()
