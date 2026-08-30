@@ -32,9 +32,10 @@
 
   function chooseFamily() {
     const state = context.state;
+    if (state.familyManual && familyAvailable(state.family)) return state.family;
+    if (familyAvailable('ipv4')) return 'ipv4';
     if (familyAvailable(state.family)) return state.family;
     if (familyAvailable(state.requestFamily)) return state.requestFamily;
-    if (familyAvailable('ipv4')) return 'ipv4';
     if (familyAvailable('ipv6')) return 'ipv6';
     return state.requestFamily === 'ipv6' ? 'ipv6' : 'ipv4';
   }
@@ -191,6 +192,7 @@
     context = nextContext;
     const state = context.state;
     if (!state.scope) state.scope = 'wg';
+    if (typeof state.familyManual !== 'boolean') state.familyManual = false;
 
     $('ttl-segment')?.addEventListener('click', (event) => {
       const button = event.target.closest('[data-ttl]');
@@ -205,6 +207,7 @@
     $('family-segment')?.addEventListener('click', (event) => {
       const button = event.target.closest('[data-family]');
       if (!button || button.disabled || !['ipv4', 'ipv6'].includes(button.dataset.family)) return;
+      state.familyManual = true;
       state.family = button.dataset.family;
       context.onFamilyChange?.(state.family);
       render();
