@@ -11,7 +11,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from .client_sources import delete_sources, observe_source, source_for_family, trusted_sources
 from .config import load_settings
+from .endpoints import build_endpoints, normalize_inventory, validate_inventory_v2
 from .gate import GateError, ack_command, gate_view, pull_command, queue_activate, queue_close
 from .security import (
     bearer_matches,
@@ -37,6 +39,7 @@ TEMPLATE_DIR = PACKAGE_DIR / "templates"
 MAX_BODY = 32 * 1024
 NAME_RE = re.compile(r"^[A-Za-z0-9_.:@-]{1,64}$")
 DEVICE_RE = re.compile(r"^[A-Za-z0-9_.:@+-]{1,128}$")
+ENDPOINT_RE = re.compile(r"^ep_[a-f0-9]{20}$")
 
 LOGIN_LOCK = threading.RLock()
 LOGIN_FAILURES: dict[str, list[float]] = {}
@@ -57,6 +60,13 @@ def _safe_device(value: object) -> str:
     text = str(value or "").strip()
     if not DEVICE_RE.fullmatch(text):
         raise ValueError("invalid_device")
+    return text
+
+
+def _safe_endpoint_id(value: object) -> str:
+    text = str(value or "").strip()
+    if not ENDPOINT_RE.fullmatch(text):
+        raise ValueError("invalid_endpoint")
     return text
 
 
@@ -93,6 +103,10 @@ def _login_succeeded(ip: str) -> None:
     with LOGIN_LOCK:
         LOGIN_FAILURES.pop(ip, None)
         LOGIN_BLOCKED_UNTIL.pop(ip, None)
+
+
+def _request_family(source: str) -> str:
+    return "ipv4" if ipaddress.ip_address(source).version == 4 else "ipv6"
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -241,16 +255,24 @@ class Handler(BaseHTTPRequestHandler):
             if not source:
                 self._json(400, {"error": "missing_cf_connecting_ip"})
                 return
+            observe_source(STORE, session.token, source)
             current = STORE.read("current.json", {"schema": 1, "interfaces": {}})
+            inventory = normalize_inventory(STORE)
+            endpoints = build_endpoints(STORE)
             agent = STORE.read("agent-status.json", {})
             activity = STORE.read("activity.json", [])
             gate = gate_view(STORE)
             self._json(
                 200,
                 {
+                    "schema": 2,
                     "client_ip": source,
+                    "request_family": _request_family(source),
+                    "client_sources": trusted_sources(STORE, session.token),
                     "csrf": session.csrf,
                     "current": current,
+                    "inventory": inventory,
+                    "endpoints": endpoints,
                     "agent": agent,
                     "gate": gate,
                     "activity": activity[-30:] if isinstance(activity, list) else [],
@@ -300,6 +322,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             _login_succeeded(source)
             session = create_session(SETTINGS, STORE, remember)
+            observe_source(STORE, session.token, source)
             STORE.append_activity({"type": "login_success", "source_ip": source})
             self.send_response(303)
             self.send_header("Location", "/")
@@ -312,6 +335,7 @@ class Handler(BaseHTTPRequestHandler):
             session = self._require_session()
             if not session or not self._require_csrf(session):
                 return
+            delete_sources(STORE, session.token)
             delete_session(STORE, session.token)
             self.send_response(303)
             self.send_header("Location", "/")
@@ -324,20 +348,34 @@ class Handler(BaseHTTPRequestHandler):
             session = self._require_session()
             if not session or not self._require_csrf(session):
                 return
-            source = self._trusted_client_ip()
-            if not source:
+            current_source = self._trusted_client_ip()
+            if not current_source:
                 self._json(400, {"error": "missing_cf_connecting_ip"})
                 return
+            observe_source(STORE, session.token, current_source)
             try:
                 data = self._read_json()
-                command = queue_activate(
-                    STORE,
-                    source_ip=source,
-                    wan_name=_safe_name(data.get("wan")),
-                    wg_name=_safe_name(data.get("wireguard")),
-                    ttl=int(data.get("ttl", 300)),
-                )
-            except (ValueError, GateError) as exc:
+                endpoint_raw = data.get("endpoint_id")
+                if endpoint_raw:
+                    family = str(data.get("family") or "").strip()
+                    selected_source = source_for_family(STORE, session.token, family)
+                    command = queue_activate(
+                        STORE,
+                        source_ip=selected_source,
+                        endpoint_id=_safe_endpoint_id(endpoint_raw),
+                        family=family,
+                        scope=str(data.get("scope") or "wg"),
+                        ttl=int(data.get("ttl", 300)),
+                    )
+                else:
+                    command = queue_activate(
+                        STORE,
+                        source_ip=current_source,
+                        wan_name=_safe_name(data.get("wan")),
+                        wg_name=_safe_name(data.get("wireguard")),
+                        ttl=int(data.get("ttl", 300)),
+                    )
+            except (ValueError, KeyError, GateError) as exc:
                 self._json(400, {"error": str(exc)})
                 return
             self._json(202, {"command_id": command["id"], "state": "pending"})
@@ -351,6 +389,7 @@ class Handler(BaseHTTPRequestHandler):
             if not source:
                 self._json(400, {"error": "missing_cf_connecting_ip"})
                 return
+            observe_source(STORE, session.token, source)
             command = queue_close(STORE, source_ip=source)
             self._json(202, {"command_id": command["id"], "state": "pending"})
             return
@@ -401,6 +440,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 data = self._read_json()
+                if int(data.get("schema", 1) or 1) == 2:
+                    STORE.write("inventory-v2.json", validate_inventory_v2(data))
+                    self._empty(204)
+                    return
+
                 raw_items = data.get("interfaces", [])
                 if not isinstance(raw_items, list) or len(raw_items) > 64:
                     raise ValueError
@@ -409,7 +453,7 @@ class Handler(BaseHTTPRequestHandler):
                     for item in raw_items
                     if isinstance(item, dict)
                 }
-            except ValueError:
+            except (ValueError, TypeError):
                 self._json(400, {"error": "invalid_inventory"})
                 return
             state = STORE.read("current.json", {"schema": 1, "interfaces": {}})
@@ -438,6 +482,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 data = self._read_json()
+                schema = max(1, min(2, int(data.get("schema", 1) or 1)))
                 wireguard = data.get("wireguard", [])
                 if not isinstance(wireguard, list) or len(wireguard) > 32:
                     raise ValueError
@@ -461,20 +506,41 @@ class Handler(BaseHTTPRequestHandler):
                 firewall = data.get("firewall", {})
                 if not isinstance(firewall, dict):
                     firewall = {}
+                transport = data.get("transport", {})
+                if not isinstance(transport, dict):
+                    transport = {}
+                active_family = str(transport.get("active_family", ""))
+                if active_family not in {"ipv4", "ipv6"}:
+                    active_family = ""
+                active_device = str(transport.get("active_device", ""))[:128]
             except (ValueError, TypeError):
                 self._json(400, {"error": "invalid_status"})
                 return
             STORE.write(
                 "agent-status.json",
                 {
+                    "schema": schema,
                     "reported_at": int(time.time()),
                     "wireguard": clean_wg,
                     "firewall": {
+                        "backend": str(firewall.get("backend", ""))[:32],
+                        "ready": bool(firewall.get("ready", False)),
                         "active": bool(firewall.get("active", False)),
+                        "family": str(firewall.get("family", ""))[:8],
+                        "scope": str(firewall.get("scope", ""))[:16],
                         "expires_in": max(0, int(firewall.get("expires_in", 0) or 0)),
                         "source_ip": str(firewall.get("source_ip", ""))[:64],
                         "device": str(firewall.get("device", ""))[:128],
                         "wg_port": int(firewall.get("wg_port", 0) or 0),
+                        "protected_devices_v4": max(0, int(firewall.get("protected_devices_v4", firewall.get("protected_devices", 0)) or 0)),
+                        "protected_devices_v6": max(0, int(firewall.get("protected_devices_v6", 0) or 0)),
+                        "protected_ports": max(0, int(firewall.get("protected_ports", 0) or 0)),
+                    },
+                    "transport": {
+                        "active_family": active_family,
+                        "active_device": active_device,
+                        "healthy": bool(transport.get("healthy", False)),
+                        "last_ok_at": max(0, int(transport.get("last_ok_at", 0) or 0)),
                     },
                 },
             )
