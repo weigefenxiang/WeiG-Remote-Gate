@@ -56,6 +56,7 @@ fetch_file "remote-gate-report.sh" "$LIB_DIR/remote-gate-report.sh"
 fetch_file "remote-gate-agent.sh" "$LIB_DIR/remote-gate-agent.sh"
 fetch_file "remote-gate-firewall.sh" "$LIB_DIR/remote-gate-firewall.sh"
 fetch_file "remote-gate-firewall-include.sh" "$LIB_DIR/remote-gate-firewall-include.sh"
+fetch_file "remote-gate-audit.sh" "$LIB_DIR/remote-gate-audit.sh"
 fetch_file "uninstall.sh" "$LIB_DIR/uninstall.sh"
 fetch_file "update.sh" "$LIB_DIR/update.sh"
 fetch_file "remote-gate-agent.init" "$INIT_FILE"
@@ -144,5 +145,6 @@ printf 'Control transport: automatic IPv4/IPv6 Multi-WAN health fallback\n'
 printf 'The WAN has no HTTP/HTTPS listener from this project.\n'
 printf 'qBittorrent/BT port forwarding remains under the original firewall and is unaffected.\n'
 printf 'Safe update: %s/update.sh\n' "$LIB_DIR"
+printf 'Read-only audit: %s/remote-gate-audit.sh\n' "$LIB_DIR"
 printf 'Safe uninstall: %s/uninstall.sh --dry-run\n' "$LIB_DIR"
 printf 'Firewall status: %s/remote-gate-firewall.sh status-json\n' "$LIB_DIR"
