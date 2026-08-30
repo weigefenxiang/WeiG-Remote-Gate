@@ -87,6 +87,15 @@ class FirewallBackendTests(unittest.TestCase):
         self.assertIn('if [ "$AUTH_SCOPE" = "wg_ping" ]', source)
         self.assertIn('valid_scope() { case "$1" in wg|wg_ping)', source)
 
+    def test_custom_ttl_matches_server_policy_through_twelve_hours(self):
+        source = FIREWALL.read_text(encoding="utf-8")
+        self.assertIn("valid_ttl()", source)
+        self.assertIn("60|300|900|1800", source)
+        self.assertIn('[ "$1" -ge 1800 ] && [ "$1" -le 43200 ]', source)
+        self.assertIn('[ $(( $1 % 1800 )) -eq 0 ]', source)
+        self.assertIn('valid_ttl "$ttl"', source)
+        self.assertNotIn('TTL must be between 30 and 1800 seconds', source)
+
     def test_agent_syncs_dual_stack_wans_and_wireguard_ports(self):
         source = AGENT.read_text(encoding="utf-8")
         self.assertIn("v4_protected_devices", source)
