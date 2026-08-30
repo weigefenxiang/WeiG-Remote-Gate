@@ -68,7 +68,7 @@
     return list.filter((item) =>
       item &&
       item.family === family &&
-      ['direct', 'mapped'].includes(item.reachability) &&
+      ['direct', 'mapped', 'private'].includes(item.reachability) &&
       (!wgName || item.wireguard === wgName)
     );
   }
@@ -86,7 +86,9 @@
 
   function endpointLabel(item) {
     const family = item.family === 'ipv6' ? 'IPv6' : 'IPv4';
-    const provider = item.provider === 'natmap' ? 'NATMap' : 'Direct';
+    let provider = 'Direct';
+    if (item.provider === 'natmap') provider = 'NATMap';
+    else if (item.reachability === 'private') provider = 'Private/CGNAT · Try';
     return `${item.wan} · ${family} · ${provider} · ${endpointAddress(item)}`;
   }
 
@@ -125,15 +127,26 @@
     state.requestFamily = data?.request_family || ipFamily(data?.client_ip);
     const v4 = sourceRecord(data, 'ipv4');
     const v6 = sourceRecord(data, 'ipv6');
+    const zh = document.documentElement.dataset.lang === 'zh';
+    const v4Probe = v4?.source === 'carrier_probe';
 
     if ($('client-ipv4')) $('client-ipv4').textContent = v4?.address || t('common.notObserved');
     if ($('client-ipv6')) $('client-ipv6').textContent = v6?.address || t('common.notObserved');
     if ($('client-ipv4-meta')) $('client-ipv4-meta').textContent = v4
-      ? `${state.requestFamily === 'ipv4' ? t('client.currentRequest') : t('client.serverObserved')} · ${age(v4.observed_at)}`
+      ? `${v4Probe ? (zh ? '运营商 NAT Probe' : 'Carrier NAT probe') : (state.requestFamily === 'ipv4' ? t('client.currentRequest') : t('client.serverObserved'))} · ${age(v4.observed_at)}`
       : t('common.notObserved');
     if ($('client-ipv6-meta')) $('client-ipv6-meta').textContent = v6
       ? `${state.requestFamily === 'ipv6' ? t('client.currentRequest') : t('client.serverObserved')} · ${age(v6.observed_at)}`
       : t('common.notObserved');
+
+    const trustNote = document.querySelector('.trust-note');
+    if (trustNote) {
+      trustNote.textContent = v4Probe
+        ? (zh
+          ? 'IPv4 来自 IPv4-only 运营商 NAT Probe，可用于手动尝试 IPv4 Gate；Cloudflare 直接观察到的 Source 仍优先。'
+          : 'IPv4 came from an IPv4-only carrier NAT probe and may be used to try IPv4 Gate; Cloudflare-observed sources remain preferred.')
+        : t('client.trustNote');
+    }
 
     const requestLabel = state.requestFamily === 'ipv4' ? 'IPv4' : state.requestFamily === 'ipv6' ? 'IPv6' : '—';
     if ($('request-family')) $('request-family').textContent = requestLabel;
@@ -252,6 +265,7 @@
         if (eps.some((x) => x.family === 'ipv4' && x.reachability === 'direct')) return 0;
         if (eps.some((x) => x.family === 'ipv6' && x.reachability === 'direct')) return 1;
         if (eps.some((x) => x.reachability === 'mapped')) return 2;
+        if (eps.some((x) => x.reachability === 'private')) return 8;
         return 9;
       };
       return score(a) - score(b) || String(a.name).localeCompare(String(b.name));
