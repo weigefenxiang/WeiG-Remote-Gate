@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from .client_sources import delete_sources, observe_source, source_for_family, trusted_sources
+from .client_sources import delete_sources, observe_ipv4_probe, observe_source, source_for_family, trusted_sources
 from .config import load_settings
 from .endpoints import build_endpoints, normalize_inventory, validate_inventory_v2
 from .gate import GateError, ack_command, gate_view, pull_command, queue_activate, queue_close
@@ -129,7 +129,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header(
             "Content-Security-Policy",
             "default-src 'self'; img-src 'self' data:; style-src 'self'; "
-            "script-src 'self'; connect-src 'self'; object-src 'none'; "
+            "script-src 'self' https://api.ipify.org; connect-src 'self'; object-src 'none'; "
             "base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
         )
 
@@ -342,6 +342,19 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Set-Cookie", clear_session_cookie())
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
+            return
+
+        if path == "/api/v1/client-source/probe":
+            session = self._require_session()
+            if not session or not self._require_csrf(session):
+                return
+            try:
+                data = self._read_json()
+                record = observe_ipv4_probe(STORE, session.token, _safe_ipv4(data.get("ipv4")))
+            except (ValueError, TypeError):
+                self._json(400, {"error": "invalid_ipv4_probe"})
+                return
+            self._json(200, {"family": "ipv4", **record})
             return
 
         if path == "/api/v1/gate/activate":
