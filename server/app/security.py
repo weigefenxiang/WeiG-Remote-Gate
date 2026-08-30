@@ -158,6 +158,14 @@ def host_matches(settings: Settings, host_header: str | None) -> bool:
         return False
     host = host_header.strip().lower()
     if host.startswith("["):
-        return host.startswith("[::1]")
+        closing = host.find("]")
+        if closing < 0:
+            return False
+        literal = host[1:closing]
+        suffix = host[closing + 1:]
+        if suffix:
+            if not suffix.startswith(":") or not suffix[1:].isdigit():
+                return False
+        return literal == "::1"
     host = host.split(":", 1)[0].rstrip(".")
     return host in {settings.public_hostname, "127.0.0.1", "localhost"}
