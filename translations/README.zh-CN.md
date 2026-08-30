@@ -15,12 +15,14 @@ ICMP / ICMPv6 Echo Request   -> 默认关闭
 WireGuard UDP 监听端口       -> 默认关闭
 ```
 
-用户登录并激活后，VPS 只会选择同一已认证 Browser Session 最近通过可信 Cloudflare 请求路径观察到的来源地址。Browser 不能自行提交任意授权 IP。
+首选 Client Source 是同一已认证 Browser Session 最近经 Cloudflare 真实观察到的地址。若手机或 IPv6-first 网络的 Dashboard 只通过 IPv6 访问，v0.3 还会自动运行 IPv4-only Carrier NAT Probe，获取运营商/上游 NAT 的 IPv4 出口地址，并以较低置信度的 `carrier_probe` Source 短期保存。
 
-临时授权严格限定为：
+普通 Activate 请求仍然不会直接携带一个任意 `source_ip` 作为授权依据。VPS 会按所选 Family 从 Session Source Store 解析地址：Cloudflare Observation 标记为 `verified` 并优先使用；Carrier Probe IPv4 标记为 `heuristic`，并使用更短的保存 TTL。
+
+临时授权限定为：
 
 ```text
-(IP Family + 精确来源 IP + WAN device + WireGuard UDP port)
+(IP Family + 选定来源 IP + WAN device + WireGuard UDP port)
 ```
 
 提供两种 Access Scope：
@@ -106,9 +108,21 @@ v0.3 使用 Schema 2 Endpoint model，不再假定只有一个 IPv4 WAN。
 Native Endpoint 可以是：
 
 - 活动 WAN 上可直接到达的 Public IPv4；
-- 活动 WAN 上可直接到达的 Global IPv6，前提是本机 Firewall Backend 报告 IPv6 Gate capability。
+- 活动 WAN 上可直接到达的 Global IPv6，前提是本机 Firewall Backend 报告 IPv6 Gate capability；
+- Private / CGNAT IPv4 WAN Path，作为**允许用户手动尝试的 Experimental Endpoint**，并排在 Direct / NATMap Endpoint 后面。
 
-VPS 会按**已认证 Browser Session**分别保存最近观察到的 IPv4 与 IPv6 来源。选择 IPv4 必须有仍有效的可信 IPv4 observation；选择 IPv6 必须有仍有效的可信 IPv6 observation。Browser 本地仅用于显示的旧 IP 永远不会被拿来做授权。
+Private / CGNAT WAN IPv4 不会被宣称为“公网可达”。允许选择它的目的，是让用户可以尝试上游端口映射、运营商特殊网络行为，以及后续 NATMap 场景，而不需要再次修改 Gate 模型。
+
+### Client Source 获取
+
+VPS 按已认证 Browser Session 分别保存 IPv4 与 IPv6 Source：
+
+1. **Cloudflare Observation (`verified`)** —— 优先。控制请求的 `CF-Connecting-IP` 作为该 Family 的 Source。
+2. **IPv4-only Carrier Probe (`heuristic`)** —— 当 Session 没有 IPv4 Observation 时使用。Browser 请求 IPv4-only `api.ipify.org`，拿到运营商/上游 NAT 出口 Public IPv4 后，再提交给带 Session + CSRF 校验的 Probe Endpoint；该 Source 只短期保存，之后允许用户手动选择 IPv4 Gate。
+
+该 fallback 面向：手机移动运营商 NAT、IPv6-first、CGNAT 宽带、NAT64 / 464XLAT，以及 Dashboard 本身只通过 IPv6 到达 Cloudflare、但 IPv4 Internet 流量仍会经过运营商 NAT 出口的场景。
+
+如果后续 Browser 真正通过 IPv4 被 Cloudflare 观察到，则 `verified` IPv4 会自动覆盖 `carrier_probe` 值。
 
 OpenWrt Control Agent 可以在 Multi-WAN 的健康 IPv4 / IPv6 default-route candidate 之间选择出站 HTTPS 控制路径。这个控制路径与用户选择的 WireGuard 数据面 Endpoint 相互独立。
 
@@ -121,17 +135,19 @@ Read-only Audit 可以读取已有 `/var/run/natmap/*.json` Runtime Status，但
 ## Remote Gate 工作流程
 
 1. 登录 Cloudflare 前置的 Dashboard。
-2. Server 从可信 Cloudflare 请求路径观察当前来源，并与该已认证 Session 绑定。
-3. 选择 IPv4 或 IPv6、可用 Access Endpoint、WireGuard Interface、Access Scope 与 TTL。
-4. VPS 在 Server 端重新解析 Endpoint，并生成短生命周期一次性命令。Browser 不会提供可信 Authorization IP、WAN device 或 WireGuard port。
+2. Server 记录当前 Cloudflare Observation；若 IPv4 缺失，Browser 可自动通过 IPv4-only Probe 获取运营商/NAT 出口 IPv4，并注册成短生命周期 heuristic Source。
+3. 手动选择 IPv4 或 IPv6、Access Endpoint、WireGuard Interface、Access Scope 与 TTL。
+4. VPS 在 Server 端重新解析 Endpoint 与 Session Source，然后生成短生命周期一次性命令。Activate Payload 本身不直接携带 Raw Authorization IP、WAN device 或 WireGuard port 作为权威输入。
 5. OpenWrt Agent 通过出站 HTTPS 拉取命令。
-6. Firewall Backend 再次确认 WAN device 与 WireGuard port 当前确实属于受保护 Policy，然后只授权精确来源 tuple。
+6. Firewall Backend 再次确认 WAN device 与 WireGuard port 当前属于受保护 Policy，然后只授权选定 Source tuple。
 7. Agent ACK 命令；存在未过期 Pending Command 时，第二个 Activate / Close 不会静默覆盖前一个命令。
 8. TTL 到期或点击 **Close now** 后，Gate 恢复关闭状态。
 
 ## 持续保护与 Firewall reload
 
-Agent 会持续同步活动 WAN device，以及已配置/正在监听的 WireGuard UDP port。即使 WireGuard Interface 暂时未起来，已配置 listen port 仍可保持 fail closed。
+Agent 会持续同步所有拥有 IPv4 地址的活动 WAN device、具有 Global IPv6 且启用了 IPv6 Gate 的 WAN device，以及本机已配置/正在监听的 WireGuard UDP port。
+
+因此 Public IPv4 与 Private / CGNAT IPv4 WAN 都可以进入 Gate Policy；是否公网可达只影响 Endpoint 排序和标签，不再决定“是否允许用户尝试”。
 
 项目会注册 Firewall Include，因此 Firewall reload/restart 后会自动恢复 Gate 防护。只有尚未过期的 Authorization 会按剩余 TTL 恢复，过期状态不会重新开放。
 
@@ -170,12 +186,14 @@ Dashboard 源码以 English 为基准，同时支持自动简体中文和手动�
 - Desktop Arrange mode 与 Browser-local Layout Preference；
 - Mobile 固定 Card 顺序并关闭拖拉，避免影响 Touch Scroll；
 - IPv4 / IPv6 Client Source 分开显示；
+- IPv6-only Session 在缺少 IPv4 Source 时自动运行 Carrier NAT IPv4 Probe；
 - IPv6 完整保持单行，并根据宽度动态缩小字体；
+- Public / NATMap Endpoint 优先，Private / CGNAT IPv4 Path 作为低优先级 `Try` 选项；
 - Endpoint、Family、Scope 与 TTL 均由实际 Capability 驱动；
 - Activity 默认一条事件一行，可展开查看细节；
 - CLOSED Gate Orb 与 Activate Button 共用同一套 Eligibility 与 Action Path。
 
-Browser 本地 UI Preference 不属于安全授权依据。
+Browser 本地 UI Preference 不属于安全授权依据。Carrier Probe IPv4 会明确作为低置信度 Source class 展示，不冒充 Cloudflare verified Observation。
 
 ## 更新已有 VPS
 
@@ -240,9 +258,11 @@ TTL EXPIRED
 
 ### 已实现并通过 CI，但仍待最终实机验证
 
-v0.3 已实现对应 IPv6 Gate path，包括精确 IPv6 source authorization、仅控制 Echo Request 的 ICMPv6 规则、IPv6 WireGuard UDP protection、空 IPv6 policy jump 清理，以及 IPv4 / IPv6 Multi-WAN Control Transport。这些路径已有自动化测试、Syntax CI 与 Browser Regression 覆盖，但**尚未在 21.02 fw3 实机上宣布完成新的 IPv6 Data Plane 硬件验证**。
+v0.3 已实现 IPv6 Gate path、精确 IPv6 source authorization、仅控制 Echo Request 的 ICMPv6、IPv6 WireGuard UDP protection、空 IPv6 policy jump 清理、IPv4 / IPv6 Multi-WAN Control Transport、Carrier NAT IPv4 自动 Probe，以及 Private / CGNAT IPv4 WAN 手动尝试。
 
-fw4/nftables Backend 也按照同一 Security Model 实现，但同样不属于上面已经完成的 fw3 实机验证范围。
+Carrier Probe 与 Private WAN Path 已有 Unit / Contract CI 覆盖，但仍需要在真实手机移动运营商 NAT，以及目标 Private WAN / NATMap 场景中做最终验证后，才会标记为 Hardware-validated。
+
+fw4/nftables Backend 同样按照该 Gate Model 实现，但不属于上面已经完成的 fw3 实机验证范围。
 
 ## 生产环境验证
 
@@ -280,6 +300,10 @@ nft list set inet fw4 weig_remote_gate_protected_ifname_v6
 ```
 
 每个测试 Family 都应确认：TTL 内只有被授权的外部来源可以访问选定 WireGuard Endpoint；TTL 结束后重新发起的新 Handshake 必须失败。同时单独确认 qBittorrent 的监听/转发 Port 与升级前一样可达。
+
+IPv6-first 手机场景需要确认 Current Client 能自动获得标记为 `Carrier NAT probe` 的 IPv4，随后手动选择 IPv4 + Public WAN Endpoint 并 Activate，再验证实际 WireGuard UDP 是否使用同一运营商 NAT 出口。
+
+Private / CGNAT 家庭 WAN 场景中，Gate Activation 成功只代表路由器 Firewall 已接受该 Source；真正从 Internet 入站仍取决于上游 Port Mapping、NATMap 或运营商网络行为。
 
 ## License
 
