@@ -14,6 +14,46 @@
     return Number.isInteger(hours) ? `${hours}h` : `${hours.toFixed(1)}h`;
   }
 
+  function ensureUi() {
+    const root = $('ttl-segment');
+    if (!root) return null;
+
+    let custom = $('ttl-custom-button');
+    if (!custom) {
+      custom = document.createElement('button');
+      custom.type = 'button';
+      custom.id = 'ttl-custom-button';
+      custom.dataset.ttl = String(DEFAULT);
+      custom.dataset.customDuration = '1';
+      custom.setAttribute('aria-expanded', 'false');
+      custom.setAttribute('aria-controls', 'duration-custom-panel');
+      custom.textContent = 'Custom';
+      root.append(custom);
+    }
+
+    let panel = $('duration-custom-panel');
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = 'duration-custom-panel';
+      panel.className = 'duration-custom-panel';
+      panel.hidden = true;
+      panel.innerHTML = `
+        <div class="duration-readout">
+          <span class="eyebrow">CUSTOM DURATION</span>
+          <output id="duration-output" for="duration-slider">1h</output>
+        </div>
+        <div class="duration-rail" id="duration-fill">
+          <input id="duration-slider" type="range" min="${MIN}" max="${MAX}" step="${STEP}" value="${DEFAULT}" aria-label="Custom access duration">
+        </div>
+        <div class="duration-scale" aria-hidden="true">
+          <span>0.5h</span><span>12h</span>
+        </div>`;
+      root.insertAdjacentElement('afterend', panel);
+    }
+
+    return {root, custom, panel, slider: $('duration-slider')};
+  }
+
   function setPanelOpen(open) {
     const panel = $('duration-custom-panel');
     const button = $('ttl-custom-button');
@@ -35,6 +75,8 @@
     custom.dataset.ttl = String(next);
     output.textContent = format(next);
     output.setAttribute('aria-label', zh() ? `自定义时长 ${format(next)}` : `Custom duration ${format(next)}`);
+    custom.textContent = zh() ? '自定义' : 'Custom';
+    slider.setAttribute('aria-label', zh() ? '自定义访问时长' : 'Custom access duration');
     if (fill) fill.style.setProperty('--duration-progress', `${((next - MIN) / (MAX - MIN)) * 100}%`);
 
     if (feedback) window.RemoteGateFeedback?.detent?.((next - MIN) / (MAX - MIN));
@@ -42,11 +84,9 @@
   }
 
   function bind() {
-    const root = $('ttl-segment');
-    const slider = $('duration-slider');
-    const custom = $('ttl-custom-button');
-    if (!root || !slider || !custom) return;
-
+    const ui = ensureUi();
+    if (!ui?.slider) return;
+    const {root, slider, custom} = ui;
     let lastStep = Number(slider.value || DEFAULT) / STEP;
 
     root.addEventListener('click', (event) => {
@@ -65,16 +105,7 @@
       syncValue(value, {commit: true, feedback: changed});
     });
 
-    slider.addEventListener('change', () => {
-      window.RemoteGateFeedback?.haptic?.(9);
-    });
-
-    slider.addEventListener('keydown', (event) => {
-      if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) {
-        queueMicrotask(() => syncValue(slider.value, {commit: true, feedback: true}));
-      }
-    });
-
+    slider.addEventListener('change', () => window.RemoteGateFeedback?.haptic?.(9));
     window.addEventListener('remote-gate-language', () => syncValue(slider.value));
     syncValue(slider.value || DEFAULT);
   }
