@@ -116,7 +116,9 @@ append_default() {
     key="$1" value="$2"
     grep -Eq "^${key}=" "$CONFIG_FILE" 2>/dev/null || printf "%s='%s'\n" "$key" "$value" >> "$CONFIG_FILE"
 }
-append_default GATE_IPV6 auto
+# Existing v0.2.x installations have never had an IPv6 Gate. Keep that new
+# data-plane path disabled during migration until the operator validates it.
+append_default GATE_IPV6 disabled
 append_default CONTROL_TRANSPORT auto
 append_default NATMAP_DISCOVERY auto
 chmod 0600 "$CONFIG_FILE"
