@@ -194,8 +194,19 @@ fw4_add_lines() {
     while IFS= read -r value; do
         [ -n "$value" ] || continue
         case "$kind" in
-            ifname) valid_device "$value" || continue; nft add element inet fw4 "$setname" "{ \"$value\" }" ;;
-            port) valid_uint "$value" || continue; [ "$value" -ge 1 ] && [ "$value" -le 65535 ] || continue; nft add element inet fw4 "$setname" "{ $value }" ;;
+            ifname)
+                valid_device "$value" || continue
+                nft -f - <<EOF
+add element inet fw4 $setname { "$value" }
+EOF
+                ;;
+            port)
+                valid_uint "$value" || continue
+                [ "$value" -ge 1 ] && [ "$value" -le 65535 ] || continue
+                nft -f - <<EOF
+add element inet fw4 $setname { $value }
+EOF
+                ;;
         esac
     done < "$file"
 }
@@ -210,9 +221,11 @@ fw4_restore_sets() {
 
     read_auth
     if [ -n "$AUTH_IP" ]; then
-        nft add element inet fw4 weig_remote_gate_auth_ipv4 "{ $AUTH_IP timeout ${AUTH_REMAINING}s }"
-        nft add element inet fw4 weig_remote_gate_auth_ifname "{ \"$AUTH_DEVICE\" }"
-        nft add element inet fw4 weig_remote_gate_auth_udp_port "{ $AUTH_PORT }"
+        nft -f - <<EOF
+add element inet fw4 weig_remote_gate_auth_ipv4 { $AUTH_IP timeout ${AUTH_REMAINING}s }
+add element inet fw4 weig_remote_gate_auth_ifname { "$AUTH_DEVICE" }
+add element inet fw4 weig_remote_gate_auth_udp_port { $AUTH_PORT }
+EOF
     fi
 }
 
