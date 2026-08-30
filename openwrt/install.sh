@@ -1,8 +1,10 @@
 #!/bin/sh
 set -eu
+umask 077
 
 RAW_BASE="${REMOTE_GATE_RAW_BASE:-https://raw.githubusercontent.com/weigefenxiang/WeiG-Remote-Gate/main}"
 LIB_DIR="/usr/lib/remote-gate"
+STATE_DIR="/etc/remote-gate-state"
 CONFIG_FILE="/etc/remote-gate.conf"
 INIT_FILE="/etc/init.d/remote-gate-agent"
 HOTPLUG_FILE="/etc/hotplug.d/iface/95-remote-gate"
@@ -37,8 +39,9 @@ else
 fi
 [ "${#WRITE_TOKEN}" -ge 32 ] || fail "WRITE_TOKEN is too short."
 
-mkdir -p "$LIB_DIR" "$(dirname "$HOTPLUG_FILE")"
+mkdir -p "$LIB_DIR" "$STATE_DIR" "$(dirname "$HOTPLUG_FILE")"
 chmod 0755 "$LIB_DIR"
+chmod 0700 "$STATE_DIR"
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd -P)"
 fetch_file() {
     rel="$1"; out="$2"
@@ -53,9 +56,22 @@ fetch_file "remote-gate-report.sh" "$LIB_DIR/remote-gate-report.sh"
 fetch_file "remote-gate-agent.sh" "$LIB_DIR/remote-gate-agent.sh"
 fetch_file "remote-gate-firewall.sh" "$LIB_DIR/remote-gate-firewall.sh"
 fetch_file "remote-gate-firewall-include.sh" "$LIB_DIR/remote-gate-firewall-include.sh"
+fetch_file "uninstall.sh" "$LIB_DIR/uninstall.sh"
+fetch_file "update.sh" "$LIB_DIR/update.sh"
 fetch_file "remote-gate-agent.init" "$INIT_FILE"
 fetch_file "remote-gate-hotplug.sh" "$HOTPLUG_FILE"
 chmod 0755 "$LIB_DIR"/*.sh "$INIT_FILE" "$HOTPLUG_FILE"
+
+if [ -f "$SCRIPT_DIR/../VERSION" ]; then
+    cp "$SCRIPT_DIR/../VERSION" "$LIB_DIR/VERSION"
+else
+    curl -fsSL "$RAW_BASE/VERSION" -o "$LIB_DIR/VERSION"
+fi
+chmod 0644 "$LIB_DIR/VERSION"
+
+for file in "$LIB_DIR"/*.sh "$INIT_FILE" "$HOTPLUG_FILE"; do
+    sh -n "$file" || fail "Shell syntax check failed: $file"
+done
 
 BACKEND="$("$LIB_DIR/remote-gate-firewall.sh" detect 2>/dev/null)" || \
     fail "Unsupported firewall. Need fw4+nftables or fw3+iptables+ipset."
@@ -64,25 +80,46 @@ case "$BACKEND" in
     fw3-iptables) printf 'Detected firewall backend: firewall3 / iptables + ipset\n' ;;
     *) fail "Unsupported firewall backend: $BACKEND" ;;
 esac
-printf 'Remote Gate protects only ICMP echo and local WireGuard UDP ports on public WANs.\n'
+
+IPV6_CAPABLE=no
+if "$LIB_DIR/remote-gate-firewall.sh" ipv6-capable >/dev/null 2>&1; then
+    IPV6_CAPABLE=yes
+fi
+printf 'IPv6 Gate firewall capability: %s\n' "$IPV6_CAPABLE"
+printf 'Remote Gate controls only router INPUT for WireGuard UDP and optional Ping Echo on protected WAN endpoints.\n'
 printf 'FORWARD, DNAT, UPnP, NAT-PMP, qBittorrent and unrelated ports are not filtered by Remote Gate.\n\n'
 
 cat > "$CONFIG_FILE" <<CFGEOF
 HOSTNAME='$HOSTNAME'
 WRITE_TOKEN='$WRITE_TOKEN'
-MODE='auto'
-INTERFACES='WAN2'
 AGENT_INTERFACE=''
 AGENT_INTERVAL='10'
+GATE_IPV6='auto'
+CONTROL_TRANSPORT='auto'
+NATMAP_DISCOVERY='auto'
 CFGEOF
 chmod 0600 "$CONFIG_FILE"
+unset WRITE_TOKEN
+
+cat > "$STATE_DIR/install-manifest" <<'MANIFEST'
+schema=1
+wireguard_owned=0
+firewall_include_owned=1
+agent_owned=1
+MANIFEST
+chmod 0600 "$STATE_DIR/install-manifest"
 
 "$LIB_DIR/remote-gate-firewall.sh" install >/dev/null
 "$LIB_DIR/remote-gate-agent.sh" sync-firewall || \
-    fail "Initial public-WAN/WireGuard firewall policy sync failed."
+    fail "Initial Multi-WAN/WireGuard firewall policy sync failed."
 
 if [ "$BACKEND" = "fw3-iptables" ]; then
+    printf '\nIPv4 INPUT head:\n'
     iptables -S INPUT | sed -n '1,4p'
+    if command -v ip6tables >/dev/null 2>&1; then
+        printf '\nIPv6 INPUT head:\n'
+        ip6tables -S INPUT | sed -n '1,4p'
+    fi
 else
     fw4 -q check
 fi
@@ -94,17 +131,18 @@ if [ -x /etc/init.d/cron ]; then
 fi
 
 "$INIT_FILE" enable
-# A first-install `restart` asks procd to stop an instance that does not yet
-# exist and some older OpenWrt/ImmortalWrt releases print `Command failed:
-# Not found`. Stop quietly, then require a clean start instead.
 "$INIT_FILE" stop >/dev/null 2>&1 || true
 "$INIT_FILE" start || fail "Remote Gate agent failed to start."
 
-FORCE=1 FORCE_INVENTORY=1 "$LIB_DIR/remote-gate-report.sh" || true
+"$LIB_DIR/remote-gate-agent.sh" report || true
 "$LIB_DIR/remote-gate-agent.sh" once || true
 
 printf '\nWeiG Remote Gate OpenWrt components installed.\n'
 printf 'Firewall backend: %s\n' "$BACKEND"
+printf 'IPv6 Gate: auto (%s firewall capability)\n' "$IPV6_CAPABLE"
+printf 'Control transport: automatic IPv4/IPv6 Multi-WAN health fallback\n'
 printf 'The WAN has no HTTP/HTTPS listener from this project.\n'
 printf 'qBittorrent/BT port forwarding remains under the original firewall and is unaffected.\n'
-printf 'Run: %s status-json\n' "$LIB_DIR/remote-gate-firewall.sh"
+printf 'Safe update: %s/update.sh\n' "$LIB_DIR"
+printf 'Safe uninstall: %s/uninstall.sh --dry-run\n' "$LIB_DIR"
+printf 'Firewall status: %s/remote-gate-firewall.sh status-json\n' "$LIB_DIR"
