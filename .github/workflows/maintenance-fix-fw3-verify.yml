@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   patch:
-    if: github.event.head_commit.message == 'chore: apply fw3 verifier maintenance'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,12 +17,12 @@ jobs:
           ref: dev/v0.3.1
           fetch-depth: 0
       - name: Patch verifier and regression contract
-        shell: python
+        shell: python3 {0}
         run: |
           from pathlib import Path
 
-          fw = Path('openwrt/remote-gate-firewall.sh')
-          source = fw.read_text(encoding='utf-8')
+          fw = Path("openwrt/remote-gate-firewall.sh")
+          source = fw.read_text(encoding="utf-8")
           old = '''fw3_verify() {
               iptables -C INPUT -j "$FW3_CHAIN_V4" >/dev/null 2>&1 || return 1
               first_rule="$(iptables -S INPUT | sed -n '2p')"
@@ -40,12 +39,12 @@ jobs:
           '''
           new = '''fw3_verify() {
               iptables -C INPUT -j "$FW3_CHAIN_V4" >/dev/null 2>&1 || return 1
-              first_rule="$(iptables -S INPUT | awk '$1 == "-A" && $2 == "INPUT" { print; exit }')"
+              first_rule="$(iptables -S INPUT | awk '$1 == \"-A\" && $2 == \"INPUT\" { print; exit }')"
               [ "$first_rule" = "-A INPUT -j $FW3_CHAIN_V4" ] || return 1
               if [ -s "$DEVICES_V6_FILE" ]; then
                   fw3_ipv6_capable || return 1
                   ip6tables -C INPUT -j "$FW3_CHAIN_V6" >/dev/null 2>&1 || return 1
-                  first_rule6="$(ip6tables -S INPUT | awk '$1 == "-A" && $2 == "INPUT" { print; exit }')"
+                  first_rule6="$(ip6tables -S INPUT | awk '$1 == \"-A\" && $2 == \"INPUT\" { print; exit }')"
                   [ "$first_rule6" = "-A INPUT -j $FW3_CHAIN_V6" ] || return 1
               elif command -v ip6tables >/dev/null 2>&1; then
                   ip6tables -C INPUT -j "$FW3_CHAIN_V6" >/dev/null 2>&1 && return 1
@@ -53,45 +52,39 @@ jobs:
           }
           '''
           if source.count(old) != 1:
-              raise SystemExit('expected fw3_verify block not found exactly once')
-          fw.write_text(source.replace(old, new), encoding='utf-8')
+              raise SystemExit("expected fw3_verify block not found exactly once")
+          fw.write_text(source.replace(old, new), encoding="utf-8")
 
-          test = Path('tests/test_firewall_backends.py')
-          source = test.read_text(encoding='utf-8')
+          test = Path("tests/test_firewall_backends.py")
+          source = test.read_text(encoding="utf-8")
           needle = '''    def test_scope_can_keep_ping_closed(self):
-          source = FIREWALL.read_text(encoding="utf-8")
-          self.assertIn('if [ "$AUTH_SCOPE" = "wg_ping" ]', source)
-          self.assertIn('valid_scope() { case "$1" in wg|wg_ping)', source)
+              source = FIREWALL.read_text(encoding="utf-8")
+              self.assertIn('if [ "$AUTH_SCOPE" = "wg_ping" ]', source)
+              self.assertIn('valid_scope() { case "$1" in wg|wg_ping)', source)
 
           '''
-          replacement = '''    def test_fw3_first_rule_verification_does_not_assume_policy_line(self):
-          source = FIREWALL.read_text(encoding="utf-8")
-          self.assertIn("awk '$1 == \\\"-A\\\" && $2 == \\\"INPUT\\\" { print; exit }'", source)
-          self.assertNotIn("iptables -S INPUT | sed -n '2p'", source)
-          self.assertNotIn("ip6tables -S INPUT | sed -n '2p'", source)
-
-              def test_scope_can_keep_ping_closed(self):
-          source = FIREWALL.read_text(encoding="utf-8")
-          self.assertIn('if [ "$AUTH_SCOPE" = "wg_ping" ]', source)
-          self.assertIn('valid_scope() { case "$1" in wg|wg_ping)', source)
+          addition = '''    def test_fw3_first_rule_verification_ignores_optional_policy_line(self):
+              source = FIREWALL.read_text(encoding="utf-8")
+              self.assertIn("awk '$1 == \\\"-A\\\" && $2 == \\\"INPUT\\\" { print; exit }'", source)
+              self.assertNotIn("iptables -S INPUT | sed -n '2p'", source)
+              self.assertNotIn("ip6tables -S INPUT | sed -n '2p'", source)
 
           '''
-          # Normalize indentation deliberately after replacement to avoid YAML/Python block indentation artifacts.
-          replacement = replacement.replace('\n      source =', '\n        source =').replace('\n          def test_scope', '\n    def test_scope')
           if source.count(needle) != 1:
-              raise SystemExit('test insertion point not found exactly once')
-          test.write_text(source.replace(needle, replacement), encoding='utf-8')
+              raise SystemExit("test insertion point not found exactly once")
+          test.write_text(source.replace(needle, addition + needle), encoding="utf-8")
 
-          Path('.github/workflows/maintenance-fix-fw3-verify.yml').unlink()
+          Path(".github/workflows/maintenance-fix-fw3-verify.yml").unlink()
       - name: Validate patch
         run: |
           sh -n openwrt/remote-gate-firewall.sh
           python3 -m unittest tests.test_firewall_backends
           ! grep -F "iptables -S INPUT | sed -n '2p'" openwrt/remote-gate-firewall.sh
+          ! grep -F "ip6tables -S INPUT | sed -n '2p'" openwrt/remote-gate-firewall.sh
       - name: Commit patch
         run: |
           git config user.name "weigefenxiang"
           git config user.email "119787190+weigefenxiang@users.noreply.github.com"
-          git add openwrt/remote-gate-firewall.sh tests/test_firewall_backends.py .github/workflows/maintenance-fix-fw3-verify.yml
+          git add -A
           git commit -m "fix: make fw3 first-rule verification portable"
           git push origin HEAD:dev/v0.3.1
