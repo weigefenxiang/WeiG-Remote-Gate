@@ -360,8 +360,11 @@ fw3_verify() {
         first_rule6="$(ip6tables -S INPUT | awk '$1 == "-A" && $2 == "INPUT" { print; exit }')"
         [ "$first_rule6" = "-A INPUT -j $FW3_CHAIN_V6" ] || return 1
     elif command -v ip6tables >/dev/null 2>&1; then
-        ip6tables -C INPUT -j "$FW3_CHAIN_V6" >/dev/null 2>&1 && return 1
+        if ip6tables -C INPUT -j "$FW3_CHAIN_V6" >/dev/null 2>&1; then
+            return 1
+        fi
     fi
+    return 0
 }
 
 fw4_flush_set() { nft flush set inet fw4 "$1" >/dev/null 2>&1 || true; }

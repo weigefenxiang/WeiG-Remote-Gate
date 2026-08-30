@@ -69,7 +69,8 @@ class FirewallBackendTests(unittest.TestCase):
         self.assertIn('if [ ! -s "$DEVICES_V6_FILE" ]; then', source)
         self.assertIn('ip6tables -F "$FW3_CHAIN_V6" >/dev/null 2>&1 || true', source)
         self.assertIn('ip6tables -X "$FW3_CHAIN_V6" >/dev/null 2>&1 || true', source)
-        self.assertIn('ip6tables -C INPUT -j "$FW3_CHAIN_V6" >/dev/null 2>&1 && return 1', source)
+        self.assertIn('if ip6tables -C INPUT -j "$FW3_CHAIN_V6" >/dev/null 2>&1; then', source)
+        self.assertIn('    return 1\n        fi\n    fi\n    return 0', source)
 
     def test_authorization_is_revoked_when_endpoint_policy_changes(self):
         source = FIREWALL.read_text(encoding="utf-8")
