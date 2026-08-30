@@ -42,7 +42,9 @@ class UIContractTests(unittest.TestCase):
 
     def test_manual_family_is_not_locked_to_current_request(self):
         source = GATE.read_text(encoding="utf-8")
-        self.assertNotIn("state.requestFamily === 'ipv4'", source)
+        self.assertNotIn("state.requestFamily !== 'ipv4'", source)
+        self.assertNotIn("state.requestFamily !== 'ipv6'", source)
+        self.assertIn("button.disabled = !familyAvailable(family)", source)
         self.assertIn("familyAvailable('ipv4')", source)
         self.assertIn("familyAvailable('ipv6')", source)
 
@@ -68,8 +70,6 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("仅 WireGuard", source)
 
     def test_deploy_scripts_include_spatial_module(self):
-        # This test intentionally forces installer/update lists to stay in sync
-        # with newly added frontend modules.
         for path in (INSTALL, UPDATE):
             source = path.read_text(encoding="utf-8")
             self.assertIn("server/app/static/css/spatial.css", source, path.name)
