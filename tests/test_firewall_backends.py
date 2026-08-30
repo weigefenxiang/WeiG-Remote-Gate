@@ -64,6 +64,8 @@ class FirewallBackendTests(unittest.TestCase):
         source = AGENT.read_text(encoding="utf-8")
         self.assertIn("public_wan_devices", source)
         self.assertIn("wireguard_ports", source)
+        self.assertIn("listen_port", source)
+        self.assertIn("uci -q show network", source)
         self.assertIn('"$FIREWALL" sync "$devices" "$ports"', source)
 
 
