@@ -27,12 +27,22 @@
     return select?.selectedOptions?.[0] || null;
   }
 
+  function normalizeField(select) {
+    const label = select.closest('label');
+    if (!label) return;
+    const wrapper = document.createElement('div');
+    wrapper.className = label.className;
+    while (label.firstChild) wrapper.append(label.firstChild);
+    label.replaceWith(wrapper);
+  }
+
   function ensureTrigger() {
     const select = $('endpoint-select');
     if (!select) return null;
     let trigger = $('endpoint-picker-trigger');
     if (trigger) return trigger;
 
+    normalizeField(select);
     select.classList.add('endpoint-native-select');
     select.tabIndex = -1;
     select.setAttribute('aria-hidden', 'true');
@@ -101,6 +111,41 @@
     return layer;
   }
 
+  function positionLayer() {
+    if (!layer || layer.hidden) return;
+    const trigger = $('endpoint-picker-trigger');
+    const sheet = layer.querySelector('.endpoint-picker-sheet');
+    const backdrop = layer.querySelector('.endpoint-picker-backdrop');
+    if (!trigger || !sheet || !backdrop) return;
+
+    if (window.innerWidth < 768) {
+      sheet.style.removeProperty('position');
+      sheet.style.removeProperty('left');
+      sheet.style.removeProperty('top');
+      sheet.style.removeProperty('width');
+      backdrop.style.removeProperty('background');
+      backdrop.style.removeProperty('backdrop-filter');
+      layer.dataset.mode = 'sheet';
+      return;
+    }
+
+    const rect = trigger.getBoundingClientRect();
+    const width = Math.min(520, Math.max(390, rect.width), window.innerWidth - 32);
+    sheet.style.position = 'absolute';
+    sheet.style.width = `${width}px`;
+    const measuredHeight = Math.min(sheet.getBoundingClientRect().height || sheet.scrollHeight, window.innerHeight - 32);
+    let left = Math.max(16, Math.min(rect.left, window.innerWidth - width - 16));
+    let top = rect.bottom + 9;
+    if (top + measuredHeight > window.innerHeight - 16) {
+      top = Math.max(16, rect.top - measuredHeight - 9);
+    }
+    sheet.style.left = `${Math.round(left)}px`;
+    sheet.style.top = `${Math.round(top)}px`;
+    backdrop.style.background = 'transparent';
+    backdrop.style.backdropFilter = 'none';
+    layer.dataset.mode = 'popover';
+  }
+
   function badgeText(parsed, index) {
     if (index === 0 && /Direct|NATMap/.test(parsed.provider)) return zh() ? '推荐' : 'Primary';
     if (/Try|Private|CGNAT|egress/i.test(parsed.provider)) return zh() ? '尝试' : 'Try';
@@ -163,7 +208,10 @@
 
   function sync() {
     syncTrigger();
-    if (layer && !layer.hidden) renderOptions();
+    if (layer && !layer.hidden) {
+      renderOptions();
+      requestAnimationFrame(positionLayer);
+    }
   }
 
   function open() {
@@ -178,6 +226,7 @@
     document.documentElement.classList.add('endpoint-picker-open');
     trigger.setAttribute('aria-expanded', 'true');
     requestAnimationFrame(() => {
+      positionLayer();
       layer.classList.add('open');
       (list.querySelector('.selected') || list.querySelector('button'))?.focus();
     });
@@ -211,6 +260,7 @@
     select.addEventListener('change', sync);
     new MutationObserver(sync).observe(select, {childList: true, subtree: true, attributes: true});
     window.addEventListener('remote-gate-language', sync);
+    window.addEventListener('resize', positionLayer, {passive: true});
     sync();
   }
 
