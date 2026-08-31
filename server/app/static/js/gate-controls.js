@@ -36,7 +36,9 @@
   function chooseFamily() {
     const state = context.state;
     if (state.familyManual && familyAvailable(state.family)) return state.family;
+    if (familyAvailable('ipv4')) return 'ipv4';
     if (familySelectable('ipv4')) return 'ipv4';
+    if (familyAvailable('ipv6')) return 'ipv6';
     if (familySelectable('ipv6')) return 'ipv6';
     return 'ipv4';
   }
