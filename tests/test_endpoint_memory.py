@@ -2,6 +2,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+APP = ROOT / "server/app/static/js/app.js"
 GATE = ROOT / "server/app/static/js/gate-controls.js"
 
 
@@ -23,6 +24,14 @@ class EndpointMemoryTests(unittest.TestCase):
         self.assertIn("endpointWanForSelection(family, option.value) === saved.wan", source)
         self.assertIn("const priorWan = String(saved?.wan || '')", source)
         self.assertIn("pairs.find((item) => item.wan === priorWan)", source)
+
+    def test_each_ip_family_keeps_its_internet_exit_choice(self):
+        source = APP.read_text(encoding="utf-8")
+        self.assertIn("egressSelections: {}", source)
+        self.assertIn("get egressWan()", source)
+        self.assertIn("return this.egressSelections[this.family] || '__lan__'", source)
+        self.assertIn("set egressWan(value)", source)
+        self.assertIn("this.egressSelections[this.family] = String(value || '__lan__')", source)
 
 
 if __name__ == "__main__":
