@@ -19,9 +19,11 @@
   document.documentElement.dataset.theme = resolved;
   document.documentElement.dataset.themeChoice = choice;
 
+  // Client source discovery is a security-critical runtime dependency and is
+  // loaded explicitly by dashboard.html. Keep only optional UI enhancements
+  // in this dynamic bootstrap so source discovery can never execute twice.
   const modules = [
     '/static/js/motion-feedback.js',
-    '/static/js/client-sources.js',
     '/static/js/endpoint-picker.js',
     '/static/js/duration-control.js'
   ];
