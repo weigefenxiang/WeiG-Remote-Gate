@@ -56,7 +56,7 @@
     button.type = 'button';
     button.dataset.family = 'dual';
     button.setAttribute('aria-pressed', 'false');
-    button.textContent = 'IPv4 + IPv6';
+    button.textContent = 'Dual';
     root.append(button);
   }
   function syncFamily() {
@@ -67,10 +67,12 @@
     if (!familyRoot) return;
     const previous = state.family;
     state.family = chooseFamily();
+    const compactLabel = {ipv4: 'V4', ipv6: 'V6', dual: 'Dual'};
     familyRoot.querySelectorAll('[data-family]').forEach((button) => {
       const family = button.dataset.family;
       if (!['ipv4','ipv6','dual'].includes(family)) return;
       button.hidden = false;
+      button.textContent = compactLabel[family];
       button.disabled = !familySelectable(family);
       button.classList.toggle('active', family === state.family);
       button.setAttribute('aria-pressed', family === state.family ? 'true' : 'false');
