@@ -256,7 +256,19 @@
     close();
   }
 
+  function hideWireGuardSelector() {
+    const select = $('wg-select');
+    if (!select) return;
+    const field = select.closest('.field');
+    if (field) {
+      field.hidden = true;
+      field.setAttribute('aria-hidden', 'true');
+    }
+    select.tabIndex = -1;
+  }
+
   function bind() {
+    hideWireGuardSelector();
     const select = $('endpoint-select');
     const trigger = ensureTrigger();
     if (!select || !trigger) return;
