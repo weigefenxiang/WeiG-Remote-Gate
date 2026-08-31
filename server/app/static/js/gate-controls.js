@@ -150,22 +150,45 @@
   }
 
   function egressCandidates() {
+    const mode = ['ipv4','ipv6','dual'].includes(context?.state?.family) ? context.state.family : 'ipv4';
+    const needs4 = mode === 'ipv4' || mode === 'dual';
+    const needs6 = mode === 'ipv6' || mode === 'dual';
     const wans = Array.isArray(data()?.inventory?.wans) ? data().inventory.wans : [];
     const endpoints = Array.isArray(data()?.endpoints) ? data().endpoints : [];
     return wans
-      .filter((wan) => wan?.up && wan?.default_route_v4)
+      .filter((wan) => {
+        if (!wan?.up) return false;
+        if (needs4 && !wan?.default_route_v4) return false;
+        if (needs6 && !wan?.default_route_v6) return false;
+        if (needs6) {
+          const global6 = (Array.isArray(wan.ipv6) ? wan.ipv6 : []).some((entry) => entry?.kind === 'global' && entry?.address);
+          if (!global6) return false;
+        }
+        return true;
+      })
       .map((wan) => {
-        const direct = (Array.isArray(wan.ipv4) ? wan.ipv4 : []).find((entry) => entry?.kind === 'public');
-        const observed = endpoints.find((item) => item?.wan === wan.name && item?.family === 'ipv4' && item?.provider === 'egress_probe');
-        const local = (Array.isArray(wan.ipv4) ? wan.ipv4 : [])[0];
-        const address = String(direct?.address || observed?.external_address || local?.address || '—');
-        const kind = direct
-          ? 'Public IPv4 · Direct'
-          : observed
-            ? 'NAT IPv4 · Observed exit'
-            : 'Private/CGNAT · Outbound';
-        const score = direct ? 0 : observed ? 10 : 20;
-        return {wan, address, kind, score};
+        const direct4 = (Array.isArray(wan.ipv4) ? wan.ipv4 : []).find((entry) => entry?.kind === 'public');
+        const observed4 = endpoints.find((item) => item?.wan === wan.name && item?.family === 'ipv4' && item?.provider === 'egress_probe');
+        const local4 = (Array.isArray(wan.ipv4) ? wan.ipv4 : [])[0];
+        const global6 = (Array.isArray(wan.ipv6) ? wan.ipv6 : []).find((entry) => entry?.kind === 'global' && entry?.address);
+        const v4Address = String(direct4?.address || observed4?.external_address || local4?.address || '—');
+        const v6Address = String(global6?.address || '—');
+        const v4Kind = direct4 ? 'Public IPv4 · Direct' : observed4 ? 'NAT IPv4 · Observed exit' : 'Private/CGNAT · Outbound';
+        let familyLabel = 'IPv4 Exit';
+        let kind = v4Kind;
+        let address = v4Address;
+        let score = direct4 ? 0 : observed4 ? 10 : 20;
+        if (mode === 'ipv6') {
+          familyLabel = 'IPv6 Exit';
+          kind = 'Global IPv6 · NAT66 from WG ULA';
+          address = v6Address;
+          score = 0;
+        } else if (mode === 'dual') {
+          familyLabel = 'Dual Exit';
+          kind = `${v4Kind} + Global IPv6`;
+          address = `${v4Address} + ${v6Address}`;
+        }
+        return {wan, address, kind, familyLabel, score};
       })
       .sort((a, b) => a.score - b.score || String(a.wan.name).localeCompare(String(b.wan.name)));
   }
@@ -191,7 +214,7 @@
     window.RemoteGateEndpointPicker?.bindSelect?.('egress-select', {
       eyebrow: 'INTERNET EXIT',
       title: () => zh() ? '选择上网出口' : 'Choose Internet exit',
-      empty: () => zh() ? '当前没有可用 IPv4 出口。' : 'No IPv4 Internet exit is currently available.'
+      empty: () => zh() ? '当前协议族没有可用出口。' : 'No Internet exit is available for this IP family.'
     });
     return select;
   }
@@ -215,7 +238,7 @@
     egressCandidates().forEach((item) => {
       const option = document.createElement('option');
       option.value = String(item.wan.name || '');
-      option.textContent = `${item.wan.name} · IPv4 Exit · ${item.kind} · ${item.address}`;
+      option.textContent = `${item.wan.name} · ${item.familyLabel} · ${item.kind} · ${item.address}`;
       select.append(option);
     });
 
@@ -226,7 +249,7 @@
     window.RemoteGateEndpointPicker?.bindSelect?.('egress-select', {
       eyebrow: 'INTERNET EXIT',
       title: () => zh() ? '选择上网出口' : 'Choose Internet exit',
-      empty: () => zh() ? '当前没有可用 IPv4 出口。' : 'No IPv4 Internet exit is currently available.'
+      empty: () => zh() ? '当前协议族没有可用出口。' : 'No Internet exit is available for this IP family.'
     });
     window.RemoteGateEndpointPicker?.sync?.('egress-select');
   }
@@ -629,7 +652,7 @@
     gateCard?.addEventListener('click',transactionGuard,true);
     gateCard?.addEventListener('change',transactionGuard,true);
     $('ttl-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-ttl]'); if(!button||transactionLocked())return; state.ttl=Number(button.dataset.ttl); $('ttl-segment').querySelectorAll('button').forEach((item)=>{item.classList.toggle('active',item===button);item.setAttribute('aria-pressed',item===button?'true':'false');});});
-    $('family-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-family]'); if(!button||transactionLocked()||button.disabled||!['ipv4','ipv6','dual'].includes(button.dataset.family))return;rememberEndpointSelection(state.family);state.familyManual=true;state.family=button.dataset.family;context.onFamilyChange?.(state.family);if(state.family==='dual')syncDualEndpointSelect();else restoreEndpointSelection(state.family);render();});
+    $('family-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-family]'); if(!button||transactionLocked()||button.disabled||!['ipv4','ipv6','dual'].includes(button.dataset.family))return;rememberEndpointSelection(state.family);state.familyManual=true;state.family=button.dataset.family;context.onFamilyChange?.(state.family);if(state.family==='dual')syncDualEndpointSelect();else restoreEndpointSelection(state.family);syncEgressSelect();render();});
     $('scope-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-scope]');if(!button||transactionLocked()||!['wg','wg_ping'].includes(button.dataset.scope))return;state.scope=button.dataset.scope;syncScope();});
     endpointSelect()?.addEventListener('change',()=>{if(transactionLocked())return;rememberEndpointSelection(state.family);render();});
     egressSelect()?.addEventListener('change',()=>{if(transactionLocked())return;state.egressWan=egressSelect().value||'__lan__';render();});
