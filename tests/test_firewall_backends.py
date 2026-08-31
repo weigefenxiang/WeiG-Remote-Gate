@@ -24,14 +24,23 @@ class FirewallBackendTests(unittest.TestCase):
     def run_detect(self, names):
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)
-            for name in names: fake_cmd(directory, name)
-            env = os.environ.copy(); env["PATH"] = f"{directory}:/usr/bin:/bin"; env["REMOTE_GATE_LIB_DIR"] = str(ROOT / "openwrt")
-            proc = subprocess.run(["/bin/sh", str(FIREWALL), "detect"], text=True, capture_output=True, env=env, check=False)
+            for name in names:
+                fake_cmd(directory, name)
+            env = os.environ.copy()
+            env["PATH"] = f"{directory}:/usr/bin:/bin"
+            env["REMOTE_GATE_LIB_DIR"] = str(ROOT / "openwrt")
+            proc = subprocess.run(
+                ["/bin/sh", str(FIREWALL), "detect"],
+                text=True,
+                capture_output=True,
+                env=env,
+                check=False,
+            )
             return proc.returncode, proc.stdout.strip()
 
     def test_backend_detection_still_supports_fw4_and_fw3(self):
-        self.assertEqual(self.run_detect(["fw4","nft","fw3","iptables","ipset"]), (0, "fw4-nftables"))
-        self.assertEqual(self.run_detect(["fw3","iptables","ipset"]), (0, "fw3-iptables"))
+        self.assertEqual(self.run_detect(["fw4", "nft", "fw3", "iptables", "ipset"]), (0, "fw4-nftables"))
+        self.assertEqual(self.run_detect(["fw3", "iptables", "ipset"]), (0, "fw3-iptables"))
         self.assertNotEqual(self.run_detect([])[0], 0)
 
     def test_modules_never_touch_forward_or_nat(self):
@@ -45,13 +54,28 @@ class FirewallBackendTests(unittest.TestCase):
     def test_candidate_and_discovery_windows_are_wireguard_udp_only(self):
         backends = BACKENDS.read_text(encoding="utf-8")
         verify = VERIFY.read_text(encoding="utf-8")
+        firewall = FIREWALL.read_text(encoding="utf-8")
+        agent = AGENT.read_text(encoding="utf-8")
         self.assertIn("verification window", backends)
         self.assertIn("udp dport", backends)
         self.assertNotIn("authorized IPv4 ICMP", backends.split("IPv4 verification window", 1)[0])
-        self.assertIn("VERIFY_CANDIDATE_SECONDS", FIREWALL.read_text(encoding="utf-8"))
-        self.assertIn("VERIFY_DISCOVERY_SECONDS", FIREWALL.read_text(encoding="utf-8"))
+        self.assertIn("VERIFY_CANDIDATE_SECONDS", firewall)
+        self.assertIn("VERIFY_DISCOVERY_SECONDS", firewall)
         self.assertIn("verify_open any", verify)
         self.assertIn("multiple peers became active", verify)
+        self.assertIn('REMOTE_GATE_VERIFY_CANDIDATE_SECONDS="${REMOTE_GATE_VERIFY_CANDIDATE_SECONDS:-10}"', agent)
+        self.assertIn('REMOTE_GATE_VERIFY_DISCOVERY_SECONDS="${REMOTE_GATE_VERIFY_DISCOVERY_SECONDS:-30}"', agent)
+        self.assertIn("export REMOTE_GATE_VERIFY_CANDIDATE_SECONDS REMOTE_GATE_VERIFY_DISCOVERY_SECONDS", agent)
+
+    def test_agent_returns_specific_firewall_failure_detail(self):
+        source = AGENT.read_text(encoding="utf-8")
+        self.assertIn('error_file="${TMP_BASE}.firewall-error"', source)
+        self.assertIn("2>\"$error_file\"", source)
+        self.assertIn("sed -n 's/^ERROR: //p'", source)
+        self.assertIn('logger -t "$TAG" "activation failed: $detail"', source)
+        self.assertIn('ack "$id" false "$detail"', source)
+        self.assertNotIn('ack "$id" false "firewall-activation-failed"', source)
+        self.assertIn("sanitize_detail", source)
 
     def test_final_authorization_is_wireguard_verified_and_family_independent(self):
         source = VERIFY.read_text(encoding="utf-8")
