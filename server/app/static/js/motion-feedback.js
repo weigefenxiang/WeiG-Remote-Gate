@@ -128,16 +128,18 @@
     syncControls();
   }
 
+  const api = window.RemoteGateFeedback || {};
+  api.tick = tick;
+  api.haptic = haptic;
+  api.detent = detent;
+  api.setSound = setSound;
+  api.setHaptics = setHaptics;
+  Object.defineProperties(api, {
+    soundEnabled: {configurable: true, get: () => state.sound},
+    hapticsEnabled: {configurable: true, get: () => state.haptic}
+  });
+  window.RemoteGateFeedback = api;
+
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind, {once: true});
   else bind();
-
-  window.RemoteGateFeedback = {
-    tick,
-    haptic,
-    detent,
-    setSound,
-    setHaptics,
-    get soundEnabled() { return state.sound; },
-    get hapticsEnabled() { return state.haptic; }
-  };
 })();
