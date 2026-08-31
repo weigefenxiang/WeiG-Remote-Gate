@@ -3,6 +3,7 @@ set -u
 
 CONFIG_FILE="/etc/remote-gate.conf"
 FIREWALL="/usr/lib/remote-gate/remote-gate-firewall.sh"
+EGRESS="/usr/lib/remote-gate/remote-gate-wireguard-egress.sh"
 STATE_DIR="/etc/remote-gate-state"
 TAG="remote-gate"
 TMP_BASE="/tmp/remote-gate-agent.$$"
@@ -182,6 +183,11 @@ sync_firewall_policy() {
         logger -t "$TAG" "firewall policy sync failed" 2>/dev/null || true
         return 1
     }
+}
+
+sync_egress() {
+    [ -x "$EGRESS" ] || return 0
+    "$EGRESS" sync >/dev/null 2>&1 || true
 }
 
 json_string_array_file() {
@@ -446,6 +452,8 @@ pull_once() {
             family="$(jsonfilter -i "$BODY" -e '@.family' 2>/dev/null | sed -n '1p')"
             scope="$(jsonfilter -i "$BODY" -e '@.scope' 2>/dev/null | sed -n '1p')"
             device="$(jsonfilter -i "$BODY" -e '@.device' 2>/dev/null | sed -n '1p')"
+            wireguard="$(jsonfilter -i "$BODY" -e '@.wireguard' 2>/dev/null | sed -n '1p')"
+            egress_wan="$(jsonfilter -i "$BODY" -e '@.egress_wan' 2>/dev/null | sed -n '1p')"
             port="$(jsonfilter -i "$BODY" -e '@.wg_port' 2>/dev/null | sed -n '1p')"
             ttl="$(jsonfilter -i "$BODY" -e '@.ttl' 2>/dev/null | sed -n '1p')"
             [ -n "$family" ] || family=ipv4
@@ -460,18 +468,35 @@ pull_once() {
             error_file="${TMP_BASE}.firewall-error"
             rm -f "$error_file"
             if "$FIREWALL" activate "$source_ip" "$family" "$scope" "$device" "$port" "$ttl" "$source_kind" 2>"$error_file"; then
-                ack "$id" true "web-authorization-active"
+                if [ -n "$egress_wan" ]; then
+                    if [ -x "$EGRESS" ] && "$EGRESS" enable "$wireguard" "$egress_wan" "$ttl" >/dev/null 2>"${TMP_BASE}.egress-error"; then
+                        ack "$id" true "web-authorization-and-egress-active"
+                    else
+                        [ -x "$EGRESS" ] && "$EGRESS" disable >/dev/null 2>&1 || true
+                        detail="$(sed -n 's/^ERROR: //p' "${TMP_BASE}.egress-error" 2>/dev/null | tail -n 1)"
+                        [ -n "$detail" ] || detail="wireguard-egress-activation-failed"
+                        logger -t "$TAG" "egress activation failed: $detail" 2>/dev/null || true
+                        ack "$id" false "$detail"
+                    fi
+                else
+                    [ -x "$EGRESS" ] && "$EGRESS" disable >/dev/null 2>&1 || true
+                    ack "$id" true "web-authorization-active"
+                fi
             else
+                [ -x "$EGRESS" ] && "$EGRESS" disable >/dev/null 2>&1 || true
                 detail="$(sed -n 's/^ERROR: //p' "$error_file" 2>/dev/null | tail -n 1)"
                 [ -n "$detail" ] || detail="$(tail -n 1 "$error_file" 2>/dev/null || true)"
                 [ -n "$detail" ] || detail="firewall-activation-failed"
                 logger -t "$TAG" "activation failed: $detail" 2>/dev/null || true
                 ack "$id" false "$detail"
             fi
-            rm -f "$error_file"
+            rm -f "$error_file" "${TMP_BASE}.egress-error"
             ;;
         close)
-            if "$FIREWALL" clear; then ack "$id" true "all-authorizations-cleared"; else ack "$id" false "firewall-clear-failed"; fi
+            close_ok=true
+            "$FIREWALL" clear || close_ok=false
+            [ ! -x "$EGRESS" ] || "$EGRESS" disable >/dev/null 2>&1 || close_ok=false
+            if [ "$close_ok" = true ]; then ack "$id" true "all-authorizations-and-egress-cleared"; else ack "$id" false "gate-close-failed"; fi
             ;;
         *) ack "$id" false "unsupported-action" ;;
     esac
@@ -479,16 +504,19 @@ pull_once() {
 
 report_only() {
     sync_firewall_policy || true
+    sync_egress
     maybe_post_inventory || true
     post_status
 }
 
 run_once() {
     sync_firewall_policy || true
+    sync_egress
     maybe_post_inventory || true
     post_status
     pull_rc=0
     pull_once || pull_rc=$?
+    sync_egress
     post_status
     return "$pull_rc"
 }
