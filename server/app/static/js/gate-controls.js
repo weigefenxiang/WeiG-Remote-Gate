@@ -5,21 +5,117 @@
   const $ = (id) => document.getElementById(id);
   const endpointSelect = () => $('endpoint-select') || $('wan-select');
   const zh = () => document.documentElement.dataset.lang === 'zh';
+
   function data() { return context?.getData?.() || {}; }
+
   function endpointsFor(family) {
     const selectedWg = $('wg-select')?.value || '';
     const list = Array.isArray(data()?.endpoints) ? data().endpoints : [];
-    return list.filter((item) => item && item.family === family && ['direct','mapped','private','egress_probe'].includes(item.reachability) && (!selectedWg || item.wireguard === selectedWg));
+    return list.filter((item) =>
+      item &&
+      item.family === family &&
+      ['direct','mapped','private','egress_probe'].includes(item.reachability) &&
+      (!selectedWg || item.wireguard === selectedWg)
+    );
   }
+
+  function endpointScore(item) {
+    if (!item) return 999;
+    if (item.family === 'ipv4' && item.reachability === 'direct') return 0;
+    if (item.family === 'ipv4' && item.reachability === 'mapped') return 20;
+    if (item.family === 'ipv4' && item.reachability === 'egress_probe') return 30;
+    if (item.family === 'ipv6' && item.reachability === 'direct') return 10;
+    if (item.reachability === 'private') return 90;
+    return Number(item.priority || 999);
+  }
+
+  function dualEndpointPairs() {
+    const v4 = endpointsFor('ipv4');
+    const v6 = endpointsFor('ipv6');
+    const groups = new Map();
+    [...v4, ...v6].forEach((item) => {
+      const key = [item.wan, item.device, item.wireguard].join('|');
+      if (!groups.has(key)) groups.set(key, {wan: item.wan, device: item.device, wireguard: item.wireguard, ipv4: [], ipv6: []});
+      groups.get(key)[item.family].push(item);
+    });
+    const pairs = [];
+    groups.forEach((group) => {
+      if (!group.ipv4.length || !group.ipv6.length) return;
+      group.ipv4.sort((a, b) => endpointScore(a) - endpointScore(b));
+      group.ipv6.sort((a, b) => endpointScore(a) - endpointScore(b));
+      const ipv4 = group.ipv4[0];
+      const ipv6 = group.ipv6[0];
+      pairs.push({
+        id: `dual:${ipv4.id}:${ipv6.id}`,
+        wan: group.wan,
+        device: group.device,
+        wireguard: group.wireguard,
+        ipv4,
+        ipv6,
+        score: endpointScore(ipv4) + endpointScore(ipv6)
+      });
+    });
+    return pairs.sort((a, b) => a.score - b.score || String(a.wan).localeCompare(String(b.wan)));
+  }
+
+  function endpointAddress(item) {
+    const address = String(item?.external_address || '');
+    if (!address) return '—';
+    return item?.family === 'ipv6' ? `[${address}]:${item.external_port}` : `${address}:${item.external_port}`;
+  }
+
+  function dualProvider(pair) {
+    const item = pair?.ipv4;
+    if (item?.reachability === 'direct') return 'Direct';
+    if (item?.provider === 'natmap' || item?.reachability === 'mapped') return 'NATMap';
+    if (item?.provider === 'egress_probe' || item?.reachability === 'egress_probe') return 'NAT egress · Try';
+    return 'Private/CGNAT · Try';
+  }
+
+  function syncDualEndpointSelect() {
+    if (!context || context.state.family !== 'dual') return;
+    const select = endpointSelect();
+    if (!select) return;
+    const prior = String(select.value || '');
+    const pairs = dualEndpointPairs();
+    select.replaceChildren();
+    if (!pairs.length) {
+      const option = document.createElement('option');
+      option.value = '';
+      option.textContent = context.t('common.unavailable');
+      select.append(option);
+      select.disabled = true;
+      window.RemoteGateEndpointPicker?.sync?.();
+      return;
+    }
+    select.disabled = false;
+    pairs.forEach((pair) => {
+      const option = document.createElement('option');
+      option.value = pair.id;
+      option.dataset.ipv4EndpointId = pair.ipv4.id;
+      option.dataset.ipv6EndpointId = pair.ipv6.id;
+      option.textContent = `${pair.wan} · Dual · ${dualProvider(pair)} · ${endpointAddress(pair.ipv4)} + ${endpointAddress(pair.ipv6)}`;
+      select.append(option);
+    });
+    if ([...select.options].some((option) => option.value === prior)) select.value = prior;
+    window.RemoteGateEndpointPicker?.sync?.();
+  }
+
   function sourceFor(family) { return data()?.client_sources?.[family]?.address || ''; }
   function singleSelectable(family) {
     if (!['ipv4','ipv6'].includes(family)) return false;
     if (family === 'ipv6' && !data()?.inventory?.capabilities?.gate_ipv6) return false;
     return endpointsFor(family).length > 0;
   }
-  function familySelectable(family) { return family === 'dual' ? singleSelectable('ipv4') && singleSelectable('ipv6') : singleSelectable(family); }
+  function familySelectable(family) {
+    return family === 'dual' ? dualEndpointPairs().length > 0 : singleSelectable(family);
+  }
   function singleAvailable(family) { return singleSelectable(family) && Boolean(sourceFor(family)); }
-  function familyAvailable(family) { return family === 'dual' ? singleAvailable('ipv4') && singleAvailable('ipv6') : singleAvailable(family); }
+  function familyAvailable(family) {
+    return family === 'dual'
+      ? Boolean(sourceFor('ipv4') && sourceFor('ipv6') && dualEndpointPairs().length)
+      : singleAvailable(family);
+  }
   function chooseFamily() {
     const state = context.state;
     if (state.familyManual && familySelectable(state.family)) return state.family;
@@ -33,8 +129,8 @@
     const t = context.t;
     if (family === 'dual') {
       if (!sourceFor('ipv4') || !sourceFor('ipv6')) return zh() ? 'IPv4 与 IPv6 Source 都就绪后可同时授权。' : 'Both IPv4 and IPv6 sources are required for dual-stack authorization.';
-      if (!singleSelectable('ipv4') || !singleSelectable('ipv6')) return zh() ? '当前 WireGuard 需要同时存在可用的 IPv4 与 IPv6 Endpoint。' : 'The selected WireGuard needs both IPv4 and IPv6 endpoints.';
-      return zh() ? `双栈就绪 · IPv4 ${sourceFor('ipv4')} · IPv6 ${sourceFor('ipv6')} · 自动选择各自最佳 Endpoint` : `Dual stack ready · IPv4 ${sourceFor('ipv4')} · IPv6 ${sourceFor('ipv6')} · best endpoint per family`;
+      if (!dualEndpointPairs().length) return zh() ? 'Dual 需要同一 WAN 同时存在可用的 IPv4 与 IPv6 Endpoint。' : 'Dual requires IPv4 and IPv6 endpoints on the same WAN.';
+      return zh() ? `双栈就绪 · 可选择 ${dualEndpointPairs().length} 个双栈 WAN` : `Dual stack ready · ${dualEndpointPairs().length} dual-stack WAN option(s)`;
     }
     const source = sourceFor(family);
     if (!source) return t('gate.familySourceMissing', {family: family.toUpperCase()});
@@ -118,10 +214,16 @@
   }
   function transactionLocked(currentData = data()) { return Boolean(transaction || pendingCommand(currentData)); }
 
+  function selectedDualPair() {
+    if (context?.state?.family !== 'dual') return null;
+    const value = String(endpointSelect()?.value || '');
+    return dualEndpointPairs().find((pair) => pair.id === value) || null;
+  }
+
   function canActivate() {
     if (!context || transactionLocked()) return false;
     const state = context.state;
-    const endpointReady = state.family === 'dual' || Boolean(endpointSelect()?.value);
+    const endpointReady = state.family === 'dual' ? Boolean(selectedDualPair()) : Boolean(endpointSelect()?.value);
     return Boolean(!state.busy && familyAvailable(state.family) && endpointReady && $('wg-select')?.value);
   }
   function ensureDualButton() {
@@ -226,10 +328,12 @@
       closeButton.setAttribute('aria-disabled', closeButton.disabled ? 'true' : 'false');
     }
   }
+
   function render(currentData = data()) {
     if (!context) return;
     const state = context.state, t = context.t, remaining = context.remaining;
     syncFamily(); syncScope();
+    if (state.family === 'dual') syncDualEndpointSelect();
     const locked = syncTransaction(currentData);
     const pending = currentData?.gate?.queue?.pending, next = currentData?.gate?.queue?.next, last = currentData?.gate?.queue?.last;
     const fw = currentData?.agent?.firewall || {}, active = activeFamilyState(fw, state.family), pendingAction = pending?.action, orb = $('gate-orb');
@@ -285,6 +389,7 @@
       }
     }
     setLockedControls(locked, action, active, activatable);
+    if (state.family === 'dual') queueMicrotask(syncDualEndpointSelect);
   }
 
   async function submit(path, body, action) {
@@ -322,14 +427,22 @@
       render(data());
     }
   }
+
   function activate() {
     if (!context) return;
     if (transactionLocked()) { notify(lockMessage(), 'info', {title: zh() ? '操作进行中' : 'Operation in progress'}); return; }
     if (!canActivate()) return;
     const state=context.state;
     if (state.family === 'dual') {
-      const v4=endpointsFor('ipv4')[0], v6=endpointsFor('ipv6')[0]; if (!v4 || !v6) return;
-      submit('/api/v1/gate/activate',{families:['ipv4','ipv6'],endpoint_ids:{ipv4:v4.id,ipv6:v6.id},scope:state.scope||'wg',ttl:state.ttl},'activate'); return;
+      const pair = selectedDualPair();
+      if (!pair) return;
+      submit('/api/v1/gate/activate',{
+        families:['ipv4','ipv6'],
+        endpoint_ids:{ipv4:pair.ipv4.id,ipv6:pair.ipv6.id},
+        scope:state.scope||'wg',
+        ttl:state.ttl
+      },'activate');
+      return;
     }
     submit('/api/v1/gate/activate',{endpoint_id:endpointSelect().value,family:state.family,scope:state.scope||'wg',ttl:state.ttl},'activate');
   }
@@ -346,7 +459,11 @@
   }
 
   function bind(nextContext) {
-    context=nextContext; const state=context.state; if (!state.scope) state.scope='wg'; if (typeof state.familyManual!=='boolean') state.familyManual=false; ensureDualButton();
+    context=nextContext;
+    const state=context.state;
+    if (!state.scope) state.scope='wg';
+    if (typeof state.familyManual!=='boolean') state.familyManual=false;
+    ensureDualButton();
     const gateCard=document.querySelector('.gate-card');
     gateCard?.addEventListener('pointerdown',transactionGuard,true);
     gateCard?.addEventListener('click',transactionGuard,true);
@@ -361,5 +478,15 @@
     $('close-button')?.addEventListener('click',closeAccess);
     window.addEventListener('remote-gate-language',()=>render());
   }
-  window.RemoteGateGateControls={bind,render,canActivate,activate,familyAvailable,familySelectable,transactionLocked};
+
+  window.RemoteGateGateControls={
+    bind,
+    render,
+    canActivate,
+    activate,
+    familyAvailable,
+    familySelectable,
+    transactionLocked,
+    dualEndpointPairs
+  };
 })();
