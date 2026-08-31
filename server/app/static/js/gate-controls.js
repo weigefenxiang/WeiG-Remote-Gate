@@ -23,21 +23,22 @@
     return data()?.client_sources?.[family]?.address || '';
   }
 
-  function familyAvailable(family) {
+  function familySelectable(family) {
     if (!['ipv4', 'ipv6'].includes(family)) return false;
-    if (!sourceFor(family)) return false;
     if (family === 'ipv6' && !data()?.inventory?.capabilities?.gate_ipv6) return false;
     return endpointsFor(family).length > 0;
+  }
+
+  function familyAvailable(family) {
+    return familySelectable(family) && Boolean(sourceFor(family));
   }
 
   function chooseFamily() {
     const state = context.state;
     if (state.familyManual && familyAvailable(state.family)) return state.family;
-    if (familyAvailable('ipv4')) return 'ipv4';
-    if (familyAvailable(state.family)) return state.family;
-    if (familyAvailable(state.requestFamily)) return state.requestFamily;
-    if (familyAvailable('ipv6')) return 'ipv6';
-    return state.requestFamily === 'ipv6' ? 'ipv6' : 'ipv4';
+    if (familySelectable('ipv4')) return 'ipv4';
+    if (familySelectable('ipv6')) return 'ipv6';
+    return 'ipv4';
   }
 
   function familyReason(family) {
@@ -89,7 +90,7 @@
         return;
       }
       button.hidden = false;
-      button.disabled = !familyAvailable(family);
+      button.disabled = !familySelectable(family);
       button.classList.toggle('active', family === state.family);
       button.setAttribute('aria-pressed', family === state.family ? 'true' : 'false');
       button.title = familyReason(family);
@@ -234,5 +235,5 @@
     window.addEventListener('remote-gate-language', () => render());
   }
 
-  window.RemoteGateGateControls = {bind, render, canActivate, activate, familyAvailable};
+  window.RemoteGateGateControls = {bind, render, canActivate, activate, familyAvailable, familySelectable};
 })();

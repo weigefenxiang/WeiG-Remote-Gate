@@ -325,17 +325,24 @@
 @media (max-width: 767px) {
   .brand-icon-chassis { border-radius: 13px !important; }
   .brand-icon-image { border-radius: 9px; }
-  .endpoint-picker-layer { place-items: end center; padding: 0; }
-  .endpoint-picker-sheet {
-    width: 100%;
-    max-height: min(78dvh, 720px);
-    padding: 14px 14px calc(14px + env(safe-area-inset-bottom));
-    border-radius: 24px 24px 0 0;
-    transform: translateY(28px);
+  .endpoint-picker-layer {
+    place-items: center;
+    padding:
+      max(12px, env(safe-area-inset-top))
+      max(12px, env(safe-area-inset-right))
+      max(12px, env(safe-area-inset-bottom))
+      max(12px, env(safe-area-inset-left));
   }
-  .endpoint-picker-layer.open .endpoint-picker-sheet { transform: translateY(0); }
-  .endpoint-picker-handle { display: block; }
-  .endpoint-option-list { max-height: min(60dvh, 570px); gap: 9px; }
+  .endpoint-picker-sheet {
+    width: min(100%, 520px);
+    max-height: min(76dvh, 720px);
+    padding: 14px;
+    border-radius: 24px;
+    transform: translateY(8px) scale(.975);
+  }
+  .endpoint-picker-layer.open .endpoint-picker-sheet { transform: translateY(0) scale(1); }
+  .endpoint-picker-handle { display: none; }
+  .endpoint-option-list { max-height: min(58dvh, 570px); gap: 9px; }
   .endpoint-option-card { min-height: 88px; padding: 12px; }
   .endpoint-picker-trigger { min-height: 68px; }
   #ttl-segment { grid-template-columns: repeat(5, minmax(0, 1fr)); }

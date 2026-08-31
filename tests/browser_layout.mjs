@@ -125,14 +125,35 @@ try {
 
     await page.locator('#endpoint-picker-trigger').click();
     await page.waitForSelector('#endpoint-picker-layer.open .endpoint-option-card');
-    const picker = await page.evaluate(() => ({
-      optionCount: document.querySelectorAll('#endpoint-picker-layer .endpoint-option-card').length,
-      selected: document.querySelectorAll('#endpoint-picker-layer .endpoint-option-card.selected').length,
-      open: document.querySelector('#endpoint-picker-trigger')?.getAttribute('aria-expanded'),
-    }));
+    const picker = await page.evaluate(() => {
+      const sheet = document.querySelector('#endpoint-picker-layer .endpoint-picker-sheet');
+      const handle = document.querySelector('#endpoint-picker-layer .endpoint-picker-handle');
+      const r = sheet.getBoundingClientRect();
+      const style = getComputedStyle(sheet);
+      return {
+        optionCount: document.querySelectorAll('#endpoint-picker-layer .endpoint-option-card').length,
+        selected: document.querySelectorAll('#endpoint-picker-layer .endpoint-option-card.selected').length,
+        open: document.querySelector('#endpoint-picker-trigger')?.getAttribute('aria-expanded'),
+        centerY: (r.top + r.bottom) / 2,
+        viewportCenterY: window.innerHeight / 2,
+        left: r.left,
+        right: r.right,
+        innerWidth: window.innerWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+        handleDisplay: handle ? getComputedStyle(handle).display : '',
+        bottomRadius: parseFloat(style.borderBottomLeftRadius),
+      };
+    });
     assert(picker.optionCount >= 1, `${width}x${height}: endpoint picker has no cards`);
     assert(picker.selected === 1, `${width}x${height}: endpoint picker selected state missing`);
     assert(picker.open === 'true', `${width}x${height}: endpoint picker did not expose open state`);
+    if (width <= 767) {
+      assert(Math.abs(picker.centerY - picker.viewportCenterY) <= 16, `${width}x${height}: mobile picker is not vertically centered`);
+      assert(picker.left >= 11 && picker.right <= picker.innerWidth - 11, `${width}x${height}: mobile picker does not preserve side insets`);
+      assert(picker.scrollWidth <= picker.innerWidth + 1, `${width}x${height}: picker creates horizontal overflow`);
+      assert(picker.handleDisplay === 'none', `${width}x${height}: bottom-sheet handle is still visible`);
+      assert(picker.bottomRadius >= 20, `${width}x${height}: mobile picker bottom corners are not rounded`);
+    }
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => document.querySelector('#endpoint-picker-trigger')?.getAttribute('aria-expanded') === 'false');
 
@@ -185,7 +206,97 @@ try {
     assert(consoleErrors.length === 0, `${width}x${height}: browser console errors: ${consoleErrors.join(' | ')}`);
     await page.close();
   }
-  console.log(`Browser layout regression passed for ${viewports.length} viewports.`);
+
+  // Regression for an IPv6-first request where the IPv4 source is temporarily missing,
+  // IPv4 endpoints exist, and IPv6 Gate is disabled. IPv4 stays selected while the
+  // Activate action waits for the source probe, then becomes available after the retry succeeds.
+  const sourcePage = await browser.newPage({viewport: {width: 390, height: 844}});
+  let ipv4Observed = false;
+  let probeAttempts = 0;
+  let probePosts = 0;
+
+  await sourcePage.route('**/api/v1/dashboard', async (route) => {
+    const response = await route.fetch();
+    const payload = await response.json();
+    payload.inventory.capabilities.gate_ipv6 = false;
+    if (ipv4Observed) {
+      const now = Math.floor(Date.now() / 1000);
+      payload.client_sources.ipv4 = {
+        address: '112.96.156.107',
+        observed_at: now,
+        expires_at: now + 300,
+        source: 'carrier_probe',
+      };
+    } else {
+      delete payload.client_sources.ipv4;
+    }
+    await route.fulfill({response, contentType: 'application/json', body: JSON.stringify(payload)});
+  });
+
+  await sourcePage.route('https://api.ipify.org/**', async (route) => {
+    probeAttempts += 1;
+    if (probeAttempts === 1) {
+      await route.abort('failed');
+      return;
+    }
+    const callback = new URL(route.request().url()).searchParams.get('callback');
+    assert(callback, 'source probe retry did not include a JSONP callback');
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/javascript',
+      body: `${callback}({"ip":"112.96.156.107"});`,
+    });
+  });
+
+  await sourcePage.route('**/api/v1/client-source/probe', async (route) => {
+    const body = route.request().postDataJSON();
+    assert(body.family === 'ipv4', `source probe posted wrong family ${body.family}`);
+    assert(body.address === '112.96.156.107', `source probe posted wrong address ${body.address}`);
+    probePosts += 1;
+    ipv4Observed = true;
+    await route.fulfill({status: 204});
+  });
+
+  await sourcePage.goto('http://127.0.0.1:8765/', {waitUntil: 'networkidle'});
+  await sourcePage.waitForSelector('#endpoint-picker-trigger');
+  await sourcePage.waitForFunction(() =>
+    document.querySelector('#family-segment .active')?.dataset.family === 'ipv4' &&
+    document.querySelector('#endpoint-select')?.value === 'ep-wan2-v4'
+  );
+
+  const beforeProbe = await sourcePage.evaluate(() => ({
+    family: document.querySelector('#family-segment .active')?.dataset.family,
+    endpoint: document.querySelector('#endpoint-select')?.value,
+    activateDisabled: document.querySelector('#activate-button')?.disabled,
+    ipv6Disabled: document.querySelector('[data-family="ipv6"]')?.disabled,
+    ipv4Source: document.querySelector('#client-ipv4')?.textContent,
+  }));
+  assert(beforeProbe.family === 'ipv4', 'missing IPv4 source incorrectly fell back to request IPv6');
+  assert(beforeProbe.endpoint === 'ep-wan2-v4', 'IPv4 endpoint disappeared while its source was missing');
+  assert(beforeProbe.activateDisabled, 'Activate enabled before the IPv4 source was observed');
+  assert(beforeProbe.ipv6Disabled, 'disabled IPv6 Gate remained selectable');
+  assert(beforeProbe.ipv4Source !== '112.96.156.107', 'fixture unexpectedly started with an IPv4 source');
+
+  await sourcePage.waitForFunction(() =>
+    document.querySelector('#client-ipv4')?.textContent === '112.96.156.107' &&
+    !document.querySelector('#activate-button')?.disabled,
+    null,
+    {timeout: 12000}
+  );
+
+  const afterProbe = await sourcePage.evaluate(() => ({
+    family: document.querySelector('#family-segment .active')?.dataset.family,
+    endpoint: document.querySelector('#endpoint-select')?.value,
+    activateDisabled: document.querySelector('#activate-button')?.disabled,
+  }));
+  assert(probeAttempts === 2, `IPv4 source probe did not retry exactly once (${probeAttempts} attempts)`);
+  assert(probePosts === 1, `IPv4 source probe was recorded ${probePosts} times`);
+  assert(afterProbe.family === 'ipv4', 'successful IPv4 probe changed the selected family');
+  assert(afterProbe.endpoint === 'ep-wan2-v4', 'successful IPv4 probe changed the selected endpoint');
+  assert(!afterProbe.activateDisabled, 'Activate did not recover after the IPv4 source was recorded');
+  await sourcePage.close();
+
+  console.log(`Browser layout regression passed for ${viewports.length} viewports plus missing-source recovery.`);
 } finally {
   await browser.close();
 }

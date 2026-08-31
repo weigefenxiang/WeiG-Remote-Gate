@@ -1,6 +1,7 @@
 (() => {
   const PROBE_INTERVAL = 60 * 1000;
   const PROBE_TIMEOUT = 8000;
+  const PROBE_RETRY_DELAY = 3000;
   const PROBE_KEY = 'weig-remote-gate:source-probe-at:';
   let running = false;
 
@@ -37,11 +38,12 @@
     window.dispatchEvent(new CustomEvent('remote-gate-source-probe', {detail: {family}}));
   }
 
-  function jsonpProbe(family, csrf) {
+  function jsonpProbe(family, csrf, allowRetry = true) {
     const host = family === 'ipv6' ? 'https://api6.ipify.org' : 'https://api.ipify.org';
     const callback = `__weigSource_${family}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const script = document.createElement('script');
     let timer = 0;
+    let settled = false;
 
     const cleanup = () => {
       clearTimeout(timer);
@@ -49,26 +51,37 @@
       try { delete window[callback]; } catch (_) { window[callback] = undefined; }
     };
 
+    const finish = (success) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (success) {
+        sessionStorage.setItem(PROBE_KEY + family, String(Date.now()));
+        window.location.reload();
+      } else if (allowRetry) {
+        window.setTimeout(() => jsonpProbe(family, csrf, false), PROBE_RETRY_DELAY);
+      }
+    };
+
     window[callback] = async (payload) => {
       const address = String(payload?.ip || '').trim();
       if (!validAddress(family, address)) {
-        cleanup();
+        finish(false);
         return;
       }
       try {
         await record(family, address, csrf);
+        finish(true);
       } catch (_) {
-        // Probe is a best-effort complement to the Cloudflare observation.
-      } finally {
-        cleanup();
+        finish(false);
       }
     };
 
     script.async = true;
     script.referrerPolicy = 'no-referrer';
     script.src = `${host}?format=jsonp&callback=${encodeURIComponent(callback)}&_=${Date.now()}`;
-    script.onerror = cleanup;
-    timer = setTimeout(cleanup, PROBE_TIMEOUT);
+    script.onerror = () => finish(false);
+    timer = setTimeout(() => finish(false), PROBE_TIMEOUT);
     document.head.append(script);
   }
 
@@ -91,7 +104,6 @@
 
       for (const family of ['ipv4', 'ipv6']) {
         if (data?.client_sources?.[family]?.address || !shouldProbe(family)) continue;
-        sessionStorage.setItem(PROBE_KEY + family, String(Date.now()));
         jsonpProbe(family, data.csrf);
       }
     } catch (_) {
