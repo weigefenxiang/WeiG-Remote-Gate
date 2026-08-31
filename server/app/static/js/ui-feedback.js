@@ -70,6 +70,7 @@
     card.append(icon, copy, close, progress);
     root.prepend(card);
     while (root.children.length > MAX_VISIBLE) root.lastElementChild?.remove();
+    window.RemoteGateFeedback?.detent?.(type === 'error' ? .95 : type === 'success' ? .7 : .4);
     requestAnimationFrame(() => card.classList.add('feedback-entered'));
     window.setTimeout(() => dismiss(card), duration);
     return id;
@@ -93,8 +94,11 @@
     bridgeLegacyToast();
   }
 
+  const api = window.RemoteGateFeedback || {};
+  api.notify = notify;
+  api.dismiss = dismiss;
+  window.RemoteGateFeedback = api;
+
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind, {once: true});
   else bind();
-
-  window.RemoteGateFeedback = {notify, dismiss};
 })();
