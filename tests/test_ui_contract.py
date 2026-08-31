@@ -150,13 +150,21 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("trigger.addEventListener('click', open)", source)
         self.assertNotIn("endpoint-trigger-chevron", source)
 
+    def test_gate_hides_redundant_wireguard_selector_but_keeps_internal_state(self):
+        picker = ENDPOINT_PICKER.read_text(encoding="utf-8")
+        gate = GATE.read_text(encoding="utf-8")
+        self.assertIn("hideWireGuardSelector", picker)
+        self.assertIn("field.hidden = true", picker)
+        self.assertIn("select.tabIndex = -1", picker)
+        self.assertIn("$('wg-select')?.value", gate)
+
     def test_gate_transaction_lock_is_real_and_server_terminal_owned(self):
         gate = GATE.read_text(encoding="utf-8")
         self.assertIn("transactionLocked", gate)
         self.assertIn("transactionGuard", gate)
         self.assertIn("form.inert = Boolean(locked)", gate)
         self.assertIn("control.disabled = true;", gate)
-        self.assertIn("orb.disabled = locked ||", gate)
+        self.assertIn("orb.disabled = !orbEnabled", gate)
         self.assertIn("['done', 'failed', 'expired']", gate)
         self.assertNotIn("65000", gate)
         self.assertIn("setInterval(() => window.RemoteGateApp?.refresh?.(), 1000)", gate)
@@ -164,6 +172,15 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("正在激活远程访问", gate)
         self.assertIn("正在关闭远程访问", gate)
         self.assertNotIn("正在验证 WireGuard", gate)
+
+    def test_gate_orb_toggles_activate_and_close(self):
+        gate = GATE.read_text(encoding="utf-8")
+        self.assertIn("function toggleAccess()", gate)
+        self.assertIn("activeFamilyState(fw, context.state.family)", gate)
+        self.assertIn("closeAccess();", gate)
+        self.assertIn("else activate();", gate)
+        self.assertIn("addEventListener('click',toggleAccess)", gate)
+        self.assertIn("const orbLabel = active ? t('gate.close') : t('gate.activate')", gate)
 
     def test_gate_open_state_is_scoped_to_current_browser_source(self):
         gate = GATE.read_text(encoding="utf-8")

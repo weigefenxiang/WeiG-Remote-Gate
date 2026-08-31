@@ -367,12 +367,14 @@
     const activatable=canActivate();
     const action=lockAction(currentData);
     if (orb) {
-      orb.dataset.state=mode; orb.dataset.hint=t('gate.activate');
-      orb.disabled = locked || mode!=='closed' || !activatable;
+      const orbLabel = active ? t('gate.close') : t('gate.activate');
+      const orbEnabled = !locked && (active ? !state.busy : (mode === 'closed' && activatable));
+      orb.dataset.state=mode; orb.dataset.hint=orbLabel;
+      orb.disabled = !orbEnabled;
       orb.classList.toggle('transaction-locked', locked);
       orb.setAttribute('aria-disabled', orb.disabled ? 'true':'false');
-      orb.setAttribute('aria-label', locked ? lockMessage(currentData) : (activatable?t('gate.activate'):familyReason(state.family)));
-      orb.title=locked ? lockMessage(currentData) : (activatable?t('gate.activate'):familyReason(state.family));
+      orb.setAttribute('aria-label', locked ? lockMessage(currentData) : (orbEnabled ? orbLabel : familyReason(state.family)));
+      orb.title=locked ? lockMessage(currentData) : (orbEnabled ? orbLabel : familyReason(state.family));
     }
     if ($('gate-state')) $('gate-state').textContent=title;
     if ($('gate-substate')) $('gate-substate').textContent=subtitle;
@@ -450,6 +452,12 @@
     submit('/api/v1/gate/activate',{endpoint_id:endpointSelect().value,family:state.family,scope:state.scope||'wg',ttl:state.ttl},'activate');
   }
   function closeAccess() { submit('/api/v1/gate/close',{},'close'); }
+  function toggleAccess() {
+    if (!context || transactionLocked()) return;
+    const fw = data()?.agent?.firewall || {};
+    if (activeFamilyState(fw, context.state.family)) closeAccess();
+    else activate();
+  }
 
   function guardedTarget(target) {
     return target?.closest?.('.gate-form button, .gate-form select, .gate-form input, #gate-orb');
@@ -477,7 +485,7 @@
     endpointSelect()?.addEventListener('change',()=>{if(!transactionLocked())render();});
     $('wg-select')?.addEventListener('change',()=>{if(transactionLocked())return;context.onWireGuardChange?.();syncFamily();render();});
     $('activate-button')?.addEventListener('click',activate);
-    $('gate-orb')?.addEventListener('click',activate);
+    $('gate-orb')?.addEventListener('click',toggleAccess);
     $('close-button')?.addEventListener('click',closeAccess);
     window.addEventListener('remote-gate-language',()=>render());
   }
@@ -487,6 +495,7 @@
     render,
     canActivate,
     activate,
+    toggleAccess,
     familyAvailable,
     familySelectable,
     transactionLocked,
