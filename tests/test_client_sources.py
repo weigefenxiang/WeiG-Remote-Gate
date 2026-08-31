@@ -22,13 +22,13 @@ class TrustedSourceTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_verified_ipv4_and_ipv6_coexist(self):
+    def test_http_observed_ipv4_and_ipv6_coexist(self):
         observe_source(self.store, self.token, "8.8.8.8", now=100)
         observe_source(self.store, self.token, "2001:4860:4860::8888", now=110)
         sources = trusted_sources(self.store, self.token, now=120)
         self.assertEqual(set(sources), {"ipv4", "ipv6"})
-        self.assertEqual(sources["ipv4"]["confidence"], "verified")
-        self.assertEqual(sources["ipv6"]["confidence"], "verified")
+        self.assertEqual(sources["ipv4"]["confidence"], "observed")
+        self.assertEqual(sources["ipv6"]["confidence"], "observed")
 
     def test_candidate_fills_missing_family(self):
         observe_source(self.store, self.token, "2001:4860:4860::8888", now=100)
@@ -37,11 +37,20 @@ class TrustedSourceTests(unittest.TestCase):
         self.assertEqual(record["source"], "carrier_probe")
         self.assertEqual(source_for_family(self.store, self.token, "ipv4", now=111), "1.1.1.1")
 
-    def test_candidate_does_not_replace_live_verified_source(self):
+    def test_candidate_replaces_http_observation_and_survives_http_refresh(self):
         observe_source(self.store, self.token, "8.8.8.8", now=100)
         record = observe_candidate(self.store, self.token, "1.1.1.1", "ipv4", now=110)
-        self.assertEqual(record["address"], "8.8.8.8")
-        self.assertEqual(source_record_for_family(self.store, self.token, "ipv4", now=111)["confidence"], "verified")
+        self.assertEqual(record["address"], "1.1.1.1")
+        self.assertEqual(record["confidence"], "candidate")
+
+        # A later dashboard request may arrive through a different HTTP path.
+        # It must not overwrite the family-specific carrier candidate while the
+        # candidate is fresh; OpenWrt/WireGuard remains final authority.
+        refreshed = observe_source(self.store, self.token, "8.8.4.4", now=115)
+        self.assertEqual(refreshed["address"], "1.1.1.1")
+        selected = source_record_for_family(self.store, self.token, "ipv4", now=116)
+        self.assertEqual(selected["address"], "1.1.1.1")
+        self.assertEqual(selected["confidence"], "candidate")
 
     def test_non_public_or_special_addresses_are_rejected(self):
         for family, address in (
