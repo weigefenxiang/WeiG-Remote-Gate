@@ -57,6 +57,19 @@
     trigger.classList.add('brand-icon-chassis');
   }
 
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', brandIcon, {once: true});
-  else brandIcon();
+  function polishGateActions() {
+    const activate = document.getElementById('activate-button');
+    if (!activate) return;
+    activate.querySelector('[aria-hidden="true"]')?.remove();
+    activate.style.justifyContent = 'center';
+    activate.style.textAlign = 'center';
+  }
+
+  function ready() {
+    brandIcon();
+    polishGateActions();
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready, {once: true});
+  else ready();
 })();
