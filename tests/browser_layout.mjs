@@ -328,6 +328,7 @@ try {
   assert(candidateActivate.family === 'ipv4', 'candidate recovery changed the selected family');
   assert(candidateActivate.endpoint_id === 'ep-wan2-v4', 'candidate recovery changed the selected endpoint');
   assert(!('source_ip' in candidateActivate) && !('address' in candidateActivate), 'candidate leaked into the authorization request');
+  await sourcePage.unrouteAll({behavior: 'ignoreErrors'});
   await sourcePage.close();
 
   console.log(`Browser layout regression passed for ${viewports.length} viewports plus dual-stack and candidate-source recovery.`);
