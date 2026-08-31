@@ -7,11 +7,14 @@ LOGIN = ROOT / "server/app/templates/login.html"
 APP = ROOT / "server/app/static/js/app.js"
 GATE = ROOT / "server/app/static/js/gate-controls.js"
 CLIENT_SOURCES = ROOT / "server/app/static/js/client-sources.js"
+FEEDBACK = ROOT / "server/app/static/js/ui-feedback.js"
+FEEDBACK_CSS = ROOT / "server/app/static/css/feedback.css"
 BOOTSTRAP = ROOT / "server/app/static/js/theme-bootstrap.js"
 DASHBOARD_CSS = ROOT / "server/app/static/css/dashboard.css"
 COMPONENTS_CSS = ROOT / "server/app/static/css/components.css"
 INSTALL = ROOT / "server/install.sh"
 UPDATE = ROOT / "server/update.sh"
+SERVER = ROOT / "server/remote-gate.py"
 
 
 class UIContractTests(unittest.TestCase):
@@ -19,15 +22,32 @@ class UIContractTests(unittest.TestCase):
         source = CLIENT_SOURCES.read_text(encoding="utf-8")
         self.assertIn("https://api.ipify.org?format=json", source)
         self.assertIn("https://api6.ipify.org?format=json", source)
+        self.assertIn("https://api-ipv4.ip.sb/ip", source)
+        self.assertIn("https://api-ipv6.ip.sb/ip", source)
         self.assertIn("mode: 'cors'", source)
         self.assertIn("credentials: 'omit'", source)
         self.assertIn("/api/v1/client-source/candidate", source)
         self.assertIn("X-CSRF-Token", source)
         self.assertIn("remote-gate-client-source-diagnostics", source)
         self.assertIn("Candidate rejected:", source)
-        self.assertIn("IP echo timed out", source)
+        self.assertIn("timed out after", source)
         self.assertNotIn("createElement('script')", source)
         self.assertNotIn("/api/v1/client-source/challenge", source)
+
+    def test_observed_family_skips_carrier_probe_and_candidate_update_never_reloads_page(self):
+        source = CLIENT_SOURCES.read_text(encoding="utf-8")
+        self.assertIn("source.confidence === 'observed'", source)
+        self.assertIn("carrier probe skipped", source)
+        self.assertIn("remote-gate-client-source-updated", source)
+        self.assertNotIn("window.location.reload", source)
+        self.assertNotIn("location.reload", source)
+
+    def test_probe_fallback_hosts_are_allowed_by_production_csp(self):
+        server = SERVER.read_text(encoding="utf-8")
+        self.assertIn("https://api-ipv4.ip.sb", server)
+        self.assertIn("https://api-ipv6.ip.sb", server)
+        self.assertIn("https://api.ipify.org", server)
+        self.assertIn("https://api6.ipify.org", server)
 
     def test_production_dashboard_loads_candidate_probe_exactly_once(self):
         template = TEMPLATE.read_text(encoding="utf-8")
@@ -40,6 +60,20 @@ class UIContractTests(unittest.TestCase):
         self.assertNotIn("'/static/js/client-sources.js'", bootstrap)
         self.assertNotIn('"/static/js/client-sources.js"', bootstrap)
 
+    def test_standard_feedback_assets_are_versioned_and_loaded_before_gate_controls(self):
+        template = TEMPLATE.read_text(encoding="utf-8")
+        feedback = FEEDBACK.read_text(encoding="utf-8")
+        css = FEEDBACK_CSS.read_text(encoding="utf-8")
+        self.assertIn('/static/css/feedback.css?v={{ASSET_VERSION}}', template)
+        marker = '<script src="/static/js/ui-feedback.js?v={{ASSET_VERSION}}"></script>'
+        self.assertIn(marker, template)
+        self.assertLess(template.index(marker), template.index('<script src="/static/js/gate-controls.js?v={{ASSET_VERSION}}"></script>'))
+        self.assertIn("RemoteGateFeedback", feedback)
+        self.assertIn("feedback-card", css)
+        self.assertIn("feedback-error", css)
+        self.assertIn("feedback-progress", css)
+        self.assertIn("prefers-reduced-motion", css)
+
     def test_all_production_assets_are_build_sha_versioned(self):
         dashboard = TEMPLATE.read_text(encoding="utf-8")
         login = LOGIN.read_text(encoding="utf-8")
@@ -50,7 +84,7 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("?v={{ASSET_VERSION}}", login)
         for asset in (
             "theme-bootstrap.js", "i18n.js", "tokens.css", "base.css", "components.css",
-            "client-sources.js", "gate-controls.js", "app.js",
+            "feedback.css", "ui-feedback.js", "client-sources.js", "gate-controls.js", "app.js",
         ):
             self.assertIn(asset, dashboard)
         self.assertIn("document.currentScript", bootstrap)
@@ -72,6 +106,8 @@ class UIContractTests(unittest.TestCase):
             self.assertIn('"{{BUILD_SHORT}}": build[:12]', source)
             self.assertIn('install -o root -g root -m 0644 "$TMP_DIR/BUILD" "$LIB_DIR/BUILD"', source)
             self.assertIn("application/vnd.github.raw+json", source)
+            self.assertIn("server/app/static/css/feedback.css", source)
+            self.assertIn("server/app/static/js/ui-feedback.js", source)
         self.assertIn('LOCAL_BUILD="$(cat "$LIB_DIR/BUILD"', update)
         self.assertIn('[ "$LOCAL_BUILD" = "$BUILD_SHA" ]', update)
 
@@ -96,6 +132,19 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("grid-template-columns: repeat(3, minmax(0, 1fr)) !important", css)
         self.assertIn("white-space: nowrap", css)
         self.assertIn(".family-segment button", css)
+
+    def test_gate_transaction_lock_waits_for_agent_ack_and_shows_feedback(self):
+        gate = GATE.read_text(encoding="utf-8")
+        self.assertIn("transactionLocked", gate)
+        self.assertIn("transactionGuard", gate)
+        self.assertIn("remote", gate.lower())
+        self.assertIn("last.state === 'failed'", gate)
+        self.assertIn("last.state", gate)
+        self.assertIn("65000", gate)
+        self.assertIn("setInterval(() => window.RemoteGateApp?.refresh?.(), 1000)", gate)
+        self.assertIn("RemoteGateFeedback", gate)
+        self.assertIn("正在验证 WireGuard", gate)
+        self.assertIn("正在关闭访问", gate)
 
     def test_candidate_and_http_observed_sources_remain_visibly_distinct(self):
         app = APP.read_text(encoding="utf-8")
@@ -124,6 +173,8 @@ class UIContractTests(unittest.TestCase):
             "server/remote-gate.py",
             "server/app/client_sources.py",
             "server/app/gate.py",
+            "server/app/static/css/feedback.css",
+            "server/app/static/js/ui-feedback.js",
             "server/app/static/js/client-sources.js",
             "server/app/static/js/gate-controls.js",
         )
