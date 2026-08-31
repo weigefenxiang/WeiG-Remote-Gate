@@ -8,7 +8,14 @@
     busy: false,
     family: '',
     scope: 'wg',
-    requestFamily: 'unknown'
+    requestFamily: 'unknown',
+    egressSelections: {},
+    get egressWan() {
+      return this.egressSelections[this.family] || '__lan__';
+    },
+    set egressWan(value) {
+      if (['ipv4', 'ipv6', 'dual'].includes(this.family)) this.egressSelections[this.family] = String(value || '__lan__');
+    }
   };
 
   function toast(message, kind = 'info') {
