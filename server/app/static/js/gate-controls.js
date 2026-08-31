@@ -73,11 +73,52 @@
     return 'Private/CGNAT · Try';
   }
 
+  function endpointWanForSelection(family, value) {
+    if (!value) return '';
+    if (family === 'dual') return dualEndpointPairs().find((pair) => pair.id === value)?.wan || '';
+    return endpointsFor(family).find((item) => item.id === value)?.wan || '';
+  }
+
+  function rememberEndpointSelection(family = context?.state?.family) {
+    if (!context || !['ipv4','ipv6','dual'].includes(family)) return;
+    const select = endpointSelect();
+    const value = String(select?.value || '');
+    if (!value) return;
+    if (!context.state.endpointSelections || typeof context.state.endpointSelections !== 'object') context.state.endpointSelections = {};
+    context.state.endpointSelections[family] = {value, wan: endpointWanForSelection(family, value)};
+  }
+
+  function restoreEndpointSelection(family = context?.state?.family) {
+    if (!context || !['ipv4','ipv6','dual'].includes(family)) return;
+    const select = endpointSelect();
+    if (!select || select.disabled) return;
+    const saved = context.state.endpointSelections?.[family];
+    if (!saved) {
+      rememberEndpointSelection(family);
+      return;
+    }
+    const options = [...select.options].filter((option) => option.value);
+    const exact = options.find((option) => option.value === saved.value);
+    if (exact) {
+      select.value = exact.value;
+      window.RemoteGateEndpointPicker?.sync?.('endpoint-select');
+      return;
+    }
+    if (saved.wan) {
+      const fallback = options.find((option) => endpointWanForSelection(family, option.value) === saved.wan);
+      if (fallback) select.value = fallback.value;
+    }
+    rememberEndpointSelection(family);
+    window.RemoteGateEndpointPicker?.sync?.('endpoint-select');
+  }
+
   function syncDualEndpointSelect() {
     if (!context || context.state.family !== 'dual') return;
     const select = endpointSelect();
     if (!select) return;
-    const prior = String(select.value || '');
+    const saved = context.state.endpointSelections?.dual;
+    const prior = String(saved?.value || select.value || '');
+    const priorWan = String(saved?.wan || '');
     const pairs = dualEndpointPairs();
     select.replaceChildren();
     if (!pairs.length) {
@@ -98,7 +139,13 @@
       option.textContent = `${pair.wan} · Dual · ${dualProvider(pair)} · ${endpointAddress(pair.ipv4)} + ${endpointAddress(pair.ipv6)}`;
       select.append(option);
     });
-    if ([...select.options].some((option) => option.value === prior)) select.value = prior;
+    const exact = [...select.options].find((option) => option.value === prior);
+    if (exact) select.value = exact.value;
+    else if (priorWan) {
+      const pair = pairs.find((item) => item.wan === priorWan);
+      if (pair) select.value = pair.id;
+    }
+    rememberEndpointSelection('dual');
     window.RemoteGateEndpointPicker?.sync?.('endpoint-select');
   }
 
@@ -334,7 +381,9 @@
     const familyRoot = $('family-segment');
     if (!familyRoot) return;
     const previous = state.family;
-    state.family = chooseFamily();
+    const next = chooseFamily();
+    if (previous !== next) rememberEndpointSelection(previous);
+    state.family = next;
     const compactLabel = {ipv4: 'IPv4', ipv6: 'IPv6', dual: 'Dual'};
     familyRoot.querySelectorAll('[data-family]').forEach((button) => {
       const family = button.dataset.family;
@@ -347,7 +396,11 @@
       button.title = familyReason(family);
     });
     const note = $('family-note'); if (note) note.textContent = familyReason(state.family);
-    if (previous !== state.family) context.onFamilyChange?.(state.family);
+    if (previous !== state.family) {
+      context.onFamilyChange?.(state.family);
+      if (state.family === 'dual') syncDualEndpointSelect();
+      else restoreEndpointSelection(state.family);
+    }
   }
   function syncScope() {
     if (!context) return;
@@ -425,6 +478,7 @@
     const state = context.state, t = context.t, remaining = context.remaining;
     syncFamily(); syncScope(); syncEgressSelect();
     if (state.family === 'dual') syncDualEndpointSelect();
+    else restoreEndpointSelection(state.family);
     const locked = syncTransaction(currentData);
     const pending = currentData?.gate?.queue?.pending, next = currentData?.gate?.queue?.next, last = currentData?.gate?.queue?.last;
     const fw = currentData?.agent?.firewall || {}, active = activeFamilyState(fw, state.family), pendingAction = pending?.action, orb = $('gate-orb');
@@ -525,6 +579,7 @@
     if (!context) return;
     if (transactionLocked()) { notify(lockMessage(), 'info', {title: zh() ? '操作进行中' : 'Operation in progress'}); return; }
     if (!canActivate()) return;
+    rememberEndpointSelection(context.state.family);
     const state=context.state;
     const egress_wan=selectedEgressWan();
     if (state.family === 'dual') {
@@ -564,6 +619,7 @@
     const state=context.state;
     if (!state.scope) state.scope='wg';
     if (!state.egressWan) state.egressWan='__lan__';
+    if (!state.endpointSelections || typeof state.endpointSelections !== 'object') state.endpointSelections={};
     if (typeof state.familyManual!=='boolean') state.familyManual=false;
     ensureDualButton();
     ensureEgressControl();
@@ -573,9 +629,9 @@
     gateCard?.addEventListener('click',transactionGuard,true);
     gateCard?.addEventListener('change',transactionGuard,true);
     $('ttl-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-ttl]'); if(!button||transactionLocked())return; state.ttl=Number(button.dataset.ttl); $('ttl-segment').querySelectorAll('button').forEach((item)=>{item.classList.toggle('active',item===button);item.setAttribute('aria-pressed',item===button?'true':'false');});});
-    $('family-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-family]'); if(!button||transactionLocked()||button.disabled||!['ipv4','ipv6','dual'].includes(button.dataset.family))return; state.familyManual=true;state.family=button.dataset.family;context.onFamilyChange?.(state.family);render();});
+    $('family-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-family]'); if(!button||transactionLocked()||button.disabled||!['ipv4','ipv6','dual'].includes(button.dataset.family))return;rememberEndpointSelection(state.family);state.familyManual=true;state.family=button.dataset.family;context.onFamilyChange?.(state.family);if(state.family==='dual')syncDualEndpointSelect();else restoreEndpointSelection(state.family);render();});
     $('scope-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-scope]');if(!button||transactionLocked()||!['wg','wg_ping'].includes(button.dataset.scope))return;state.scope=button.dataset.scope;syncScope();});
-    endpointSelect()?.addEventListener('change',()=>{if(!transactionLocked())render();});
+    endpointSelect()?.addEventListener('change',()=>{if(transactionLocked())return;rememberEndpointSelection(state.family);render();});
     egressSelect()?.addEventListener('change',()=>{if(transactionLocked())return;state.egressWan=egressSelect().value||'__lan__';render();});
     $('wg-select')?.addEventListener('change',()=>{if(transactionLocked())return;context.onWireGuardChange?.();syncFamily();render();});
     $('activate-button')?.addEventListener('click',activate);
@@ -595,6 +651,8 @@
     transactionLocked,
     dualEndpointPairs,
     egressCandidates,
-    selectedEgressWan
+    selectedEgressWan,
+    rememberEndpointSelection,
+    restoreEndpointSelection
   };
 })();
