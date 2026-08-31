@@ -15,6 +15,7 @@ CUSTOM_TTL_MIN = 1800
 CUSTOM_TTL_MAX = 12 * 60 * 60
 CUSTOM_TTL_STEP = 1800
 ALLOWED_SCOPES = {"wg", "wg_ping"}
+ALLOWED_EGRESS_MODES = {"ipv4", "ipv6", "dual"}
 QUEUE_LOCK = threading.RLock()
 
 
@@ -51,18 +52,32 @@ def public_wan(store: JsonStore, name: str) -> dict[str, Any]:
     return record
 
 
-def egress_wan(store: JsonStore, name: str | None) -> str:
+def _wan_has_global_ipv6(item: dict[str, Any]) -> bool:
+    values = item.get("ipv6")
+    return isinstance(values, list) and any(
+        isinstance(entry, dict) and entry.get("kind") == "global" and entry.get("address")
+        for entry in values
+    )
+
+
+def egress_wan(store: JsonStore, name: str | None, mode: str = "ipv4") -> str:
     selected = str(name or "").strip()
     if not selected:
         return ""
+    selected_mode = str(mode or "").strip()
+    if selected_mode not in ALLOWED_EGRESS_MODES:
+        raise GateError("invalid_egress_mode")
     inventory = normalize_inventory(store)
     for item in inventory.get("wans", []) if isinstance(inventory, dict) else []:
         if not isinstance(item, dict) or str(item.get("name") or "") != selected:
             continue
         if not item.get("up"):
             raise GateError("egress_wan_unavailable")
-        if not item.get("default_route_v4"):
+        if selected_mode in {"ipv4", "dual"} and not item.get("default_route_v4"):
             raise GateError("egress_ipv4_unavailable")
+        if selected_mode in {"ipv6", "dual"}:
+            if not item.get("default_route_v6") or not _wan_has_global_ipv6(item):
+                raise GateError("egress_ipv6_unavailable")
         return selected
     raise GateError("egress_wan_unavailable")
 
@@ -146,6 +161,7 @@ def _activation_command(
     wan_name: str | None = None,
     wg_name: str | None = None,
     egress_name: str | None = None,
+    egress_mode: str = "ipv4",
     batch_id: str = "",
     batch_index: int = 0,
     batch_count: int = 1,
@@ -156,7 +172,9 @@ def _activation_command(
         raise GateError("invalid_scope")
     if source_confidence not in {"verified", "observed", "candidate"}:
         raise GateError("invalid_source_confidence")
-    selected_egress = egress_wan(store, egress_name)
+    selected_mode = str(egress_mode or "ipv4")
+    selected_egress = egress_wan(store, egress_name, selected_mode)
+    command_egress_mode = selected_mode if selected_egress else ""
 
     if endpoint_id:
         endpoint = endpoint_by_id(store, endpoint_id)
@@ -208,6 +226,7 @@ def _activation_command(
             "external_address": str(endpoint.get("external_address", "")),
             "external_port": int(endpoint.get("external_port", endpoint["local_port"])),
             "egress_wan": selected_egress,
+            "egress_mode": command_egress_mode,
             "ttl": ttl,
             "state": "pending",
         }
@@ -236,6 +255,7 @@ def _activation_command(
         "wireguard": wg_name,
         "wg_port": int(wg["listen_port"]),
         "egress_wan": selected_egress,
+        "egress_mode": command_egress_mode,
         "ttl": ttl,
         "state": "pending",
     }
@@ -254,6 +274,7 @@ def queue_activate(
     wg_name: str | None = None,
     egress_name: str | None = None,
 ) -> dict[str, Any]:
+    egress_mode = family if family in {"ipv4", "ipv6"} else "ipv4"
     command = _activation_command(
         store,
         source_ip=source_ip,
@@ -265,6 +286,7 @@ def queue_activate(
         wan_name=wan_name,
         wg_name=wg_name,
         egress_name=egress_name,
+        egress_mode=egress_mode,
     )
     with QUEUE_LOCK:
         _queue_for_write(store)
@@ -287,6 +309,7 @@ def queue_activate_many(
     if len(families) != len(requests) or any(f not in {"ipv4", "ipv6"} for f in families) or len(set(families)) != len(families):
         raise GateError("invalid_families")
 
+    egress_mode = "dual" if set(families) == {"ipv4", "ipv6"} else families[0]
     batch_id = secrets.token_hex(12)
     commands = [
         _activation_command(
@@ -298,6 +321,7 @@ def queue_activate_many(
             scope=scope,
             ttl=ttl,
             egress_name=egress_name,
+            egress_mode=egress_mode,
             batch_id=batch_id,
             batch_index=index,
             batch_count=len(requests),
@@ -326,6 +350,7 @@ def _append_gate_request(store: JsonStore, command: dict[str, Any]) -> None:
             "scope": command["scope"],
             "wan": command.get("wan", ""),
             "egress_wan": command.get("egress_wan", ""),
+            "egress_mode": command.get("egress_mode", ""),
             "wireguard": command.get("wireguard", ""),
             "endpoint_id": command.get("endpoint_id", ""),
             "batch_id": command.get("batch_id", ""),
@@ -390,7 +415,6 @@ def ack_command(store: JsonStore, command_id: str, ok: bool, detail: str = "") -
         if ok and next_commands:
             next_command = next_commands.pop(0)
             if isinstance(next_command, dict):
-                # Refresh the short command transport window for the next family.
                 now = int(time.time())
                 next_command["created_at"] = now
                 next_command["expires_at"] = now + 60
@@ -400,7 +424,6 @@ def ack_command(store: JsonStore, command_id: str, ok: bool, detail: str = "") -
                 queue["pending"] = None
             queue["next"] = next_commands
         else:
-            # A failed family stops the batch so a later success cannot mask it.
             queue["pending"] = None
             queue["next"] = []
 
