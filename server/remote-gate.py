@@ -161,7 +161,13 @@ class Handler(BaseHandler):
         current_source = self._trusted_client_ip()
         if not current_source: self._json(400, {"error": "missing_cf_connecting_ip"}); return
         try:
-            observe_source(STORE, session.token, current_source); data = self._read_json(); ttl = int(data.get("ttl", 300)); scope = str(data.get("scope") or "wg"); families_raw = data.get("families")
+            observe_source(STORE, session.token, current_source)
+            data = self._read_json()
+            ttl = int(data.get("ttl", 300))
+            scope = str(data.get("scope") or "wg")
+            egress_raw = str(data.get("egress_wan") or "").strip()
+            egress_name = _safe_name(egress_raw) if egress_raw else ""
+            families_raw = data.get("families")
             if isinstance(families_raw, list):
                 families = [_family(value) for value in families_raw]
                 if not 1 <= len(families) <= 2 or len(set(families)) != len(families): raise GateError("invalid_families")
@@ -171,10 +177,10 @@ class Handler(BaseHandler):
                 for family in families:
                     source = source_record_for_family(STORE, session.token, family)
                     requests.append({"family": family, "source_ip": source["address"], "source_confidence": source.get("confidence", "verified"), "endpoint_id": _endpoint_id(endpoint_ids.get(family))})
-                batch = queue_activate_many(STORE, requests, scope=scope, ttl=ttl)
+                batch = queue_activate_many(STORE, requests, scope=scope, ttl=ttl, egress_name=egress_name)
                 self._json(202, {"batch_id": batch["batch_id"], "command_id": batch["pending"]["id"], "count": len(batch["commands"]), "state": "pending"}); return
             family = _family(data.get("family")); source = source_record_for_family(STORE, session.token, family)
-            command = queue_activate(STORE, source_ip=str(source["address"]), source_confidence=str(source.get("confidence") or "verified"), endpoint_id=_endpoint_id(data.get("endpoint_id")), family=family, scope=scope, ttl=ttl)
+            command = queue_activate(STORE, source_ip=str(source["address"]), source_confidence=str(source.get("confidence") or "verified"), endpoint_id=_endpoint_id(data.get("endpoint_id")), family=family, scope=scope, ttl=ttl, egress_name=egress_name)
         except (ValueError, KeyError, GateError) as exc:
             self._json(409 if str(exc) == "command_pending" else 400, {"error": str(exc)}); return
         self._json(202, {"command_id": command["id"], "state": "pending"})
