@@ -129,6 +129,7 @@ if [ ! -f "$STATE_DIR/install-manifest" ]; then
     { printf 'schema=1\n'; printf 'wireguard_owned=0\n'; printf 'firewall_include_owned=1\n'; printf 'agent_owned=1\n'; } > "$STATE_DIR/install-manifest"; chmod 0600 "$STATE_DIR/install-manifest"
 fi
 
+"$LIB_DIR/remote-gate-wireguard-egress.sh" cleanup-legacy >/dev/null || fail "Legacy WireGuard egress cleanup failed."
 "$LIB_DIR/remote-gate-agent.sh" sync-firewall || fail "Pre-install firewall policy sync failed."
 "$LIB_DIR/remote-gate-firewall.sh" install >/dev/null || fail "Firewall integration failed."
 "$LIB_DIR/remote-gate-agent.sh" sync-firewall || fail "Post-install firewall policy sync failed."
@@ -144,6 +145,6 @@ printf 'WeiG Remote Gate OpenWrt updated: %s -> %s\n' "$local_version" "$remote_
 printf 'Backup: %s\n' "$BACKUP"
 printf 'IPv6 Gate mode: %s\n' "$(sed -n "s/^GATE_IPV6='\([^']*\)'/\1/p" "$CONFIG_FILE" | sed -n '1p')"
 printf 'Private/CGNAT WAN IPv4 egress probe: enabled\n'
-printf 'Optional WG home IPv4 egress: %s/remote-gate-wireguard-egress.sh status\n' "$LIB_DIR"
+printf 'Optional WG home Internet egress: runtime only, reboot returns it to OFF\n'
 printf 'Read-only audit: %s/remote-gate-audit.sh\n' "$LIB_DIR"
 printf 'WireGuard configuration was preserved.\n'
