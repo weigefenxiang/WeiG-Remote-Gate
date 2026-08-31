@@ -13,7 +13,6 @@ FW3_NAT_CHAIN6="WEIG_WG_EGRESS_NAT6"
 NFT_COMMENT="WeiG Remote Gate WG egress"
 
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
-info() { printf '==> %s\n' "$*"; }
 
 usage() {
     cat <<'USAGE'
@@ -119,13 +118,13 @@ fw3_cleanup() { fw3_cleanup4; fw3_cleanup6; }
 fw3_install4() {
     wg_dev="$1"; wan_dev="$2"; subnet="$3"
     fw3_cleanup4
-    iptables -N "$FW3_FILTER_CHAIN"
-    iptables -A "$FW3_FILTER_CHAIN" -i "$wg_dev" -o "$wan_dev" -s "$subnet" -j ACCEPT
-    iptables -A "$FW3_FILTER_CHAIN" -i "$wan_dev" -o "$wg_dev" -d "$subnet" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-    iptables -I FORWARD 1 -j "$FW3_FILTER_CHAIN"
-    iptables -t nat -N "$FW3_NAT_CHAIN"
-    iptables -t nat -A "$FW3_NAT_CHAIN" -s "$subnet" -o "$wan_dev" -j MASQUERADE
-    iptables -t nat -I POSTROUTING 1 -j "$FW3_NAT_CHAIN"
+    iptables -N "$FW3_FILTER_CHAIN" || return 1
+    iptables -A "$FW3_FILTER_CHAIN" -i "$wg_dev" -o "$wan_dev" -s "$subnet" -j ACCEPT || return 1
+    iptables -A "$FW3_FILTER_CHAIN" -i "$wan_dev" -o "$wg_dev" -d "$subnet" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT || return 1
+    iptables -I FORWARD 1 -j "$FW3_FILTER_CHAIN" || return 1
+    iptables -t nat -N "$FW3_NAT_CHAIN" || return 1
+    iptables -t nat -A "$FW3_NAT_CHAIN" -s "$subnet" -o "$wan_dev" -j MASQUERADE || return 1
+    iptables -t nat -I POSTROUTING 1 -j "$FW3_NAT_CHAIN" || return 1
 }
 
 fw3_install6() {
@@ -133,13 +132,13 @@ fw3_install6() {
     command -v ip6tables >/dev/null 2>&1 || return 1
     ip6tables -t nat -L POSTROUTING >/dev/null 2>&1 || return 1
     fw3_cleanup6
-    ip6tables -N "$FW3_FILTER_CHAIN6"
-    ip6tables -A "$FW3_FILTER_CHAIN6" -i "$wg_dev" -o "$wan_dev" -s "$subnet" -j ACCEPT
-    ip6tables -A "$FW3_FILTER_CHAIN6" -i "$wan_dev" -o "$wg_dev" -d "$subnet" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-    ip6tables -I FORWARD 1 -j "$FW3_FILTER_CHAIN6"
-    ip6tables -t nat -N "$FW3_NAT_CHAIN6"
-    ip6tables -t nat -A "$FW3_NAT_CHAIN6" -s "$subnet" -o "$wan_dev" -j MASQUERADE
-    ip6tables -t nat -I POSTROUTING 1 -j "$FW3_NAT_CHAIN6"
+    ip6tables -N "$FW3_FILTER_CHAIN6" || return 1
+    ip6tables -A "$FW3_FILTER_CHAIN6" -i "$wg_dev" -o "$wan_dev" -s "$subnet" -j ACCEPT || return 1
+    ip6tables -A "$FW3_FILTER_CHAIN6" -i "$wan_dev" -o "$wg_dev" -d "$subnet" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT || return 1
+    ip6tables -I FORWARD 1 -j "$FW3_FILTER_CHAIN6" || return 1
+    ip6tables -t nat -N "$FW3_NAT_CHAIN6" || return 1
+    ip6tables -t nat -A "$FW3_NAT_CHAIN6" -s "$subnet" -o "$wan_dev" -j MASQUERADE || return 1
+    ip6tables -t nat -I POSTROUTING 1 -j "$FW3_NAT_CHAIN6" || return 1
 }
 
 nft_delete_comment_rules() {
@@ -160,16 +159,16 @@ fw4_cleanup() {
 
 fw4_install4() {
     wg_dev="$1"; wan_dev="$2"; subnet="$3"
-    nft insert rule inet fw4 forward iifname "$wg_dev" oifname "$wan_dev" ip saddr "$subnet" counter accept comment "$NFT_COMMENT v4 outbound"
-    nft insert rule inet fw4 forward iifname "$wan_dev" oifname "$wg_dev" ip daddr "$subnet" ct state established,related counter accept comment "$NFT_COMMENT v4 return"
-    nft insert rule inet fw4 srcnat oifname "$wan_dev" ip saddr "$subnet" counter masquerade comment "$NFT_COMMENT v4 nat"
+    nft insert rule inet fw4 forward iifname "$wg_dev" oifname "$wan_dev" ip saddr "$subnet" counter accept comment "$NFT_COMMENT v4 outbound" || return 1
+    nft insert rule inet fw4 forward iifname "$wan_dev" oifname "$wg_dev" ip daddr "$subnet" ct state established,related counter accept comment "$NFT_COMMENT v4 return" || return 1
+    nft insert rule inet fw4 srcnat oifname "$wan_dev" ip saddr "$subnet" counter masquerade comment "$NFT_COMMENT v4 nat" || return 1
 }
 
 fw4_install6() {
     wg_dev="$1"; wan_dev="$2"; subnet="$3"
-    nft insert rule inet fw4 forward iifname "$wg_dev" oifname "$wan_dev" ip6 saddr "$subnet" counter accept comment "$NFT_COMMENT v6 outbound"
-    nft insert rule inet fw4 forward iifname "$wan_dev" oifname "$wg_dev" ip6 daddr "$subnet" ct state established,related counter accept comment "$NFT_COMMENT v6 return"
-    nft insert rule inet fw4 srcnat oifname "$wan_dev" ip6 saddr "$subnet" counter masquerade comment "$NFT_COMMENT v6 nat66"
+    nft insert rule inet fw4 forward iifname "$wg_dev" oifname "$wan_dev" ip6 saddr "$subnet" counter accept comment "$NFT_COMMENT v6 outbound" || return 1
+    nft insert rule inet fw4 forward iifname "$wan_dev" oifname "$wg_dev" ip6 daddr "$subnet" ct state established,related counter accept comment "$NFT_COMMENT v6 return" || return 1
+    nft insert rule inet fw4 srcnat oifname "$wan_dev" ip6 saddr "$subnet" counter masquerade comment "$NFT_COMMENT v6 nat66" || return 1
 }
 
 priority_used() {
@@ -178,8 +177,7 @@ priority_used() {
 }
 
 choose_rule_base() {
-    flag="$1"
-    base=80
+    flag="$1"; base=80
     while [ "$base" -le 380 ]; do
         ok=1
         for offset in 0 1 2 3 4 10; do
@@ -199,8 +197,7 @@ table_in_use() {
 }
 
 choose_route_table() {
-    flag="$1"; start="$2"; end="$3"
-    table="$start"
+    flag="$1"; start="$2"; end="$3"; table="$start"
     while [ "$table" -le "$end" ]; do
         table_in_use "$flag" "$table" || { printf '%s\n' "$table"; return 0; }
         table="$((table + 1))"
@@ -219,22 +216,22 @@ install_route_table() {
 
 install_rules4() {
     wg_dev="$1"; subnet="$2"; table="$3"; base="$4"
-    ip -4 rule add priority "$((base + 0))" iif "$wg_dev" to 10.0.0.0/8 lookup main
-    ip -4 rule add priority "$((base + 1))" iif "$wg_dev" to 100.64.0.0/10 lookup main
-    ip -4 rule add priority "$((base + 2))" iif "$wg_dev" to 169.254.0.0/16 lookup main
-    ip -4 rule add priority "$((base + 3))" iif "$wg_dev" to 172.16.0.0/12 lookup main
-    ip -4 rule add priority "$((base + 4))" iif "$wg_dev" to 192.168.0.0/16 lookup main
-    ip -4 rule add priority "$((base + 10))" from "$subnet" iif "$wg_dev" lookup "$table"
+    ip -4 rule add priority "$((base + 0))" iif "$wg_dev" to 10.0.0.0/8 lookup main || return 1
+    ip -4 rule add priority "$((base + 1))" iif "$wg_dev" to 100.64.0.0/10 lookup main || return 1
+    ip -4 rule add priority "$((base + 2))" iif "$wg_dev" to 169.254.0.0/16 lookup main || return 1
+    ip -4 rule add priority "$((base + 3))" iif "$wg_dev" to 172.16.0.0/12 lookup main || return 1
+    ip -4 rule add priority "$((base + 4))" iif "$wg_dev" to 192.168.0.0/16 lookup main || return 1
+    ip -4 rule add priority "$((base + 10))" from "$subnet" iif "$wg_dev" lookup "$table" || return 1
     ip -4 route flush cache >/dev/null 2>&1 || true
 }
 
 install_rules6() {
     wg_dev="$1"; subnet="$2"; table="$3"; base="$4"
-    ip -6 rule add priority "$((base + 0))" iif "$wg_dev" to ::1/128 lookup main
-    ip -6 rule add priority "$((base + 1))" iif "$wg_dev" to fc00::/7 lookup main
-    ip -6 rule add priority "$((base + 2))" iif "$wg_dev" to fe80::/10 lookup main
-    ip -6 rule add priority "$((base + 3))" iif "$wg_dev" to ff00::/8 lookup main
-    ip -6 rule add priority "$((base + 10))" from "$subnet" iif "$wg_dev" lookup "$table"
+    ip -6 rule add priority "$((base + 0))" iif "$wg_dev" to ::1/128 lookup main || return 1
+    ip -6 rule add priority "$((base + 1))" iif "$wg_dev" to fc00::/7 lookup main || return 1
+    ip -6 rule add priority "$((base + 2))" iif "$wg_dev" to fe80::/10 lookup main || return 1
+    ip -6 rule add priority "$((base + 3))" iif "$wg_dev" to ff00::/8 lookup main || return 1
+    ip -6 rule add priority "$((base + 10))" from "$subnet" iif "$wg_dev" lookup "$table" || return 1
     ip -6 route flush cache >/dev/null 2>&1 || true
 }
 
@@ -345,7 +342,7 @@ enable_egress() {
 
     cleanup_legacy_uci >/dev/null 2>&1 || true
     old_backend=""
-    if [ -r "$STATE_FILE" ]; then old_backend="$(sed -n "s/^FIREWALL_BACKEND='\([^']*\)'/\1/p" "$STATE_FILE" | sed -n '1p')"; fi
+    [ ! -r "$STATE_FILE" ] || old_backend="$(sed -n "s/^FIREWALL_BACKEND='\([^']*\)'/\1/p" "$STATE_FILE" | sed -n '1p')"
     runtime_cleanup "$old_backend"
 
     backend="$(detect_backend)"
@@ -376,15 +373,15 @@ enable_egress() {
 
     case "$backend" in
         fw3-iptables)
-            mode_has_v4 "$mode" && fw3_install4 "$wg_dev" "$wan_dev" "$subnet4" || true
+            if mode_has_v4 "$mode"; then fw3_install4 "$wg_dev" "$wan_dev" "$subnet4" || rollback "IPv4 egress firewall installation failed"; fi
             if mode_has_v6 "$mode"; then fw3_install6 "$wg_dev" "$wan_dev" "$subnet6" || rollback "IPv6 NAT66 is unavailable in ip6tables"; fi
             ;;
         fw4-nftables)
             nft list chain inet fw4 forward >/dev/null 2>&1 || rollback "fw4 forward chain unavailable"
             nft list chain inet fw4 srcnat >/dev/null 2>&1 || rollback "fw4 srcnat chain unavailable"
             fw4_cleanup
-            mode_has_v4 "$mode" && fw4_install4 "$wg_dev" "$wan_dev" "$subnet4" || true
-            mode_has_v6 "$mode" && fw4_install6 "$wg_dev" "$wan_dev" "$subnet6" || true
+            if mode_has_v4 "$mode"; then fw4_install4 "$wg_dev" "$wan_dev" "$subnet4" || rollback "IPv4 nft egress installation failed"; fi
+            if mode_has_v6 "$mode"; then fw4_install6 "$wg_dev" "$wan_dev" "$subnet6" || rollback "IPv6 nft NAT66 installation failed"; fi
             ;;
         *) rollback "Unsupported firewall backend: $backend" ;;
     esac
