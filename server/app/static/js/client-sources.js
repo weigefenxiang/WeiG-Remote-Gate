@@ -2,45 +2,24 @@
   const PROBE_INTERVAL = 60 * 1000;
   const PROBE_TIMEOUT = 8000;
   const PROBE_RETRY_DELAY = 3000;
-  const PROBE_KEY = 'weig-remote-gate:source-probe-at:';
+  const PROBE_KEY = 'weig-remote-gate:source-observer-at:';
   let running = false;
 
-  function validIPv4(value) {
-    const parts = String(value || '').trim().split('.');
-    return parts.length === 4 && parts.every((part) => {
-      if (!/^\d{1,3}$/.test(part)) return false;
-      const n = Number(part);
-      return n >= 0 && n <= 255;
-    });
-  }
-
-  function validIPv6(value) {
-    const text = String(value || '').trim();
-    return text.includes(':') && /^[0-9A-Fa-f:.]+$/.test(text) && text.length <= 64;
-  }
-
-  function validAddress(family, value) {
-    return family === 'ipv4' ? validIPv4(value) : family === 'ipv6' ? validIPv6(value) : false;
-  }
-
-  async function record(family, address, csrf) {
-    const response = await fetch('/api/v1/client-source/probe', {
-      method: 'POST',
+  async function challenge(family) {
+    const response = await fetch(`/api/v1/client-source/challenge?family=${encodeURIComponent(family)}`, {
       credentials: 'same-origin',
-      cache: 'no-store',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CSRF-Token': csrf
-      },
-      body: JSON.stringify({family, address})
+      cache: 'no-store'
     });
-    if (!response.ok) throw new Error(`source probe HTTP ${response.status}`);
-    window.dispatchEvent(new CustomEvent('remote-gate-source-probe', {detail: {family}}));
+    if (!response.ok) throw new Error(`source observer challenge HTTP ${response.status}`);
+    const payload = await response.json();
+    if (payload?.family !== family || typeof payload?.url !== 'string' || !payload.url.startsWith('https://')) {
+      throw new Error('invalid source observer challenge');
+    }
+    return payload.url;
   }
 
-  function jsonpProbe(family, csrf, allowRetry = true) {
-    const host = family === 'ipv6' ? 'https://api6.ipify.org' : 'https://api.ipify.org';
-    const callback = `__weigSource_${family}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  function observerProbe(family, allowRetry = true) {
+    const callback = `__weigObserver_${family}_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const script = document.createElement('script');
     let timer = 0;
     let settled = false;
@@ -59,30 +38,21 @@
         sessionStorage.setItem(PROBE_KEY + family, String(Date.now()));
         window.location.reload();
       } else if (allowRetry) {
-        window.setTimeout(() => jsonpProbe(family, csrf, false), PROBE_RETRY_DELAY);
+        window.setTimeout(() => observerProbe(family, false), PROBE_RETRY_DELAY);
       }
     };
 
-    window[callback] = async (payload) => {
-      const address = String(payload?.ip || '').trim();
-      if (!validAddress(family, address)) {
-        finish(false);
-        return;
-      }
-      try {
-        await record(family, address, csrf);
-        finish(true);
-      } catch (_) {
-        finish(false);
-      }
-    };
+    window[callback] = (payload) => finish(payload?.ok === true);
 
-    script.async = true;
-    script.referrerPolicy = 'no-referrer';
-    script.src = `${host}?format=jsonp&callback=${encodeURIComponent(callback)}&_=${Date.now()}`;
-    script.onerror = () => finish(false);
-    timer = setTimeout(() => finish(false), PROBE_TIMEOUT);
-    document.head.append(script);
+    challenge(family).then((url) => {
+      const separator = url.includes('?') ? '&' : '?';
+      script.async = true;
+      script.referrerPolicy = 'no-referrer';
+      script.src = `${url}${separator}callback=${encodeURIComponent(callback)}&_=${Date.now()}`;
+      script.onerror = () => finish(false);
+      timer = window.setTimeout(() => finish(false), PROBE_TIMEOUT);
+      document.head.append(script);
+    }).catch(() => finish(false));
   }
 
   function shouldProbe(family) {
@@ -100,14 +70,13 @@
       });
       if (!response.ok) return;
       const data = await response.json();
-      if (!data?.csrf) return;
 
       for (const family of ['ipv4', 'ipv6']) {
         if (data?.client_sources?.[family]?.address || !shouldProbe(family)) continue;
-        jsonpProbe(family, data.csrf);
+        observerProbe(family);
       }
     } catch (_) {
-      // The control page remains fully usable when either external probe fails.
+      // A missing family remains unavailable rather than trusting browser-reported IP data.
     } finally {
       running = false;
     }
@@ -121,5 +90,5 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind, {once: true});
   else bind();
 
-  window.RemoteGateClientSources = {probeMissingFamilies, validIPv4, validIPv6};
+  window.RemoteGateClientSources = {probeMissingFamilies};
 })();
