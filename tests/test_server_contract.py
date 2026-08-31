@@ -5,6 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "server/remote-gate.py"
 CLIENT = ROOT / "server/app/client_sources.py"
 ENDPOINTS = ROOT / "server/app/endpoints.py"
+GATE = ROOT / "server/app/gate.py"
 
 
 class ServerContractTests(unittest.TestCase):
@@ -15,6 +16,17 @@ class ServerContractTests(unittest.TestCase):
         self.assertIn("self._require_csrf(session)", block)
         self.assertIn("observe_candidate", block)
         self.assertIn("invalid_source_candidate", block)
+
+    def test_http_source_is_only_a_hint_and_candidate_can_supersede_it(self):
+        source = CLIENT.read_text(encoding="utf-8")
+        gate = GATE.read_text(encoding="utf-8")
+        self.assertIn('confidence="observed"', source)
+        self.assertIn("preserve_candidate=True", source)
+        self.assertIn('existing.get("confidence") == "candidate"', source)
+        self.assertIn('if confidence == "verified":', source)
+        self.assertIn('confidence = "observed"', source)
+        self.assertIn('{"verified", "observed", "candidate"}', gate)
+        self.assertIn("OpenWrt must verify a fresh WireGuard peer", source)
 
     def test_legacy_probe_is_gone_and_fail_closed(self):
         runtime = RUNTIME.read_text(encoding="utf-8")
