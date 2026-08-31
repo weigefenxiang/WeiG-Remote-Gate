@@ -40,6 +40,32 @@ The agent does not need backend-specific logic.
 
 The abstraction is deliberately an INPUT-only guard. It is forbidden from installing Remote Gate filters in FORWARD, so router-local remote access policy is separated from forwarded applications such as qBittorrent.
 
+## Related WeiG qB WebUI project
+
+`weigefenxiang/WeiG-qB-WebUI` is a separate qBittorrent Alternate WebUI project. It owns qBittorrent WebAPI/version compatibility, application Logs/Search/RSS/Settings/Torrent UI and safe browser-side feature enhancement.
+
+Remote Gate does not become a qB API compatibility layer or generic application proxy simply because both projects may be exposed through Cloudflare-managed infrastructure.
+
+```text
+Remote Gate
+Browser → Cloudflare → Remote Gate control plane ↔ OpenWrt agent
+                                      ↓
+                           router-local INPUT Gate
+                           Ping / WireGuard only
+
+WeiG qB WebUI
+Browser → application reverse proxy → WeiG qB WebUI → qB WebAPI → qBittorrent
+```
+
+The firewall ownership remains intentionally separate:
+
+```text
+router-local Ping / WireGuard UDP → Remote Gate INPUT ownership
+forwarded qBittorrent traffic     → existing NAT/FORWARD ownership
+```
+
+See [`QB-WEBUI-BOUNDARY.md`](QB-WEBUI-BOUNDARY.md) for the cross-project contract. qB version/capability matrices belong in the qB WebUI repository and must not be duplicated here.
+
 ## Priority and timeout
 
 The guard executes before the normal established/related shortcut. This makes expiration immediate for subsequent ICMP/WireGuard packets even if conntrack still has an older flow entry.
