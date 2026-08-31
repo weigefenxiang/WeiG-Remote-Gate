@@ -137,7 +137,7 @@ def _activation_command(
         raise GateError("invalid_ttl")
     if scope not in ALLOWED_SCOPES:
         raise GateError("invalid_scope")
-    if source_confidence not in {"verified", "candidate"}:
+    if source_confidence not in {"verified", "observed", "candidate"}:
         raise GateError("invalid_source_confidence")
 
     if endpoint_id:
