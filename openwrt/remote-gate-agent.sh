@@ -47,6 +47,8 @@ is_public_ipv4() {
     '
 }
 
+# OpenWrt first-stage filter: Internet Global Unicast lives in 2000::/3.
+# The VPS performs the authoritative IANA/ipaddress second-stage filter.
 is_global_ipv6() {
     value="$(printf '%s' "$1" | tr 'A-F' 'a-f')"
     case "$value" in
@@ -99,7 +101,9 @@ collect_wans() {
         [ "$def6" -eq 1 ] && : > "$base.def6"
 
         printf '%s' "$status" | jsonfilter -e '@["ipv4-address"][*].address' 2>/dev/null >> "$base.v4" || true
-        printf '%s' "$status" | jsonfilter -e '@["ipv6-address"][*].address' 2>/dev/null >> "$base.v6" || true
+        printf '%s' "$status" | jsonfilter -e '@["ipv6-address"][*].address' 2>/dev/null | while IFS= read -r address; do
+            is_global_ipv6 "$address" && printf '%s\n' "$address"
+        done >> "$base.v6" || true
     done
 
     for file in "$INV_DIR"/*.names; do
