@@ -1,9 +1,14 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const zh = () => document.documentElement.dataset.lang === 'zh';
+  const configs = new Map();
+  const triggers = new Map();
+  const observers = new Map();
   let layer = null;
   let list = null;
   let title = null;
+  let eyebrow = null;
+  let activeSelectId = 'endpoint-select';
   let lastFocus = null;
 
   function splitLabel(text) {
@@ -22,8 +27,31 @@
     })[char]);
   }
 
-  function selectedOption() {
-    const select = $('endpoint-select');
+  function defaultConfig(selectId) {
+    if (selectId === 'egress-select') {
+      return {
+        eyebrow: 'INTERNET EXIT',
+        title: () => zh() ? '选择上网出口' : 'Choose Internet exit',
+        empty: () => zh() ? '当前没有可用 IPv4 出口。' : 'No IPv4 Internet exit is currently available.'
+      };
+    }
+    return {
+      eyebrow: 'ACCESS ENDPOINT',
+      title: () => zh() ? '选择访问路径' : 'Choose access endpoint',
+      empty: () => zh() ? '当前没有可用访问路径。' : 'No access endpoint is currently available.'
+    };
+  }
+
+  function configFor(selectId) {
+    return {...defaultConfig(selectId), ...(configs.get(selectId) || {})};
+  }
+
+  function triggerId(selectId) {
+    return selectId === 'endpoint-select' ? 'endpoint-picker-trigger' : `${selectId}-picker-trigger`;
+  }
+
+  function selectedOption(selectId) {
+    const select = $(selectId);
     return select?.selectedOptions?.[0] || null;
   }
 
@@ -36,11 +64,14 @@
     label.replaceWith(wrapper);
   }
 
-  function ensureTrigger() {
-    const select = $('endpoint-select');
+  function ensureTrigger(selectId) {
+    const select = $(selectId);
     if (!select) return null;
-    let trigger = $('endpoint-picker-trigger');
-    if (trigger) return trigger;
+    let trigger = $(triggerId(selectId));
+    if (trigger) {
+      triggers.set(selectId, trigger);
+      return trigger;
+    }
 
     normalizeField(select);
     select.classList.add('endpoint-native-select');
@@ -49,8 +80,9 @@
 
     trigger = document.createElement('button');
     trigger.type = 'button';
-    trigger.id = 'endpoint-picker-trigger';
+    trigger.id = triggerId(selectId);
     trigger.className = 'endpoint-picker-trigger';
+    trigger.dataset.pickerSelect = selectId;
     trigger.setAttribute('aria-haspopup', 'dialog');
     trigger.setAttribute('aria-controls', 'endpoint-picker-layer');
     trigger.setAttribute('aria-expanded', 'false');
@@ -63,6 +95,7 @@
         <span class="endpoint-trigger-address fit-single-line" data-fit-max="12" data-fit-min="7.5" data-endpoint-address></span>
       </span>`;
     select.insertAdjacentElement('afterend', trigger);
+    triggers.set(selectId, trigger);
     return trigger;
   }
 
@@ -73,12 +106,12 @@
     layer.id = 'endpoint-picker-layer';
     layer.hidden = true;
     layer.innerHTML = `
-      <button class="endpoint-picker-backdrop" type="button" aria-label="Close endpoint picker"></button>
+      <button class="endpoint-picker-backdrop" type="button" aria-label="Close picker"></button>
       <section class="endpoint-picker-sheet depth-card" role="dialog" aria-modal="true" aria-labelledby="endpoint-picker-title" tabindex="-1">
         <div class="endpoint-picker-handle" aria-hidden="true"></div>
         <div class="endpoint-picker-head">
           <div>
-            <span class="eyebrow">ACCESS ENDPOINT</span>
+            <span class="eyebrow" data-picker-eyebrow>ACCESS ENDPOINT</span>
             <h2 id="endpoint-picker-title"></h2>
           </div>
           <button class="icon-button endpoint-picker-close" type="button" aria-label="Close">×</button>
@@ -88,6 +121,7 @@
     document.body.append(layer);
     list = layer.querySelector('#endpoint-option-list');
     title = layer.querySelector('#endpoint-picker-title');
+    eyebrow = layer.querySelector('[data-picker-eyebrow]');
     layer.querySelector('.endpoint-picker-backdrop')?.addEventListener('click', close);
     layer.querySelector('.endpoint-picker-close')?.addEventListener('click', close);
     layer.addEventListener('keydown', (event) => {
@@ -112,9 +146,13 @@
     return layer;
   }
 
+  function activeTrigger() {
+    return triggers.get(activeSelectId) || $(triggerId(activeSelectId));
+  }
+
   function positionLayer() {
     if (!layer || layer.hidden) return;
-    const trigger = $('endpoint-picker-trigger');
+    const trigger = activeTrigger();
     const sheet = layer.querySelector('.endpoint-picker-sheet');
     const backdrop = layer.querySelector('.endpoint-picker-backdrop');
     if (!trigger || !sheet || !backdrop) return;
@@ -135,7 +173,7 @@
     sheet.style.position = 'absolute';
     sheet.style.width = `${width}px`;
     const measuredHeight = Math.min(sheet.getBoundingClientRect().height || sheet.scrollHeight, window.innerHeight - 32);
-    let left = Math.max(16, Math.min(rect.left, window.innerWidth - width - 16));
+    const left = Math.max(16, Math.min(rect.left, window.innerWidth - width - 16));
     let top = rect.bottom + 9;
     if (top + measuredHeight > window.innerHeight - 16) {
       top = Math.max(16, rect.top - measuredHeight - 9);
@@ -147,16 +185,18 @@
     layer.dataset.mode = 'popover';
   }
 
-  function badgeText(parsed, index) {
+  function badgeText(parsed, index, option) {
+    if (option?.value === '__lan__') return zh() ? '私有' : 'Private';
     if (index === 0 && /Direct|NATMap/.test(parsed.provider)) return zh() ? '推荐' : 'Primary';
-    if (/Try|Private|CGNAT|egress/i.test(parsed.provider)) return zh() ? '尝试' : 'Try';
+    if (/Try|Private|CGNAT|egress|Observed/i.test(parsed.provider)) return zh() ? '可用' : 'Available';
     return parsed.provider || (zh() ? '可用' : 'Available');
   }
 
   function renderOptions() {
     ensureLayer();
-    const select = $('endpoint-select');
+    const select = $(activeSelectId);
     if (!select || !list) return;
+    const config = configFor(activeSelectId);
     list.replaceChildren();
 
     [...select.options].forEach((option, index) => {
@@ -170,13 +210,13 @@
       const selected = option.value === select.value;
       button.classList.toggle('selected', selected);
       button.setAttribute('aria-selected', selected ? 'true' : 'false');
-      const experimental = /Try|Private|CGNAT|egress/i.test(parsed.provider);
+      const experimental = /Try|Private|CGNAT/i.test(parsed.provider) && option.value !== '__lan__';
       if (experimental) button.classList.add('experimental');
       button.innerHTML = `
         <span class="endpoint-option-main">
           <span class="endpoint-option-topline">
             <strong>${escapeHtml(parsed.wan)}</strong>
-            <span class="endpoint-option-badge">${escapeHtml(badgeText(parsed, index))}</span>
+            <span class="endpoint-option-badge">${escapeHtml(badgeText(parsed, index, option))}</span>
           </span>
           <span class="endpoint-option-kind">${escapeHtml([parsed.family, parsed.provider].filter(Boolean).join(' · '))}</span>
           <span class="endpoint-option-address fit-single-line" data-fit-max="13" data-fit-min="7.5">${escapeHtml(parsed.address)}</span>
@@ -189,17 +229,17 @@
     if (!list.children.length) {
       const empty = document.createElement('div');
       empty.className = 'endpoint-picker-empty';
-      empty.textContent = zh() ? '当前没有可用访问路径。' : 'No access endpoint is currently available.';
+      empty.textContent = typeof config.empty === 'function' ? config.empty() : String(config.empty || '');
       list.append(empty);
     }
     window.RemoteGateFit?.observe?.(list);
   }
 
-  function syncTrigger() {
-    const select = $('endpoint-select');
-    const trigger = ensureTrigger();
+  function syncTrigger(selectId) {
+    const select = $(selectId);
+    const trigger = ensureTrigger(selectId);
     if (!select || !trigger) return;
-    const option = selectedOption();
+    const option = selectedOption(selectId);
     const parsed = splitLabel(option?.textContent || '');
     trigger.disabled = select.disabled || !option?.value;
     trigger.setAttribute('aria-disabled', trigger.disabled ? 'true' : 'false');
@@ -210,21 +250,25 @@
     window.RemoteGateFit?.fit?.(address);
   }
 
-  function sync() {
-    syncTrigger();
+  function sync(selectId = '') {
+    if (selectId) syncTrigger(selectId);
+    else configs.forEach((_, id) => syncTrigger(id));
     if (layer && !layer.hidden) {
       renderOptions();
       requestAnimationFrame(positionLayer);
     }
   }
 
-  function open() {
-    const select = $('endpoint-select');
-    const trigger = ensureTrigger();
+  function open(selectId = 'endpoint-select') {
+    const select = $(selectId);
+    const trigger = ensureTrigger(selectId);
     if (!select || select.disabled || !select.value || !trigger) return;
     ensureLayer();
+    activeSelectId = selectId;
     lastFocus = document.activeElement;
-    title.textContent = zh() ? '选择访问路径' : 'Choose access endpoint';
+    const config = configFor(selectId);
+    if (eyebrow) eyebrow.textContent = String(config.eyebrow || '');
+    if (title) title.textContent = typeof config.title === 'function' ? config.title() : String(config.title || '');
     renderOptions();
     layer.hidden = false;
     document.documentElement.classList.add('endpoint-picker-open');
@@ -237,7 +281,7 @@
   }
 
   function close() {
-    const trigger = $('endpoint-picker-trigger');
+    const trigger = activeTrigger();
     if (!layer || layer.hidden) return;
     layer.classList.remove('open');
     document.documentElement.classList.remove('endpoint-picker-open');
@@ -247,12 +291,12 @@
   }
 
   function choose(value) {
-    const select = $('endpoint-select');
+    const select = $(activeSelectId);
     if (!select || ![...select.options].some((option) => option.value === value)) return;
     select.value = value;
     select.dispatchEvent(new Event('change', {bubbles: true}));
     window.RemoteGateFeedback?.detent?.(0.72);
-    sync();
+    sync(activeSelectId);
     close();
   }
 
@@ -267,21 +311,34 @@
     select.tabIndex = -1;
   }
 
+  function bindSelect(selectId, config = {}) {
+    const select = $(selectId);
+    if (!select) return null;
+    configs.set(selectId, {...(configs.get(selectId) || {}), ...config});
+    const trigger = ensureTrigger(selectId);
+    if (!trigger) return null;
+    if (!trigger.dataset.pickerBound) {
+      trigger.dataset.pickerBound = '1';
+      trigger.addEventListener('click', () => open(selectId));
+      select.addEventListener('change', () => sync(selectId));
+      const observer = new MutationObserver(() => sync(selectId));
+      observer.observe(select, {childList: true, subtree: true, attributes: true});
+      observers.set(selectId, observer);
+    }
+    sync(selectId);
+    return trigger;
+  }
+
   function bind() {
     hideWireGuardSelector();
-    const select = $('endpoint-select');
-    const trigger = ensureTrigger();
-    if (!select || !trigger) return;
-    trigger.addEventListener('click', open);
-    select.addEventListener('change', sync);
-    new MutationObserver(sync).observe(select, {childList: true, subtree: true, attributes: true});
-    window.addEventListener('remote-gate-language', sync);
+    bindSelect('endpoint-select');
+    if ($('egress-select')) bindSelect('egress-select');
+    window.addEventListener('remote-gate-language', () => sync());
     window.addEventListener('resize', positionLayer, {passive: true});
-    sync();
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind, {once: true});
   else bind();
 
-  window.RemoteGateEndpointPicker = {open, close, sync};
+  window.RemoteGateEndpointPicker = {open, close, sync, bindSelect};
 })();
