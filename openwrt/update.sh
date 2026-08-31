@@ -45,12 +45,20 @@ trap 'rc=$?; if [ "$SUCCESS" -ne 1 ] && [ -n "$BACKUP" ] && [ -d "$BACKUP" ]; th
 fi
 rm -rf "$TMP_DIR"; exit "$rc"' EXIT INT TERM
 
-fetch() { rel="$1" out="$2"; curl -fsSL -H 'Cache-Control: no-cache' "${RAW_BASE}/openwrt/${rel}?_=$(date +%s)" -o "$out"; }
+fetch() {
+    rel="$1"; out="$2"; url="${RAW_BASE}/openwrt/${rel}"
+    if ! curl -fsSL -H 'Cache-Control: no-cache' "$url" -o "$out"; then
+        fail "Download failed: $url"
+    fi
+}
 
 FILES="remote-gate-report.sh remote-gate-agent.sh remote-gate-egress-probe.sh remote-gate-firewall.sh remote-gate-firewall-backends.sh remote-gate-wireguard-verify.sh remote-gate-firewall-include.sh remote-gate-audit.sh remote-gate-agent.init remote-gate-hotplug.sh uninstall.sh update.sh"
 info "Downloading OpenWrt update."
 for rel in $FILES; do fetch "$rel" "$TMP_DIR/$rel"; done
-curl -fsSL -H 'Cache-Control: no-cache' "${RAW_BASE}/VERSION?_=$(date +%s)" -o "$TMP_DIR/VERSION"
+VERSION_URL="${RAW_BASE}/VERSION"
+if ! curl -fsSL -H 'Cache-Control: no-cache' "$VERSION_URL" -o "$TMP_DIR/VERSION"; then
+    fail "Download failed: $VERSION_URL"
+fi
 for rel in $FILES; do sh -n "$TMP_DIR/$rel" || fail "Shell syntax check failed: $rel"; done
 
 remote_version="$(sed -n '1p' "$TMP_DIR/VERSION")"
