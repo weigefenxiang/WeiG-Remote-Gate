@@ -55,6 +55,7 @@ fetch_file() {
 fetch_file "remote-gate-report.sh" "$LIB_DIR/remote-gate-report.sh"
 fetch_file "remote-gate-agent.sh" "$LIB_DIR/remote-gate-agent.sh"
 fetch_file "remote-gate-egress-probe.sh" "$LIB_DIR/remote-gate-egress-probe.sh"
+fetch_file "remote-gate-wireguard-egress.sh" "$LIB_DIR/remote-gate-wireguard-egress.sh"
 fetch_file "remote-gate-firewall.sh" "$LIB_DIR/remote-gate-firewall.sh"
 fetch_file "remote-gate-firewall-backends.sh" "$LIB_DIR/remote-gate-firewall-backends.sh"
 fetch_file "remote-gate-wireguard-verify.sh" "$LIB_DIR/remote-gate-wireguard-verify.sh"
@@ -138,5 +139,6 @@ printf 'The WAN has no HTTP/HTTPS listener from this project.\n'
 printf 'qBittorrent/BT port forwarding remains under the original firewall and is unaffected.\n'
 printf 'Safe update: %s/update.sh\n' "$LIB_DIR"
 printf 'Read-only audit: %s/remote-gate-audit.sh\n' "$LIB_DIR"
+printf 'Optional WG home IPv4 egress: %s/remote-gate-wireguard-egress.sh status\n' "$LIB_DIR"
 printf 'Safe uninstall: %s/uninstall.sh --dry-run\n' "$LIB_DIR"
 printf 'Firewall status: %s/remote-gate-firewall.sh status-json\n' "$LIB_DIR"

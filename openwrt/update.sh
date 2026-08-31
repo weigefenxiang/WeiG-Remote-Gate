@@ -85,7 +85,7 @@ fetch() {
     fetch_repo_path "openwrt/${rel}" "$out"
 }
 
-FILES="remote-gate-report.sh remote-gate-agent.sh remote-gate-egress-probe.sh remote-gate-firewall.sh remote-gate-firewall-backends.sh remote-gate-wireguard-verify.sh remote-gate-firewall-include.sh remote-gate-audit.sh remote-gate-agent.init remote-gate-hotplug.sh uninstall.sh update.sh"
+FILES="remote-gate-report.sh remote-gate-agent.sh remote-gate-egress-probe.sh remote-gate-wireguard-egress.sh remote-gate-firewall.sh remote-gate-firewall-backends.sh remote-gate-wireguard-verify.sh remote-gate-firewall-include.sh remote-gate-audit.sh remote-gate-agent.init remote-gate-hotplug.sh uninstall.sh update.sh"
 info "Downloading OpenWrt update."
 for rel in $FILES; do fetch "$rel" "$TMP_DIR/$rel"; done
 fetch_repo_path "VERSION" "$TMP_DIR/VERSION"
@@ -112,7 +112,7 @@ chmod -R go-rwx "$BACKUP"; info "Backup created: $BACKUP"
 
 [ -x "$INIT_FILE" ] && "$INIT_FILE" stop >/dev/null 2>&1 || true
 mkdir -p "$LIB_DIR" "$(dirname "$HOTPLUG_FILE")" "$STATE_DIR"
-for rel in remote-gate-report.sh remote-gate-agent.sh remote-gate-egress-probe.sh remote-gate-firewall.sh remote-gate-firewall-backends.sh remote-gate-wireguard-verify.sh remote-gate-firewall-include.sh remote-gate-audit.sh uninstall.sh update.sh; do cp "$TMP_DIR/$rel" "$LIB_DIR/$rel"; done
+for rel in remote-gate-report.sh remote-gate-agent.sh remote-gate-egress-probe.sh remote-gate-wireguard-egress.sh remote-gate-firewall.sh remote-gate-firewall-backends.sh remote-gate-wireguard-verify.sh remote-gate-firewall-include.sh remote-gate-audit.sh uninstall.sh update.sh; do cp "$TMP_DIR/$rel" "$LIB_DIR/$rel"; done
 cp "$TMP_DIR/remote-gate-agent.init" "$INIT_FILE"
 cp "$TMP_DIR/remote-gate-hotplug.sh" "$HOTPLUG_FILE"
 cp "$TMP_DIR/VERSION" "$LIB_DIR/VERSION"
@@ -144,5 +144,6 @@ printf 'WeiG Remote Gate OpenWrt updated: %s -> %s\n' "$local_version" "$remote_
 printf 'Backup: %s\n' "$BACKUP"
 printf 'IPv6 Gate mode: %s\n' "$(sed -n "s/^GATE_IPV6='\([^']*\)'/\1/p" "$CONFIG_FILE" | sed -n '1p')"
 printf 'Private/CGNAT WAN IPv4 egress probe: enabled\n'
+printf 'Optional WG home IPv4 egress: %s/remote-gate-wireguard-egress.sh status\n' "$LIB_DIR"
 printf 'Read-only audit: %s/remote-gate-audit.sh\n' "$LIB_DIR"
 printf 'WireGuard configuration was preserved.\n'

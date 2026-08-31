@@ -4,11 +4,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "openwrt/remote-gate-wireguard-egress.sh"
+INSTALL = ROOT / "openwrt/install.sh"
+UPDATE = ROOT / "openwrt/update.sh"
+UNINSTALL = ROOT / "openwrt/uninstall.sh"
 
 
 class WireGuardEgressTests(unittest.TestCase):
     def test_shell_syntax(self):
-        subprocess.run(["sh", "-n", str(SCRIPT)], check=True)
+        for path in (SCRIPT, INSTALL, UPDATE, UNINSTALL):
+            subprocess.run(["sh", "-n", str(path)], check=True)
 
     def test_full_tunnel_is_optional_parameterized_and_reversible(self):
         source = SCRIPT.read_text(encoding="utf-8")
@@ -32,6 +36,16 @@ class WireGuardEgressTests(unittest.TestCase):
         source = SCRIPT.read_text(encoding="utf-8")
         self.assertNotIn("remote-gate-firewall.sh", source)
         self.assertIn("separate from Remote Gate INPUT protection", source)
+
+    def test_installer_updater_and_uninstaller_own_optional_helper(self):
+        install = INSTALL.read_text(encoding="utf-8")
+        update = UPDATE.read_text(encoding="utf-8")
+        uninstall = UNINSTALL.read_text(encoding="utf-8")
+        self.assertIn('fetch_file "remote-gate-wireguard-egress.sh"', install)
+        self.assertIn("remote-gate-wireguard-egress.sh", update)
+        self.assertIn('"$LIB_DIR/remote-gate-wireguard-egress.sh" disable', uninstall)
+        self.assertIn("remote_gate_wg_egress_forward", uninstall)
+        self.assertIn("remote_gate_wg_egress_default_rule", uninstall)
 
 
 if __name__ == "__main__":

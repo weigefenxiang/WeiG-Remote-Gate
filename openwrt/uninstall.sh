@@ -27,6 +27,7 @@ Usage: uninstall.sh [--dry-run] [--yes] [--remove-wireguard]
 Default behavior:
   - backs up firewall/network/application state locally
   - removes only WeiG Remote Gate-owned firewall/application objects
+  - disables and removes optional Remote Gate WireGuard egress policy if enabled
   - preserves WireGuard configuration and Cloud/network settings
   - keeps the backup under /var/backups/weig-remote-gate/
 EOF
@@ -52,9 +53,10 @@ printf 'WeiG Remote Gate safe uninstall\n'
 printf 'Will remove:\n'
 printf '  Remote Gate agent/service, cron and hotplug hooks\n'
 printf '  Remote Gate INPUT chains/ipsets or nft include objects\n'
+printf '  Optional Remote Gate WireGuard egress UCI policy if enabled\n'
 printf '  Remote Gate application/config/state files\n'
 printf 'Will preserve:\n'
-printf '  WireGuard interface/keys/peers and WG firewall zone\n'
+printf '  WireGuard interface/keys/peers and pre-existing WG firewall zones\n'
 printf '  Existing FORWARD, DNAT, UPnP, NAT-PMP and qBittorrent rules\n'
 printf '  A local recovery backup\n'
 if [ "$REMOVE_WIREGUARD" -eq 1 ]; then
@@ -107,6 +109,10 @@ printf 'Backup created: %s\n' "$backup"
 if [ -x "$INIT_FILE" ]; then
     "$INIT_FILE" disable >/dev/null 2>&1 || true
     "$INIT_FILE" stop >/dev/null 2>&1 || true
+fi
+
+if [ -x "$LIB_DIR/remote-gate-wireguard-egress.sh" ]; then
+    "$LIB_DIR/remote-gate-wireguard-egress.sh" disable >/dev/null 2>&1 || true
 fi
 
 firewall_ok=1
@@ -190,6 +196,10 @@ fi
 [ -e "$FW4_INPUT_INCLUDE" ] && residue=1
 if command -v uci >/dev/null 2>&1; then
     uci -q get firewall.remote_gate >/dev/null 2>&1 && residue=1 || true
+    uci -q get firewall.remote_gate_wg_egress_forward >/dev/null 2>&1 && residue=1 || true
+    uci -q get firewall.remote_gate_wg_egress_nat >/dev/null 2>&1 && residue=1 || true
+    uci -q get network.remote_gate_wg_egress_default >/dev/null 2>&1 && residue=1 || true
+    uci -q get network.remote_gate_wg_egress_default_rule >/dev/null 2>&1 && residue=1 || true
 fi
 ps 2>/dev/null | grep '[r]emote-gate-agent.sh' >/dev/null 2>&1 && residue=1 || true
 
