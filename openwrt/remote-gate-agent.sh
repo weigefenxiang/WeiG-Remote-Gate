@@ -22,6 +22,9 @@ INVENTORY_POSTED_FILE="$STATE_DIR/inventory-v2.posted"
 GATE_IPV6="${GATE_IPV6:-auto}"
 CONTROL_TRANSPORT="${CONTROL_TRANSPORT:-auto}"
 NATMAP_DISCOVERY="${NATMAP_DISCOVERY:-auto}"
+REMOTE_GATE_VERIFY_CANDIDATE_SECONDS="${REMOTE_GATE_VERIFY_CANDIDATE_SECONDS:-10}"
+REMOTE_GATE_VERIFY_DISCOVERY_SECONDS="${REMOTE_GATE_VERIFY_DISCOVERY_SECONDS:-30}"
+export REMOTE_GATE_VERIFY_CANDIDATE_SECONDS REMOTE_GATE_VERIFY_DISCOVERY_SECONDS
 case "$GATE_IPV6" in auto|enabled|disabled) ;; *) GATE_IPV6=auto ;; esac
 case "$CONTROL_TRANSPORT" in auto|manual) ;; *) CONTROL_TRANSPORT=auto ;; esac
 case "$NATMAP_DISCOVERY" in auto|disabled) ;; *) NATMAP_DISCOVERY=auto ;; esac
@@ -413,8 +416,12 @@ post_status() {
     control_request POST "/api/v1/agent/status" "$BODY" "$payload" >/dev/null 2>&1 || true
 }
 
+sanitize_detail() {
+    printf '%s' "$1" | tr '\r\n' '  ' | sed 's/[^A-Za-z0-9 ._:/(),+-]/_/g' | cut -c1-200
+}
+
 ack() {
-    id="$1"; ok="$2"; detail="$3"
+    id="$1"; ok="$2"; detail="$(sanitize_detail "$3")"
     payload="{\"id\":\"${id}\",\"ok\":${ok},\"detail\":\"${detail}\"}"
     control_request POST "/api/v1/agent/ack" "$BODY" "$payload" >/dev/null 2>&1 || true
 }
@@ -443,11 +450,18 @@ pull_once() {
             [ -n "$family" ] || family=ipv4
             [ -n "$scope" ] || scope=wg_ping
             sync_firewall_policy || true
-            if "$FIREWALL" activate "$source_ip" "$family" "$scope" "$device" "$port" "$ttl"; then
+            error_file="${TMP_BASE}.firewall-error"
+            rm -f "$error_file"
+            if "$FIREWALL" activate "$source_ip" "$family" "$scope" "$device" "$port" "$ttl" 2>"$error_file"; then
                 ack "$id" true "authorization-active"
             else
-                ack "$id" false "firewall-activation-failed"
+                detail="$(sed -n 's/^ERROR: //p' "$error_file" 2>/dev/null | tail -n 1)"
+                [ -n "$detail" ] || detail="$(tail -n 1 "$error_file" 2>/dev/null || true)"
+                [ -n "$detail" ] || detail="firewall-activation-failed"
+                logger -t "$TAG" "activation failed: $detail" 2>/dev/null || true
+                ack "$id" false "$detail"
             fi
+            rm -f "$error_file"
             ;;
         close)
             if "$FIREWALL" clear; then ack "$id" true "authorization-cleared"; else ack "$id" false "firewall-clear-failed"; fi
