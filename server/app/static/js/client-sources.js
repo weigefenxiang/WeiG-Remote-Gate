@@ -120,7 +120,7 @@
     } finally {
       running = false;
     }
-    if (changed) window.dispatchEvent(new CustomEvent('remote-gate-client-source-updated'));
+    if (changed) window.location.reload();
   }
 
   function bind() {
