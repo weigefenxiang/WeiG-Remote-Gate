@@ -26,10 +26,11 @@ class UIContractTests(unittest.TestCase):
     def test_production_dashboard_loads_candidate_probe_exactly_once(self):
         template = TEMPLATE.read_text(encoding="utf-8")
         bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
-        marker = '<script src="/static/js/client-sources.js"></script>'
+        marker = '<script src="/static/js/client-sources.js?v=032-r2"></script>'
         self.assertEqual(template.count(marker), 1)
-        self.assertLess(template.index(marker), template.index('<script src="/static/js/gate-controls.js"></script>'))
-        self.assertLess(template.index(marker), template.index('<script src="/static/js/app.js"></script>'))
+        self.assertIn('/static/js/theme-bootstrap.js?v=032-r2', template)
+        self.assertLess(template.index(marker), template.index('<script src="/static/js/gate-controls.js?v=032-r2"></script>'))
+        self.assertLess(template.index(marker), template.index('<script src="/static/js/app.js?v=032-r2"></script>'))
         self.assertNotIn("'/static/js/client-sources.js'", bootstrap)
         self.assertNotIn('"/static/js/client-sources.js"', bootstrap)
 
