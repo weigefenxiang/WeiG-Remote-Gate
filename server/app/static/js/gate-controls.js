@@ -130,7 +130,10 @@
     if (family === 'dual') {
       if (!sourceFor('ipv4') || !sourceFor('ipv6')) return zh() ? 'IPv4 与 IPv6 Source 都就绪后可同时授权。' : 'Both IPv4 and IPv6 sources are required for dual-stack authorization.';
       if (!dualEndpointPairs().length) return zh() ? 'Dual 需要同一 WAN 同时存在可用的 IPv4 与 IPv6 Endpoint。' : 'Dual requires IPv4 and IPv6 endpoints on the same WAN.';
-      return zh() ? `双栈就绪 · 可选择 ${dualEndpointPairs().length} 个双栈 WAN` : `Dual stack ready · ${dualEndpointPairs().length} dual-stack WAN option(s)`;
+      const selected = selectedDualPair() || dualEndpointPairs()[0];
+      return zh()
+        ? `双栈就绪 · IPv4 + IPv6 已识别 · ${selected?.wan || '请选择 WAN'}`
+        : `Dual stack ready · IPv4 + IPv6 detected · ${selected?.wan || 'choose a WAN'}`;
     }
     const source = sourceFor(family);
     if (!source) return t('gate.familySourceMissing', {family: family.toUpperCase()});
