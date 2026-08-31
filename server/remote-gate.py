@@ -74,7 +74,7 @@ class Handler(BaseHandler):
         self.send_response(status); self.send_header("Content-Type", content_type)
         if length is not None: self.send_header("Content-Length", str(length))
         self.send_header("Cache-Control", "no-store"); self.send_header("Referrer-Policy", "no-referrer"); self.send_header("X-Content-Type-Options", "nosniff"); self.send_header("X-Frame-Options", "DENY"); self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-        self.send_header("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self' https://api.ipify.org https://api6.ipify.org; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+        self.send_header("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self' https://api.ipify.org https://api6.ipify.org https://api-ipv4.ip.sb https://api-ipv6.ip.sb; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 
     def do_GET(self) -> None:
         if urlparse(self.path).path == "/api/v1/dashboard": _sanitize_stored_inventory()
