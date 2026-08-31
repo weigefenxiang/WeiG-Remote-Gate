@@ -4,6 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "server/remote-gate.py"
 CLIENT = ROOT / "server/app/client_sources.py"
+ENDPOINTS = ROOT / "server/app/endpoints.py"
 
 
 class ServerContractTests(unittest.TestCase):
@@ -39,13 +40,16 @@ class ServerContractTests(unittest.TestCase):
         self.assertIn("source_confidence", source)
 
     def test_inventory_filters_non_global_ipv6_at_authoritative_boundary(self):
-        source = RUNTIME.read_text(encoding="utf-8")
-        self.assertIn("_sanitize_inventory", source)
-        self.assertIn("address.is_global", source)
-        self.assertIn("address.is_multicast", source)
-        self.assertIn('ipaddress.ip_network("2000::/3")', source)
-        self.assertIn("_sanitize_stored_inventory", source)
-        self.assertIn('/api/v1/dashboard', source)
+        runtime = RUNTIME.read_text(encoding="utf-8")
+        policy = ENDPOINTS.read_text(encoding="utf-8")
+        self.assertIn("is_globally_reachable_unicast", runtime)
+        self.assertIn("return validate_inventory_v2(data)", runtime)
+        self.assertIn("address.is_global", policy)
+        self.assertIn("address.is_multicast", policy)
+        self.assertIn('ipaddress.ip_network("2000::/3")', policy)
+        self.assertIn('family == "ipv6" and not is_globally_reachable_unicast', policy)
+        self.assertIn("_sanitize_stored_inventory", runtime)
+        self.assertIn('/api/v1/dashboard', runtime)
 
     def test_agent_status_preserves_both_family_authorizations(self):
         source = RUNTIME.read_text(encoding="utf-8")
