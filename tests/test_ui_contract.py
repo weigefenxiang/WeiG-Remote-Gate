@@ -9,6 +9,7 @@ GATE = ROOT / "server/app/static/js/gate-controls.js"
 CLIENT_SOURCES = ROOT / "server/app/static/js/client-sources.js"
 BOOTSTRAP = ROOT / "server/app/static/js/theme-bootstrap.js"
 DASHBOARD_CSS = ROOT / "server/app/static/css/dashboard.css"
+COMPONENTS_CSS = ROOT / "server/app/static/css/components.css"
 INSTALL = ROOT / "server/install.sh"
 UPDATE = ROOT / "server/update.sh"
 
@@ -22,6 +23,9 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("credentials: 'omit'", source)
         self.assertIn("/api/v1/client-source/candidate", source)
         self.assertIn("X-CSRF-Token", source)
+        self.assertIn("remote-gate-client-source-diagnostics", source)
+        self.assertIn("Candidate rejected:", source)
+        self.assertIn("IP echo timed out", source)
         self.assertNotIn("createElement('script')", source)
         self.assertNotIn("/api/v1/client-source/challenge", source)
 
@@ -48,7 +52,7 @@ class UIContractTests(unittest.TestCase):
             "theme-bootstrap.js", "i18n.js", "tokens.css", "base.css", "components.css",
             "client-sources.js", "gate-controls.js", "app.js",
         ):
-            self.assertIn(asset, dashboard if asset not in {"tokens.css", "base.css", "components.css"} else dashboard)
+            self.assertIn(asset, dashboard)
         self.assertIn("document.currentScript", bootstrap)
         self.assertIn("searchParams.get('v')", bootstrap)
         self.assertIn("assetUrl(src)", bootstrap)
@@ -78,25 +82,29 @@ class UIContractTests(unittest.TestCase):
         self.assertNotIn('"source_ip"', probe)
         self.assertIn("body: JSON.stringify({family, address})", probe)
 
-    def test_ipv4_ipv6_and_dual_activate_are_supported(self):
-        source = GATE.read_text(encoding="utf-8")
-        self.assertIn("families:['ipv4','ipv6']", source)
-        self.assertIn("endpoint_ids:{ipv4:v4.id,ipv6:v6.id}", source)
-        self.assertIn("family === 'dual'", source)
+    def test_ipv4_ipv6_and_dual_activate_are_supported_in_one_compact_row(self):
+        gate = GATE.read_text(encoding="utf-8")
         template = TEMPLATE.read_text(encoding="utf-8")
-        css = DASHBOARD_CSS.read_text(encoding="utf-8")
+        css = COMPONENTS_CSS.read_text(encoding="utf-8")
+        self.assertIn("families:['ipv4','ipv6']", gate)
+        self.assertIn("endpoint_ids:{ipv4:v4.id,ipv6:v6.id}", gate)
+        self.assertIn("family === 'dual'", gate)
+        self.assertIn("{ipv4: 'V4', ipv6: 'V6', dual: 'Dual'}", gate)
         self.assertIn('data-family="ipv4"', template)
         self.assertIn('data-family="ipv6"', template)
         self.assertIn('data-family="dual"', template)
-        self.assertIn('>Dual Stack</button>', template)
-        self.assertNotIn('>IPv4 + IPv6</button>', template)
-        self.assertIn('.family-segment { grid-template-columns: repeat(3, 1fr); }', css)
+        self.assertIn("grid-template-columns: repeat(3, minmax(0, 1fr)) !important", css)
+        self.assertIn("white-space: nowrap", css)
+        self.assertIn(".family-segment button", css)
 
-    def test_candidate_and_verified_sources_remain_visibly_distinct(self):
+    def test_candidate_and_http_observed_sources_remain_visibly_distinct(self):
         app = APP.read_text(encoding="utf-8")
-        self.assertIn("carrier_probe", app)
-        self.assertIn("Carrier NAT probe", app)
-        self.assertIn("Cloudflare-observed sources remain preferred", app)
+        self.assertIn("Carrier candidate", app)
+        self.assertIn("Cloudflare HTTP observed", app)
+        self.assertIn("hints only", app)
+        self.assertIn("fresh authenticated WireGuard peer activity", app)
+        self.assertIn("remote-gate-client-source-diagnostics", app)
+        self.assertIn("remote-gate-client-source-updated", app)
 
     def test_private_and_egress_paths_remain_available_for_manual_try(self):
         app = APP.read_text(encoding="utf-8")
