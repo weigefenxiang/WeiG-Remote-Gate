@@ -1,4 +1,9 @@
 (() => {
+  const current = document.currentScript;
+  const currentUrl = new URL(current?.src || location.href, location.href);
+  const assetVersion = currentUrl.searchParams.get('v') || '';
+  const assetUrl = (path) => assetVersion ? `${path}?v=${encodeURIComponent(assetVersion)}` : path;
+
   const favicon = document.createElement('link');
   favicon.rel = 'icon';
   favicon.type = 'image/png';
@@ -7,7 +12,7 @@
 
   const interaction = document.createElement('link');
   interaction.rel = 'stylesheet';
-  interaction.href = '/static/css/interaction.css';
+  interaction.href = assetUrl('/static/css/interaction.css');
   document.head.append(interaction);
 
   const key = 'weig-remote-gate:theme';
@@ -19,9 +24,9 @@
   document.documentElement.dataset.theme = resolved;
   document.documentElement.dataset.themeChoice = choice;
 
-  // Client source discovery is a security-critical runtime dependency and is
-  // loaded explicitly by dashboard.html. Keep only optional UI enhancements
-  // in this dynamic bootstrap so source discovery can never execute twice.
+  // Client source discovery is loaded explicitly by dashboard.html because it
+  // is security-critical. Optional UI modules inherit the exact same build SHA
+  // from this bootstrap URL so one HTML document can never mix asset builds.
   const modules = [
     '/static/js/motion-feedback.js',
     '/static/js/endpoint-picker.js',
@@ -29,10 +34,11 @@
   ];
 
   modules.forEach((src) => {
-    if (document.querySelector(`script[src="${src}"]`)) return;
+    if (document.querySelector(`script[data-remote-gate-module="${src}"]`)) return;
     const script = document.createElement('script');
-    script.src = src;
+    script.src = assetUrl(src);
     script.async = false;
+    script.dataset.remoteGateModule = src;
     document.head.append(script);
   });
 

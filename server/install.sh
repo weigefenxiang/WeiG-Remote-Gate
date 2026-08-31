@@ -3,7 +3,16 @@ set -euo pipefail
 umask 077
 
 PROJECT="WeiG-Remote-Gate"
-RAW_BASE="${REMOTE_GATE_RAW_BASE:-https://raw.githubusercontent.com/weigefenxiang/WeiG-Remote-Gate/main}"
+REPO="weigefenxiang/WeiG-Remote-Gate"
+RAW_PREFIX="https://raw.githubusercontent.com/${REPO}/"
+GITHUB_API="https://api.github.com/repos/${REPO}"
+GITHUB_CONTENTS="${GITHUB_API}/contents"
+RAW_BASE="${REMOTE_GATE_RAW_BASE:-${RAW_PREFIX}main}"
+case "$RAW_BASE" in
+  "${RAW_PREFIX}"dev/*)
+    RAW_BASE="${RAW_PREFIX}refs/heads/${RAW_BASE#${RAW_PREFIX}}"
+    ;;
+esac
 ETC_DIR="/etc/remote-gate"
 STATE_DIR="/var/lib/remote-gate"
 LIB_DIR="/usr/local/lib/remote-gate"
@@ -11,6 +20,7 @@ SERVICE_FILE="/etc/systemd/system/remote-gate.service"
 SERVICE_NAME="remote-gate.service"
 
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+warn() { printf 'WARN: %s\n' "$*" >&2; }
 info() { printf '==> %s\n' "$*"; }
 
 [ "${EUID:-$(id -u)}" -eq 0 ] || fail "Run this installer as root."
@@ -19,6 +29,41 @@ command -v systemctl >/dev/null 2>&1 || fail "systemd is required."
 for cmd in python3 openssl curl; do
     command -v "$cmd" >/dev/null 2>&1 || fail "Missing dependency: $cmd"
 done
+
+resolve_build_sha() {
+    local suffix ref sha
+    suffix="${RAW_BASE#${RAW_PREFIX}}"
+    [ "$suffix" != "$RAW_BASE" ] || return 1
+    if [[ "$suffix" =~ ^[0-9a-fA-F]{40}$ ]]; then
+        printf '%s\n' "${suffix,,}"
+        return 0
+    fi
+    case "$suffix" in
+      refs/heads/*) ref="${suffix#refs/heads/}" ;;
+      refs/tags/*) ref="${suffix#refs/tags/}" ;;
+      *) ref="$suffix" ;;
+    esac
+    sha="$(
+        curl -fsSL \
+          -H 'Accept: application/vnd.github+json' \
+          -H 'X-GitHub-Api-Version: 2022-11-28' \
+          -H 'User-Agent: WeiG-Remote-Gate-Installer' \
+          --get --data-urlencode "sha=$ref" --data-urlencode 'per_page=1' \
+          "$GITHUB_API/commits" |
+        python3 -c 'import json,re,sys; d=json.load(sys.stdin); s=(d[0].get("sha","") if isinstance(d,list) and d else ""); sys.stdout.write(s if re.fullmatch(r"[0-9a-fA-F]{40}",s) else "")'
+    )" || return 1
+    [[ "$sha" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
+    printf '%s\n' "${sha,,}"
+}
+
+BUILD_SHA="${REMOTE_GATE_BUILD_SHA:-}"
+if [ -z "$BUILD_SHA" ]; then
+    BUILD_SHA="$(resolve_build_sha)" || fail "Could not resolve GitHub build SHA from $RAW_BASE"
+fi
+[[ "$BUILD_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || fail "Invalid build SHA: $BUILD_SHA"
+BUILD_SHA="${BUILD_SHA,,}"
+BUILD_SHORT="${BUILD_SHA:0:12}"
+RAW_BASE="${RAW_PREFIX}${BUILD_SHA}"
 
 printf '\nWeiG Remote Gate server installer\n\n'
 
@@ -70,11 +115,21 @@ trap 'rm -rf "$TMP_DIR"; unset LOGIN_PASSWORD || true' EXIT
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
 
 fetch_file() {
-    local rel="$1" out="$2"
+    local rel="$1" out="$2" raw_url="${RAW_BASE}/${rel}" api_url="${GITHUB_CONTENTS}/${rel}?ref=${BUILD_SHA}"
     if [ -f "$SCRIPT_DIR/../$rel" ]; then
         cp "$SCRIPT_DIR/../$rel" "$out"
-    else
-        curl -fsSL "$RAW_BASE/$rel" -o "$out"
+        return 0
+    fi
+    if curl -fsSL -H 'Cache-Control: no-cache' "$raw_url" -o "$out"; then
+        return 0
+    fi
+    warn "Raw download failed; trying GitHub API: $rel"
+    if ! curl -fsSL \
+      -H 'Accept: application/vnd.github.raw+json' \
+      -H 'X-GitHub-Api-Version: 2022-11-28' \
+      -H 'User-Agent: WeiG-Remote-Gate-Installer' \
+      "$api_url" -o "$out"; then
+        fail "Download failed from Raw and GitHub API: $rel"
     fi
 }
 
@@ -118,6 +173,7 @@ FILES=(
   "VERSION"
 )
 
+info "Downloading WeiG Remote Gate build $BUILD_SHORT."
 for rel in "${FILES[@]}"; do
     mkdir -p "$TMP_DIR/$(dirname "$rel")"
     fetch_file "$rel" "$TMP_DIR/$rel"
@@ -126,6 +182,31 @@ done
 python3 -m py_compile "$TMP_DIR"/server/app/*.py "$TMP_DIR/server/remote-gate.py"
 bash -n "$TMP_DIR/server/uninstall.sh"
 bash -n "$TMP_DIR/server/update.sh"
+REMOTE_VERSION="$(sed -n '1p' "$TMP_DIR/VERSION")"
+
+python3 - "$TMP_DIR/server/app/templates" "$REMOTE_VERSION" "$BUILD_SHA" <<'PY'
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+version = sys.argv[2].strip()
+build = sys.argv[3].strip().lower()
+replacements = {
+    "{{ASSET_VERSION}}": build,
+    "{{VERSION}}": version,
+    "{{BUILD_SHA}}": build,
+    "{{BUILD_SHORT}}": build[:12],
+}
+for name in ("login.html", "dashboard.html"):
+    path = root / name
+    text = path.read_text(encoding="utf-8")
+    for token, value in replacements.items():
+        text = text.replace(token, value)
+    leftovers = [token for token in replacements if token in text]
+    if leftovers:
+        raise SystemExit(f"unresolved build token(s) in {name}: {leftovers}")
+    path.write_text(text, encoding="utf-8")
+PY
+printf '%s\n' "$BUILD_SHA" > "$TMP_DIR/BUILD"
 
 install -o root -g root -m 0755 "$TMP_DIR/server/remote-gate.py" "$LIB_DIR/remote-gate.py"
 install -o root -g root -m 0755 "$TMP_DIR/server/uninstall.sh" "$LIB_DIR/uninstall.sh"
@@ -135,6 +216,7 @@ cp -a "$TMP_DIR/server/app/." "$LIB_DIR/app/"
 find "$LIB_DIR/app" -type d -exec chmod 0755 {} +
 find "$LIB_DIR/app" -type f -exec chmod 0644 {} +
 install -o root -g root -m 0644 "$TMP_DIR/VERSION" "$LIB_DIR/VERSION"
+install -o root -g root -m 0644 "$TMP_DIR/BUILD" "$LIB_DIR/BUILD"
 
 SALT_HEX="$(openssl rand -hex 16)"
 WRITE_TOKEN="$(openssl rand -hex 32)"
@@ -199,6 +281,7 @@ printf '\n============================================================\n'
 printf ' WeiG Remote Gate installed successfully\n'
 printf '============================================================\n\n'
 printf 'Version:       %s\n' "$(cat "$LIB_DIR/VERSION")"
+printf 'Build:         %s\n' "$(cat "$LIB_DIR/BUILD")"
 printf 'Hostname:      %s\n' "$PUBLIC_HOSTNAME"
 printf 'Backend:       127.0.0.1:29444 (localhost only)\n'
 printf 'WRITE_TOKEN:   %s\n' "$WRITE_TOKEN"

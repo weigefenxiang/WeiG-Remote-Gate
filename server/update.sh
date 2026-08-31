@@ -2,8 +2,11 @@
 set -euo pipefail
 umask 077
 
-RAW_BASE="${REMOTE_GATE_RAW_BASE:-https://raw.githubusercontent.com/weigefenxiang/WeiG-Remote-Gate/main}"
-RAW_PREFIX="https://raw.githubusercontent.com/weigefenxiang/WeiG-Remote-Gate/"
+REPO="weigefenxiang/WeiG-Remote-Gate"
+RAW_PREFIX="https://raw.githubusercontent.com/${REPO}/"
+GITHUB_API="https://api.github.com/repos/${REPO}"
+GITHUB_CONTENTS="${GITHUB_API}/contents"
+RAW_BASE="${REMOTE_GATE_RAW_BASE:-${RAW_PREFIX}main}"
 case "$RAW_BASE" in
   "${RAW_PREFIX}"dev/*)
     RAW_BASE="${RAW_PREFIX}refs/heads/${RAW_BASE#${RAW_PREFIX}}"
@@ -16,6 +19,7 @@ SERVICE_NAME="remote-gate.service"
 BACKUP_ROOT="/var/backups/weig-remote-gate"
 
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+warn() { printf 'WARN: %s\n' "$*" >&2; }
 info() { printf '==> %s\n' "$*"; }
 
 [ "${EUID:-$(id -u)}" -eq 0 ] || fail "Run this updater as root."
@@ -24,6 +28,42 @@ for cmd in systemctl python3 curl install; do
 done
 [ -r "$ETC_DIR/config.json" ] || fail "WeiG Remote Gate is not installed."
 [ -r "$ETC_DIR/secrets.json" ] || fail "Missing $ETC_DIR/secrets.json"
+
+resolve_build_sha() {
+    local suffix ref sha
+    suffix="${RAW_BASE#${RAW_PREFIX}}"
+    [ "$suffix" != "$RAW_BASE" ] || return 1
+    if [[ "$suffix" =~ ^[0-9a-fA-F]{40}$ ]]; then
+        printf '%s\n' "${suffix,,}"
+        return 0
+    fi
+    case "$suffix" in
+      refs/heads/*) ref="${suffix#refs/heads/}" ;;
+      refs/tags/*) ref="${suffix#refs/tags/}" ;;
+      *) ref="$suffix" ;;
+    esac
+    sha="$(
+        curl -fsSL \
+          -H 'Accept: application/vnd.github+json' \
+          -H 'X-GitHub-Api-Version: 2022-11-28' \
+          -H 'User-Agent: WeiG-Remote-Gate-Updater' \
+          --get --data-urlencode "sha=$ref" --data-urlencode 'per_page=1' \
+          "$GITHUB_API/commits" |
+        python3 -c 'import json,re,sys; d=json.load(sys.stdin); s=(d[0].get("sha","") if isinstance(d,list) and d else ""); sys.stdout.write(s if re.fullmatch(r"[0-9a-fA-F]{40}",s) else "")'
+    )" || return 1
+    [[ "$sha" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
+    printf '%s\n' "${sha,,}"
+}
+
+BUILD_SHA="${REMOTE_GATE_BUILD_SHA:-}"
+if [ -z "$BUILD_SHA" ]; then
+    BUILD_SHA="$(resolve_build_sha)" || fail "Could not resolve GitHub build SHA from $RAW_BASE"
+fi
+[[ "$BUILD_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || fail "Invalid build SHA: $BUILD_SHA"
+BUILD_SHA="${BUILD_SHA,,}"
+BUILD_SHORT="${BUILD_SHA:0:12}"
+# Freeze the whole deployment to one immutable commit before downloading files.
+RAW_BASE="${RAW_PREFIX}${BUILD_SHA}"
 
 TMP_DIR="$(mktemp -d)"
 BACKUP=""
@@ -51,9 +91,17 @@ rollback() {
 trap rollback EXIT INT TERM
 
 fetch_raw() {
-    local rel="$1" out="$2" url="${RAW_BASE}/${rel}"
-    if ! curl -fsSL -H 'Cache-Control: no-cache' "$url" -o "$out"; then
-        fail "Download failed: $url"
+    local rel="$1" out="$2" url="${RAW_BASE}/${rel}" api_url="${GITHUB_CONTENTS}/${rel}?ref=${BUILD_SHA}"
+    if curl -fsSL -H 'Cache-Control: no-cache' "$url" -o "$out"; then
+        return 0
+    fi
+    warn "Raw download failed; trying GitHub API: $rel"
+    if ! curl -fsSL \
+      -H 'Accept: application/vnd.github.raw+json' \
+      -H 'X-GitHub-Api-Version: 2022-11-28' \
+      -H 'User-Agent: WeiG-Remote-Gate-Updater' \
+      "$api_url" -o "$out"; then
+        fail "Download failed from Raw and GitHub API: $rel"
     fi
 }
 
@@ -97,7 +145,7 @@ FILES=(
   "VERSION"
 )
 
-info "Downloading WeiG Remote Gate update."
+info "Downloading WeiG Remote Gate update at build $BUILD_SHORT."
 for rel in "${FILES[@]}"; do
     mkdir -p "$TMP_DIR/$(dirname "$rel")"
     fetch_raw "$rel" "$TMP_DIR/$rel"
@@ -108,8 +156,34 @@ bash -n "$TMP_DIR/server/update.sh"
 
 REMOTE_VERSION="$(sed -n '1p' "$TMP_DIR/VERSION")"
 LOCAL_VERSION="$(cat "$LIB_DIR/VERSION" 2>/dev/null || echo unknown)"
-if [ "$LOCAL_VERSION" = "$REMOTE_VERSION" ] && [ "${FORCE:-0}" != "1" ]; then
-    printf 'WeiG Remote Gate is already up to date (%s).\n' "$LOCAL_VERSION"
+LOCAL_BUILD="$(cat "$LIB_DIR/BUILD" 2>/dev/null || true)"
+
+python3 - "$TMP_DIR/server/app/templates" "$REMOTE_VERSION" "$BUILD_SHA" <<'PY'
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+version = sys.argv[2].strip()
+build = sys.argv[3].strip().lower()
+replacements = {
+    "{{ASSET_VERSION}}": build,
+    "{{VERSION}}": version,
+    "{{BUILD_SHA}}": build,
+    "{{BUILD_SHORT}}": build[:12],
+}
+for name in ("login.html", "dashboard.html"):
+    path = root / name
+    text = path.read_text(encoding="utf-8")
+    for token, value in replacements.items():
+        text = text.replace(token, value)
+    leftovers = [token for token in replacements if token in text]
+    if leftovers:
+        raise SystemExit(f"unresolved build token(s) in {name}: {leftovers}")
+    path.write_text(text, encoding="utf-8")
+PY
+printf '%s\n' "$BUILD_SHA" > "$TMP_DIR/BUILD"
+
+if [ "$LOCAL_VERSION" = "$REMOTE_VERSION" ] && [ "$LOCAL_BUILD" = "$BUILD_SHA" ] && [ "${FORCE:-0}" != "1" ]; then
+    printf 'WeiG Remote Gate is already up to date (%s, build %s).\n' "$LOCAL_VERSION" "$BUILD_SHORT"
     SUCCESS=1
     trap - EXIT INT TERM
     rm -rf "$TMP_DIR"
@@ -134,6 +208,7 @@ cp -a "$TMP_DIR/server/app/." "$LIB_DIR/app/"
 find "$LIB_DIR/app" -type d -exec chmod 0755 {} +
 find "$LIB_DIR/app" -type f -exec chmod 0644 {} +
 install -o root -g root -m 0644 "$TMP_DIR/VERSION" "$LIB_DIR/VERSION"
+install -o root -g root -m 0644 "$TMP_DIR/BUILD" "$LIB_DIR/BUILD"
 
 systemctl daemon-reload
 systemctl restart "$SERVICE_NAME"
@@ -171,6 +246,7 @@ trap - EXIT INT TERM
 rm -rf "$TMP_DIR"
 unset WRITE_TOKEN
 printf 'WeiG Remote Gate updated: %s -> %s\n' "$LOCAL_VERSION" "$REMOTE_VERSION"
+printf 'Build: %s\n' "$BUILD_SHA"
 printf 'Backup: %s\n' "$BACKUP"
 printf 'Safe update: %s/update.sh\n' "$LIB_DIR"
 printf 'Safe uninstall: %s/uninstall.sh --dry-run\n' "$LIB_DIR"

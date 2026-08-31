@@ -6,15 +6,15 @@
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#090b10">
   <title>WeiG Remote Gate</title>
-  <script src="/static/js/theme-bootstrap.js?v=032-r2"></script>
-  <script src="/static/js/i18n.js"></script>
-  <link rel="stylesheet" href="/static/css/tokens.css">
-  <link rel="stylesheet" href="/static/css/base.css">
-  <link rel="stylesheet" href="/static/css/components.css">
-  <link rel="stylesheet" href="/static/css/dashboard.css">
-  <link rel="stylesheet" href="/static/css/layout.css">
-  <link rel="stylesheet" href="/static/css/themes.css">
-  <link rel="stylesheet" href="/static/css/spatial.css">
+  <script src="/static/js/theme-bootstrap.js?v={{ASSET_VERSION}}"></script>
+  <script src="/static/js/i18n.js?v={{ASSET_VERSION}}"></script>
+  <link rel="stylesheet" href="/static/css/tokens.css?v={{ASSET_VERSION}}">
+  <link rel="stylesheet" href="/static/css/base.css?v={{ASSET_VERSION}}">
+  <link rel="stylesheet" href="/static/css/components.css?v={{ASSET_VERSION}}">
+  <link rel="stylesheet" href="/static/css/dashboard.css?v={{ASSET_VERSION}}">
+  <link rel="stylesheet" href="/static/css/layout.css?v={{ASSET_VERSION}}">
+  <link rel="stylesheet" href="/static/css/themes.css?v={{ASSET_VERSION}}">
+  <link rel="stylesheet" href="/static/css/spatial.css?v={{ASSET_VERSION}}">
 </head>
 <body>
   <div class="ambient ambient-a" aria-hidden="true"></div>
@@ -221,6 +221,8 @@
             <div class="system-row"><span data-i18n="system.ipv6Gate">IPv6 Gate</span><strong id="system-ipv6-gate">—</strong></div>
             <div class="system-row"><span data-i18n="system.firewall">Firewall</span><strong id="system-firewall">—</strong></div>
             <div class="system-row"><span data-i18n="system.transport">Control path</span><strong id="system-transport">—</strong></div>
+            <div class="system-row"><span>Version</span><strong id="system-version">{{VERSION}}</strong></div>
+            <div class="system-row"><span>Build</span><strong id="system-build" title="{{BUILD_SHA}}">{{BUILD_SHORT}}</strong></div>
           </div>
         </article>
 
@@ -268,13 +270,13 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-  <script src="/static/js/theme.js"></script>
-  <script src="/static/js/utility-panel.js"></script>
-  <script src="/static/js/fit-text.js"></script>
-  <script src="/static/js/workspace.js"></script>
-  <script src="/static/js/activity.js"></script>
-  <script src="/static/js/client-sources.js?v=032-r2"></script>
-  <script src="/static/js/gate-controls.js?v=032-r2"></script>
-  <script src="/static/js/app.js?v=032-r2"></script>
+  <script src="/static/js/theme.js?v={{ASSET_VERSION}}"></script>
+  <script src="/static/js/utility-panel.js?v={{ASSET_VERSION}}"></script>
+  <script src="/static/js/fit-text.js?v={{ASSET_VERSION}}"></script>
+  <script src="/static/js/workspace.js?v={{ASSET_VERSION}}"></script>
+  <script src="/static/js/activity.js?v={{ASSET_VERSION}}"></script>
+  <script src="/static/js/client-sources.js?v={{ASSET_VERSION}}"></script>
+  <script src="/static/js/gate-controls.js?v={{ASSET_VERSION}}"></script>
+  <script src="/static/js/app.js?v={{ASSET_VERSION}}"></script>
 </body>
 </html>
