@@ -207,13 +207,13 @@ try {
     await page.close();
   }
 
-  // Regression for an IPv6-first request where the IPv4 source is temporarily missing,
-  // IPv4 endpoints exist, and IPv6 Gate is disabled. IPv4 stays selected while the
-  // Activate action waits for the source probe, then becomes available after the retry succeeds.
+  // Regression for an IPv6-first request where the IPv4 source is temporarily missing.
+  // The browser receives only a one-time observer URL; the observer itself records the
+  // address from the network request and never accepts an address supplied by JavaScript.
   const sourcePage = await browser.newPage({viewport: {width: 390, height: 844}});
   let ipv4Observed = false;
-  let probeAttempts = 0;
-  let probePosts = 0;
+  let observerAttempts = 0;
+  let challengeRequests = 0;
 
   await sourcePage.route('**/api/v1/dashboard', async (route) => {
     const response = await route.fetch();
@@ -225,7 +225,8 @@ try {
         address: '112.96.156.107',
         observed_at: now,
         expires_at: now + 300,
-        source: 'carrier_probe',
+        source: 'cloudflare_observer',
+        confidence: 'verified',
       };
     } else {
       delete payload.client_sources.ipv4;
@@ -233,28 +234,33 @@ try {
     await route.fulfill({response, contentType: 'application/json', body: JSON.stringify(payload)});
   });
 
-  await sourcePage.route('https://api.ipify.org/**', async (route) => {
-    probeAttempts += 1;
-    if (probeAttempts === 1) {
+  await sourcePage.route('**/api/v1/client-source/challenge?family=ipv4', async (route) => {
+    challengeRequests += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        family: 'ipv4',
+        url: 'https://v4.remote.example.test/api/v1/client-source/observe?token=test-token',
+        expires_in: 90,
+      }),
+    });
+  });
+
+  await sourcePage.route('https://v4.remote.example.test/**', async (route) => {
+    observerAttempts += 1;
+    if (observerAttempts === 1) {
       await route.abort('failed');
       return;
     }
     const callback = new URL(route.request().url()).searchParams.get('callback');
-    assert(callback, 'source probe retry did not include a JSONP callback');
+    assert(callback, 'source observer retry did not include a callback');
+    ipv4Observed = true;
     await route.fulfill({
       status: 200,
       contentType: 'application/javascript',
-      body: `${callback}({"ip":"112.96.156.107"});`,
+      body: `${callback}({"ok":true});`,
     });
-  });
-
-  await sourcePage.route('**/api/v1/client-source/probe', async (route) => {
-    const body = route.request().postDataJSON();
-    assert(body.family === 'ipv4', `source probe posted wrong family ${body.family}`);
-    assert(body.address === '112.96.156.107', `source probe posted wrong address ${body.address}`);
-    probePosts += 1;
-    ipv4Observed = true;
-    await route.fulfill({status: 204});
   });
 
   await sourcePage.goto('http://127.0.0.1:8765/', {waitUntil: 'networkidle'});
@@ -289,14 +295,14 @@ try {
     endpoint: document.querySelector('#endpoint-select')?.value,
     activateDisabled: document.querySelector('#activate-button')?.disabled,
   }));
-  assert(probeAttempts === 2, `IPv4 source probe did not retry exactly once (${probeAttempts} attempts)`);
-  assert(probePosts === 1, `IPv4 source probe was recorded ${probePosts} times`);
-  assert(afterProbe.family === 'ipv4', 'successful IPv4 probe changed the selected family');
-  assert(afterProbe.endpoint === 'ep-wan2-v4', 'successful IPv4 probe changed the selected endpoint');
-  assert(!afterProbe.activateDisabled, 'Activate did not recover after the IPv4 source was recorded');
+  assert(observerAttempts === 2, `IPv4 source observer did not retry exactly once (${observerAttempts} attempts)`);
+  assert(challengeRequests === 2, `IPv4 source observer did not obtain a fresh challenge for retry (${challengeRequests})`);
+  assert(afterProbe.family === 'ipv4', 'successful IPv4 observation changed the selected family');
+  assert(afterProbe.endpoint === 'ep-wan2-v4', 'successful IPv4 observation changed the selected endpoint');
+  assert(!afterProbe.activateDisabled, 'Activate did not recover after the IPv4 source was observed');
   await sourcePage.close();
 
-  console.log(`Browser layout regression passed for ${viewports.length} viewports plus missing-source recovery.`);
+  console.log(`Browser layout regression passed for ${viewports.length} viewports plus verified missing-source recovery.`);
 } finally {
   await browser.close();
 }
