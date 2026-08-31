@@ -2,7 +2,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from server.app.endpoints import build_endpoints, observe_wan_egress, validate_inventory_v2
+from server.app.endpoints import (
+    build_endpoints,
+    is_globally_reachable_unicast,
+    observe_wan_egress,
+    validate_inventory_v2,
+)
 from server.app.gate import queue_activate
 from server.app.store import JsonStore
 
@@ -97,41 +102,43 @@ class EndpointTests(unittest.TestCase):
 
     def test_expired_egress_probe_is_not_an_endpoint(self):
         observe_wan_egress(self.store, "pppoe-WAN", "1.1.1.1", now=100)
-        # Store timestamps are deliberately old compared with wall clock.
         endpoints = build_endpoints(self.store)
         self.assertFalse(any(x.get("provider") == "egress_probe" for x in endpoints))
 
-    def test_link_local_ipv6_stays_in_inventory_but_is_not_an_endpoint(self):
+    def test_non_global_ipv6_never_enters_inventory_or_endpoints(self):
         inventory = dict(self.inventory)
         inventory["wans"] = [dict(x) for x in self.inventory["wans"]]
         inventory["wans"][0]["ipv6"] = [
             "2606:4700:4700::1111",
             "fe80::1234",
+            "fc00::1",
+            "ff02::1",
+            "2001:db8::1",
         ]
 
         normalized = validate_inventory_v2(inventory)
         self.store.write("inventory-v2.json", normalized)
-
-        stored_v6 = normalized["wans"][0]["ipv6"]
-        self.assertTrue(
-            any(x["address"] == "fe80::1234" for x in stored_v6)
-        )
+        stored = {item["address"] for item in normalized["wans"][0]["ipv6"]}
+        self.assertEqual(stored, {"2606:4700:4700::1111"})
 
         endpoints = build_endpoints(self.store)
-        wan_v6 = [
-            x for x in endpoints
-            if x["wan"] == "WAN" and x["family"] == "ipv6"
-        ]
+        wan_v6 = [x for x in endpoints if x["wan"] == "WAN" and x["family"] == "ipv6"]
+        self.assertEqual({x["external_address"] for x in wan_v6}, {"2606:4700:4700::1111"})
+        self.assertTrue(all(x["reachability"] == "direct" for x in wan_v6))
 
-        self.assertTrue(
-            any(x["external_address"] == "2606:4700:4700::1111" for x in wan_v6)
-        )
-        self.assertFalse(
-            any(x["external_address"] == "fe80::1234" for x in wan_v6)
-        )
-        self.assertTrue(
-            all(x["reachability"] == "direct" for x in wan_v6)
-        )
+    def test_global_unicast_policy_rejects_local_and_special_ipv6(self):
+        self.assertTrue(is_globally_reachable_unicast("2606:4700:4700::1111", version=6))
+        for address in ("fe80::1", "fc00::1", "::1", "::", "ff02::1", "2001:db8::1"):
+            self.assertFalse(is_globally_reachable_unicast(address, version=6), address)
+
+    def test_control_ipv6_is_disabled_when_inventory_has_no_global_ipv6(self):
+        inventory = dict(self.inventory)
+        inventory["wans"] = [dict(x) for x in self.inventory["wans"]]
+        for wan in inventory["wans"]:
+            wan["ipv6"] = ["fe80::1234"]
+        normalized = validate_inventory_v2(inventory)
+        self.assertFalse(normalized["capabilities"]["control_ipv6"])
+        self.assertTrue(all(not wan["ipv6"] for wan in normalized["wans"]))
 
     def test_ipv6_activation_uses_exact_source_and_wg_only_scope(self):
         endpoint = [x for x in build_endpoints(self.store) if x["wan"] == "WAN" and x["family"] == "ipv6"][0]

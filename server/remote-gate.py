@@ -8,7 +8,7 @@ from http.server import ThreadingHTTPServer
 from urllib.parse import urlparse
 
 from app.client_sources import observe_candidate, observe_source, source_record_for_family
-from app.endpoints import validate_inventory_v2
+from app.endpoints import is_globally_reachable_unicast, validate_inventory_v2
 from app.gate import GateError, queue_activate, queue_activate_many
 from app.main import Handler as BaseHandler
 from app.main import SETTINGS, STORE
@@ -16,16 +16,6 @@ from app.main import SETTINGS, STORE
 ENDPOINT_RE = re.compile(r"^ep_[a-f0-9]{20}$")
 NAME_RE = re.compile(r"^[A-Za-z0-9_.:@-]{1,64}$")
 DEVICE_RE = re.compile(r"^[A-Za-z0-9_.:@+-]{1,128}$")
-IPV6_GLOBAL_UNICAST = ipaddress.ip_network("2000::/3")
-
-
-def _globally_reachable_unicast(value: object, version: int | None = None) -> bool:
-    try: address = ipaddress.ip_address(str(value or "").strip())
-    except ValueError: return False
-    if version is not None and address.version != version: return False
-    if not address.is_global or address.is_multicast: return False
-    if address.version == 6 and address not in IPV6_GLOBAL_UNICAST: return False
-    return True
 
 
 def _endpoint_id(value: object) -> str:
@@ -41,8 +31,10 @@ def _family(value: object) -> str:
 
 
 def _candidate(value: object, family: str) -> str:
-    address = ipaddress.ip_address(str(value or "").strip()); version = 4 if family == "ipv4" else 6
-    if address.version != version or not _globally_reachable_unicast(address, version): raise ValueError("invalid_candidate")
+    address = ipaddress.ip_address(str(value or "").strip())
+    version = 4 if family == "ipv4" else 6
+    if address.version != version or not is_globally_reachable_unicast(address, version=version):
+        raise ValueError("invalid_candidate")
     return str(address)
 
 
@@ -66,19 +58,7 @@ def _clean_fw_family(value: object, family: str) -> dict:
 
 
 def _sanitize_inventory(data: dict) -> dict:
-    clean = validate_inventory_v2(data)
-    has_global_v6 = False
-    for wan in clean.get("wans", []):
-        values = []
-        for entry in wan.get("ipv6", []):
-            address = entry.get("address") if isinstance(entry, dict) else entry
-            if _globally_reachable_unicast(address, 6):
-                values.append({"address": str(ipaddress.ip_address(address)), "kind": "global"}); has_global_v6 = True
-        wan["ipv6"] = values
-    caps = clean.get("capabilities") if isinstance(clean.get("capabilities"), dict) else {}
-    caps["control_ipv6"] = bool(caps.get("control_ipv6", False) and has_global_v6)
-    clean["capabilities"] = caps
-    return clean
+    return validate_inventory_v2(data)
 
 
 def _sanitize_stored_inventory() -> None:

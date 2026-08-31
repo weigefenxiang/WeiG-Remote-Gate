@@ -9,6 +9,7 @@ from .store import JsonStore
 
 
 WAN_EGRESS_TTL = 10 * 60
+IPV6_GLOBAL_UNICAST = ipaddress.ip_network("2000::/3")
 
 
 def _safe_ip(value: object) -> str | None:
@@ -18,11 +19,25 @@ def _safe_ip(value: object) -> str | None:
         return None
 
 
+def is_globally_reachable_unicast(value: object, *, version: int | None = None) -> bool:
+    try:
+        address = ipaddress.ip_address(str(value or "").strip())
+    except ValueError:
+        return False
+    if version is not None and address.version != version:
+        return False
+    if not address.is_global or address.is_multicast:
+        return False
+    if address.version == 6 and address not in IPV6_GLOBAL_UNICAST:
+        return False
+    return True
+
+
 def _address_kind(value: str) -> str:
     addr = ipaddress.ip_address(value)
     if addr.version == 4:
-        return "public" if addr.is_global else "private"
-    return "global" if addr.is_global else "non_global"
+        return "public" if is_globally_reachable_unicast(addr, version=4) else "private"
+    return "global" if is_globally_reachable_unicast(addr, version=6) else "non_global"
 
 
 def _endpoint_id(parts: list[str]) -> str:
@@ -38,7 +53,7 @@ def observe_wan_egress(
     now: int | None = None,
 ) -> dict[str, Any]:
     address = ipaddress.ip_address(source_ip)
-    if address.version != 4 or not address.is_global:
+    if not is_globally_reachable_unicast(address, version=4):
         raise ValueError("public_ipv4_required")
     current = int(time.time()) if now is None else int(now)
     state = store.read("wan-egress-v4.json", {})
@@ -70,10 +85,7 @@ def wan_egress_for_device(
     if not isinstance(item, dict) or int(item.get("expires_at", 0) or 0) <= current:
         return None
     address = _safe_ip(item.get("address"))
-    if not address:
-        return None
-    parsed = ipaddress.ip_address(address)
-    if parsed.version != 4 or not parsed.is_global:
+    if not address or not is_globally_reachable_unicast(address, version=4):
         return None
     return {
         "address": address,
@@ -88,7 +100,7 @@ def normalize_inventory(store: JsonStore) -> dict[str, Any]:
     if isinstance(state, dict) and int(state.get("schema", 0) or 0) == 2:
         wans = state.get("wans")
         if isinstance(wans, list):
-            return state
+            return validate_inventory_v2(state)
 
     legacy = store.read("current.json", {"schema": 1, "interfaces": {}})
     interfaces = legacy.get("interfaces") if isinstance(legacy, dict) else None
@@ -101,7 +113,10 @@ def normalize_inventory(store: JsonStore) -> dict[str, Any]:
             device = str(item.get("device") or "")
             if not address or not device:
                 continue
-            family = "ipv4" if ipaddress.ip_address(address).version == 4 else "ipv6"
+            parsed = ipaddress.ip_address(address)
+            family = "ipv4" if parsed.version == 4 else "ipv6"
+            if family == "ipv6" and not is_globally_reachable_unicast(parsed, version=6):
+                continue
             record: dict[str, Any] = {
                 "name": str(name),
                 "device": device,
@@ -126,6 +141,7 @@ def validate_inventory_v2(data: object) -> dict[str, Any]:
 
     clean_wans: list[dict[str, Any]] = []
     seen_devices: set[str] = set()
+    has_global_v6 = False
     for raw in raw_wans:
         if not isinstance(raw, dict):
             raise ValueError("invalid_wan")
@@ -158,6 +174,10 @@ def validate_inventory_v2(data: object) -> dict[str, Any]:
                 address = _safe_ip(value)
                 if not address or ipaddress.ip_address(address).version != version:
                     raise ValueError("invalid_address")
+                if family == "ipv6" and not is_globally_reachable_unicast(address, version=6):
+                    continue
+                if family == "ipv6":
+                    has_global_v6 = True
                 clean[family].append({"address": address, "kind": _address_kind(address)})
         clean_wans.append(clean)
 
@@ -169,7 +189,7 @@ def validate_inventory_v2(data: object) -> dict[str, Any]:
         if not isinstance(raw, dict):
             raise ValueError("invalid_natmap")
         external = _safe_ip(raw.get("external_address"))
-        if not external or ipaddress.ip_address(external).version != 4 or not ipaddress.ip_address(external).is_global:
+        if not external or not is_globally_reachable_unicast(external, version=4):
             continue
         try:
             external_port = int(raw.get("external_port", 0))
@@ -200,7 +220,7 @@ def validate_inventory_v2(data: object) -> dict[str, Any]:
             "gate_ipv4": bool(caps.get("gate_ipv4", True)),
             "gate_ipv6": bool(caps.get("gate_ipv6", False)),
             "control_ipv4": bool(caps.get("control_ipv4", True)),
-            "control_ipv6": bool(caps.get("control_ipv6", False)),
+            "control_ipv6": bool(caps.get("control_ipv6", False) and has_global_v6),
             "natmap": bool(caps.get("natmap", bool(clean_natmap))),
         },
     }
@@ -243,7 +263,7 @@ def build_endpoints(store: JsonStore) -> list[dict[str, Any]]:
             if not address:
                 continue
             local_v4.append(address)
-            if ipaddress.ip_address(address).is_global:
+            if is_globally_reachable_unicast(address, version=4):
                 has_direct_v4 = True
 
         egress = None if has_direct_v4 else wan_egress_for_device(store, device)
@@ -251,7 +271,7 @@ def build_endpoints(store: JsonStore) -> list[dict[str, Any]]:
         for wg in wireguards:
             port = int(wg["listen_port"])
             for address in local_v4:
-                direct = ipaddress.ip_address(address).is_global
+                direct = is_globally_reachable_unicast(address, version=4)
                 endpoints.append({
                     "id": _endpoint_id(["native", name, device, "ipv4", address, str(port), wg["name"]]),
                     "wan": name,
@@ -288,9 +308,7 @@ def build_endpoints(store: JsonStore) -> list[dict[str, Any]]:
                 if not isinstance(entry, dict):
                     continue
                 address = _safe_ip(entry.get("address"))
-                if not address:
-                    continue
-                if not ipaddress.ip_address(address).is_global:
+                if not address or not is_globally_reachable_unicast(address, version=6):
                     continue
                 endpoints.append({
                     "id": _endpoint_id(["native", name, device, "ipv6", address, str(port), wg["name"]]),
