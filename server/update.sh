@@ -14,7 +14,6 @@ LIB_DIR="/usr/local/lib/remote-gate"
 SERVICE_FILE="/etc/systemd/system/remote-gate.service"
 SERVICE_NAME="remote-gate.service"
 BACKUP_ROOT="/var/backups/weig-remote-gate"
-CACHE_BUST="${REMOTE_GATE_CACHE_BUST:-$(date +%s)}"
 
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 info() { printf '==> %s\n' "$*"; }
@@ -52,9 +51,10 @@ rollback() {
 trap rollback EXIT INT TERM
 
 fetch_raw() {
-    local rel="$1" out="$2" sep='?'
-    [[ "$RAW_BASE" == *\?* ]] && sep='&'
-    curl -fsSL -H 'Cache-Control: no-cache' "${RAW_BASE}/${rel}${sep}_=${CACHE_BUST}" -o "$out"
+    local rel="$1" out="$2" url="${RAW_BASE}/${rel}"
+    if ! curl -fsSL -H 'Cache-Control: no-cache' "$url" -o "$out"; then
+        fail "Download failed: $url"
+    fi
 }
 
 FILES=(
