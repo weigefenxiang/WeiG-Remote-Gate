@@ -92,24 +92,54 @@ read_route_source() {
     return 1
 }
 
+table_default_device() {
+    local rg_flag="$1" rg_table="$2"
+    ip "$rg_flag" route show table "$rg_table" 2>/dev/null | awk '$1=="default" { for (i=1;i<=NF;i++) if ($i=="dev") { print $(i+1); exit } }'
+}
 existing_table_for_device() {
-    local rg_flag="$1" rg_source="$2" rg_wanted="$3" rg_table rg_route
+    local rg_flag="$1" rg_wanted="$2" rg_table
     for rg_table in $(candidate_tables "$rg_flag" "$rg_wanted"); do
         valid_table "$rg_table" || continue
-        rg_route="$(ip "$rg_flag" route get "$rg_source" table "$rg_table" 2>/dev/null | sed -n '1p')"
-        [ "$(route_dev "$rg_route")" = "$rg_wanted" ] && { printf '%s\n' "$rg_table"; return 0; }
+        [ "$(table_default_device "$rg_flag" "$rg_table")" = "$rg_wanted" ] && { printf '%s\n' "$rg_table"; return 0; }
     done
     return 1
 }
+
+device_global_ipv6_sources() {
+    local rg_wanted="$1"
+    ip -6 addr show dev "$rg_wanted" scope global 2>/dev/null | awk '/inet6 / { sub(/\/.*/, "", $2); print $2 }'
+}
+route_lookup_for_device() {
+    local rg_flag="$1" rg_source="$2" rg_wanted="$3" rg_route rg_local_src
+    if [ "$rg_flag" = -6 ]; then
+        for rg_local_src in $(device_global_ipv6_sources "$rg_wanted"); do
+            rg_route="$(ip -6 route get "$rg_source" from "$rg_local_src" oif "$rg_wanted" 2>/dev/null | sed -n '1p')"
+            [ "$(route_dev "$rg_route")" = "$rg_wanted" ] && { printf '%s\n' "$rg_route"; return 0; }
+        done
+        return 1
+    fi
+    rg_route="$(ip -4 route get "$rg_source" oif "$rg_wanted" 2>/dev/null | sed -n '1p')"
+    [ "$(route_dev "$rg_route")" = "$rg_wanted" ] || return 1
+    printf '%s\n' "$rg_route"
+}
 install_owned_route() {
     local rg_flag="$1" rg_source="$2" rg_target="$3" rg_wanted="$4" rg_table="$5" rg_route rg_gateway rg_local_src
-    rg_route="$(ip "$rg_flag" route get "$rg_source" oif "$rg_wanted" 2>/dev/null | sed -n '1p')"; [ "$(route_dev "$rg_route")" = "$rg_wanted" ] || return 1
+    rg_route="$(route_lookup_for_device "$rg_flag" "$rg_source" "$rg_wanted" 2>/dev/null || true)"; [ "$(route_dev "$rg_route")" = "$rg_wanted" ] || return 1
     rg_gateway="$(printf '%s\n' "$rg_route" | awk '{ for (i=1;i<=NF;i++) if ($i=="via") { print $(i+1); exit } }')"
     rg_local_src="$(printf '%s\n' "$rg_route" | awk '{ for (i=1;i<=NF;i++) if ($i=="src") { print $(i+1); exit } }')"
     if [ -n "$rg_gateway" ] && [ -n "$rg_local_src" ]; then ip "$rg_flag" route add table "$rg_table" "$rg_target" via "$rg_gateway" dev "$rg_wanted" src "$rg_local_src"
     elif [ -n "$rg_gateway" ]; then ip "$rg_flag" route add table "$rg_table" "$rg_target" via "$rg_gateway" dev "$rg_wanted"
     elif [ -n "$rg_local_src" ]; then ip "$rg_flag" route add table "$rg_table" "$rg_target" dev "$rg_wanted" src "$rg_local_src"
     else ip "$rg_flag" route add table "$rg_table" "$rg_target" dev "$rg_wanted"; fi
+}
+
+state_route_valid() {
+    local rg_flag="$1" rg_target="$2" rg_wanted="$3" rg_table="$4" rg_priority="$5" rg_mode="$6" rg_rules rg_routes
+    rg_rules="$(ip "$rg_flag" rule show 2>/dev/null || true)"
+    printf '%s\n' "$rg_rules" | grep -Eq "^${rg_priority}:.*iif lo.*to ${rg_target}.*lookup ${rg_table}([[:space:]]|$)" || return 1
+    if [ "$rg_mode" = existing ]; then [ "$(table_default_device "$rg_flag" "$rg_table")" = "$rg_wanted" ]; return $?; fi
+    rg_routes="$(ip "$rg_flag" route show table "$rg_table" "$rg_target" 2>/dev/null || true)"
+    [ "$(route_dev "$rg_routes")" = "$rg_wanted" ]
 }
 
 return_route_sync_family() {
@@ -121,16 +151,18 @@ return_route_sync_family() {
     case "$rg_family" in ipv4) rg_flag=-4; rg_target="$rg_source/32" ;; ipv6) rg_flag=-6; rg_target="$rg_source/128" ;; esac
     rg_state="$(family_return_state_file "$rg_family")"
 
-    rg_table="$(existing_table_for_device "$rg_flag" "$rg_source" "$rg_device" 2>/dev/null || true)"; rg_mode=existing
+    rg_table="$(existing_table_for_device "$rg_flag" "$rg_device" 2>/dev/null || true)"; rg_mode=existing
     if [ -z "$rg_table" ]; then
-        rg_current="$(ip "$rg_flag" route get "$rg_source" 2>/dev/null | sed -n '1p')"
-        if [ "$(route_dev "$rg_current")" = "$rg_device" ]; then clear_return_route_family "$rg_family"; return 0; fi
+        if [ "$rg_family" = ipv4 ]; then
+            rg_current="$(ip -4 route get "$rg_source" 2>/dev/null | sed -n '1p')"
+            if [ "$(route_dev "$rg_current")" = "$rg_device" ]; then clear_return_route_family "$rg_family"; return 0; fi
+        fi
         rg_table="$(choose_owned_table "$rg_flag")" || { logger -t "$TAG" "no free routing table for $rg_family local WireGuard return path" 2>/dev/null || true; return 1; }; rg_mode=owned
     fi
     rg_signature="$rg_family|$rg_source|$rg_device|$rg_port|$rg_table|$rg_mode|$rg_origin"
     if [ -r "$rg_state" ]; then
-        rg_old_sig="$(sed -n '8p' "$rg_state")"; rg_old_priority="$(sed -n '6p' "$rg_state")"; rg_current="$(ip "$rg_flag" route get "$rg_source" iif lo 2>/dev/null | sed -n '1p')"
-        if [ "$rg_old_sig" = "$rg_signature" ] && valid_uint "$rg_old_priority" && [ "$(route_dev "$rg_current")" = "$rg_device" ]; then return 0; fi
+        rg_old_sig="$(sed -n '8p' "$rg_state")"; rg_old_priority="$(sed -n '6p' "$rg_state")"
+        if [ "$rg_old_sig" = "$rg_signature" ] && valid_uint "$rg_old_priority" && state_route_valid "$rg_flag" "$rg_target" "$rg_device" "$rg_table" "$rg_old_priority" "$rg_mode"; then return 0; fi
         clear_return_route_family "$rg_family"
     fi
     rg_priority="$(choose_priority "$rg_flag")" || return 1; mkdir -p "$STATE_DIR"
