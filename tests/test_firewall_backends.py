@@ -51,40 +51,64 @@ class FirewallBackendTests(unittest.TestCase):
         self.assertNotIn("MASQUERADE", source)
         self.assertIn("INPUT", source)
 
-    def test_candidate_and_discovery_windows_are_wireguard_udp_only(self):
+    def test_wireguard_verification_is_diagnostic_not_activation_gate(self):
         backends = BACKENDS.read_text(encoding="utf-8")
         verify = VERIFY.read_text(encoding="utf-8")
         firewall = FIREWALL.read_text(encoding="utf-8")
         agent = AGENT.read_text(encoding="utf-8")
+        activate_block = verify.split("activate() {", 1)[1].split("verify_open() {", 1)[0]
+
         self.assertIn("verification window", backends)
-        self.assertIn("udp dport", backends)
-        self.assertNotIn("authorized IPv4 ICMP", backends.split("IPv4 verification window", 1)[0])
-        self.assertIn("VERIFY_CANDIDATE_SECONDS", firewall)
-        self.assertIn("VERIFY_DISCOVERY_SECONDS", firewall)
-        self.assertIn("verify_open any", verify)
-        self.assertIn("multiple peers became active", verify)
+        self.assertIn("verify_wireguard_source", verify)
+        self.assertIn("verify-wireguard", firewall)
+        self.assertNotIn("verify_wireguard_source", activate_block)
+        self.assertIn("auth_record_file", activate_block)
+        self.assertIn("authorization profile conflict", activate_block)
         self.assertIn('REMOTE_GATE_VERIFY_CANDIDATE_SECONDS="${REMOTE_GATE_VERIFY_CANDIDATE_SECONDS:-10}"', agent)
         self.assertIn('REMOTE_GATE_VERIFY_DISCOVERY_SECONDS="${REMOTE_GATE_VERIFY_DISCOVERY_SECONDS:-30}"', agent)
-        self.assertIn("export REMOTE_GATE_VERIFY_CANDIDATE_SECONDS REMOTE_GATE_VERIFY_DISCOVERY_SECONDS", agent)
 
     def test_agent_returns_specific_firewall_failure_detail(self):
         source = AGENT.read_text(encoding="utf-8")
         self.assertIn('error_file="${TMP_BASE}.firewall-error"', source)
-        self.assertIn("2>\"$error_file\"", source)
+        self.assertIn('2>"$error_file"', source)
         self.assertIn("sed -n 's/^ERROR: //p'", source)
         self.assertIn('logger -t "$TAG" "activation failed: $detail"', source)
         self.assertIn('ack "$id" false "$detail"', source)
         self.assertNotIn('ack "$id" false "firewall-activation-failed"', source)
         self.assertIn("sanitize_detail", source)
 
-    def test_final_authorization_is_wireguard_verified_and_family_independent(self):
-        source = VERIFY.read_text(encoding="utf-8")
+    def test_web_authorization_preserves_source_confidence(self):
+        source = AGENT.read_text(encoding="utf-8")
+        verify = VERIFY.read_text(encoding="utf-8")
+        self.assertIn("source_confidence", source)
+        self.assertIn("web_verified", source)
+        self.assertIn("web_observed", source)
+        self.assertIn("web_candidate", source)
+        self.assertIn("valid_source_kind", FIREWALL.read_text(encoding="utf-8"))
+        self.assertIn("web authorization active", verify)
+
+    def test_authorization_state_supports_multiple_sources_per_family(self):
         firewall = FIREWALL.read_text(encoding="utf-8")
-        self.assertIn("verify_wireguard_source", source)
-        self.assertIn('rg_kind="wireguard_verified"', source)
-        self.assertIn("AUTH_FILE_V4", firewall)
-        self.assertIn("AUTH_FILE_V6", firewall)
+        backends = BACKENDS.read_text(encoding="utf-8")
+        verify = VERIFY.read_text(encoding="utf-8")
+        self.assertIn("AUTH_DIR_V4", firewall)
+        self.assertIn("AUTH_DIR_V6", firewall)
+        self.assertIn("authorization-ipv4.d", firewall)
+        self.assertIn("authorization-ipv6.d", firewall)
+        self.assertIn("read_auth_records", backends)
+        self.assertIn("authorized_sources", verify)
+        self.assertIn("authorizations", verify)
+        self.assertIn("source_count", verify)
         self.assertIn('clear_auth "${2:-all}"', firewall)
+
+    def test_concurrent_sources_share_one_safe_family_profile(self):
+        source = VERIFY.read_text(encoding="utf-8")
+        backends = BACKENDS.read_text(encoding="utf-8")
+        self.assertIn("authorization profile conflict", source)
+        self.assertIn("concurrent authorization profile differed", backends)
+        self.assertIn('rg_existing_dev="$2"', source)
+        self.assertIn('rg_existing_port="$3"', source)
+        self.assertIn('rg_existing_scope="${rg_existing_meta%%:*}"', source)
 
     def test_no_wan2_or_51820_hardcoding_in_new_firewall_modules(self):
         source = "\n".join(path.read_text(encoding="utf-8") for path in (FIREWALL, BACKENDS, VERIFY))

@@ -133,25 +133,37 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("white-space: nowrap", css)
         self.assertIn(".family-segment button", css)
 
-    def test_gate_transaction_lock_waits_for_agent_ack_and_shows_feedback(self):
+    def test_gate_transaction_lock_is_real_and_server_terminal_owned(self):
         gate = GATE.read_text(encoding="utf-8")
         self.assertIn("transactionLocked", gate)
         self.assertIn("transactionGuard", gate)
-        self.assertIn("remote", gate.lower())
-        self.assertIn("last.state === 'failed'", gate)
-        self.assertIn("last.state", gate)
-        self.assertIn("65000", gate)
+        self.assertIn("form.inert = Boolean(locked)", gate)
+        self.assertIn("control.disabled = true;", gate)
+        self.assertIn("orb.disabled = locked ||", gate)
+        self.assertIn("['done', 'failed', 'expired']", gate)
+        self.assertNotIn("65000", gate)
         self.assertIn("setInterval(() => window.RemoteGateApp?.refresh?.(), 1000)", gate)
         self.assertIn("RemoteGateFeedback", gate)
-        self.assertIn("正在验证 WireGuard", gate)
-        self.assertIn("正在关闭访问", gate)
+        self.assertIn("正在激活远程访问", gate)
+        self.assertIn("正在关闭远程访问", gate)
+        self.assertNotIn("正在验证 WireGuard", gate)
+
+    def test_gate_open_state_is_scoped_to_current_browser_source(self):
+        gate = GATE.read_text(encoding="utf-8")
+        server = SERVER.read_text(encoding="utf-8")
+        self.assertIn("authorized_sources", gate)
+        self.assertIn("authorizations", gate)
+        self.assertIn("authorizationForSource", gate)
+        self.assertIn("sourceExpiresIn", gate)
+        self.assertIn('"authorized_sources"', server)
+        self.assertIn('"authorizations"', server)
+        self.assertIn('"source_count"', server)
 
     def test_candidate_and_http_observed_sources_remain_visibly_distinct(self):
         app = APP.read_text(encoding="utf-8")
         self.assertIn("Carrier candidate", app)
         self.assertIn("Cloudflare HTTP observed", app)
         self.assertIn("hints only", app)
-        self.assertIn("fresh authenticated WireGuard peer activity", app)
         self.assertIn("remote-gate-client-source-diagnostics", app)
         self.assertIn("remote-gate-client-source-updated", app)
 

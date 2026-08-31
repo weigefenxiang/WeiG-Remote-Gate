@@ -54,8 +54,8 @@
   function lockAction(currentData = data()) { return transaction?.action || pendingCommand(currentData)?.action || ''; }
   function lockMessage(currentData = data()) {
     const action = lockAction(currentData);
-    if (action === 'close') return zh() ? '正在关闭访问，请等待当前操作完成。' : 'Closing access. Please wait for the current operation to finish.';
-    return zh() ? '正在验证 WireGuard，请等待当前授权完成。' : 'Verifying WireGuard. Please wait for the current authorization to finish.';
+    if (action === 'close') return zh() ? '正在关闭远程访问，请等待操作完成。' : 'Closing remote access. Please wait for the operation to finish.';
+    return zh() ? '正在激活远程访问，请等待 OpenWrt 应用授权。' : 'Activating remote access. Waiting for OpenWrt to apply the authorization.';
   }
   function startTransactionPoll() {
     if (transactionPoll) return;
@@ -74,7 +74,9 @@
     if (!transaction || !last) return false;
     if (transaction.batchId && last.batch_id === transaction.batchId) return true;
     if (transaction.commandId && last.id === transaction.commandId) return true;
-    return !transaction.commandId && !transaction.batchId && last.action === transaction.action;
+    const createdAt = Number(last.created_at || 0);
+    const localStartedAt = Math.floor(Number(transaction.startedAt || 0) / 1000);
+    return !transaction.commandId && !transaction.batchId && last.action === transaction.action && createdAt >= localStartedAt - 2;
   }
   function syncTransaction(currentData) {
     const queue = currentData?.gate?.queue || {};
@@ -85,7 +87,7 @@
         action: String(pending.action || 'activate'),
         commandId: String(pending.id || ''),
         batchId: String(pending.batch_id || ''),
-        startedAt: Date.now(),
+        startedAt: Number(pending.created_at || 0) * 1000 || Date.now(),
         serverOwned: true
       };
       startTransactionPoll();
@@ -94,18 +96,21 @@
     startTransactionPoll();
     if (pending) return true;
 
-    if (transactionMatches(last) && ['done', 'failed'].includes(String(last.state || ''))) {
-      if (last.state === 'failed') {
-        notify(String(last.detail || (zh() ? '授权失败' : 'Authorization failed')), 'error', {title: zh() ? '操作失败' : 'Action failed', duration: 5200});
+    if (transactionMatches(last) && ['done', 'failed', 'expired'].includes(String(last.state || ''))) {
+      const terminal = String(last.state || '');
+      if (terminal === 'failed' || terminal === 'expired') {
+        const fallback = terminal === 'expired'
+          ? (zh() ? '激活请求已过期。' : 'The remote access request expired.')
+          : (zh() ? '远程访问操作失败。' : 'The remote access operation failed.');
+        notify(String(last.detail || fallback), 'error', {title: zh() ? '操作失败' : 'Action failed', duration: 5200});
       } else {
         const closing = transaction.action === 'close';
-        notify(closing ? (zh() ? '远程访问已关闭。' : 'Remote access is closed.') : (zh() ? 'WireGuard 授权已生效。' : 'WireGuard authorization is active.'), 'success', {title: closing ? (zh() ? '已关闭' : 'Closed') : (zh() ? '授权成功' : 'Authorized')});
+        notify(
+          closing ? (zh() ? '远程访问已关闭。' : 'Remote access is closed.') : (zh() ? '远程访问已开启。' : 'Remote access is active.'),
+          'success',
+          {title: closing ? (zh() ? '已关闭' : 'Closed') : (zh() ? '激活成功' : 'Activated')}
+        );
       }
-      clearTransaction();
-      return false;
-    }
-    if (Date.now() - transaction.startedAt > 65000) {
-      notify(zh() ? '操作状态确认超时，界面已恢复；后台状态仍会继续刷新。' : 'Operation status confirmation timed out. Controls are available again while background status refresh continues.', 'warning', {duration: 5200});
       clearTransaction();
       return false;
     }
@@ -160,10 +165,66 @@
       button.classList.toggle('active', active); button.setAttribute('aria-pressed', active ? 'true' : 'false');
     });
   }
+  function authorizationForSource(fw, family) {
+    const item = fw?.families?.[family] || {};
+    const source = sourceFor(family);
+    const entries = Array.isArray(item.authorizations) ? item.authorizations : null;
+    if (!entries || !source) return null;
+    return entries.find((entry) => entry?.source_ip === source) || null;
+  }
+  function sourceAuthorized(fw, family) {
+    const item = fw?.families?.[family] || {};
+    const source = sourceFor(family);
+    const authorized = Array.isArray(item.authorized_sources) ? item.authorized_sources : null;
+    if (authorized) return Boolean(source && authorized.includes(source));
+    const legacySource = String(item.source_ip || (fw?.family === family ? fw?.source_ip || '' : ''));
+    return Boolean(source && (item.active || (fw?.active && fw?.family === family)) && legacySource === source);
+  }
+  function sourceExpiresIn(fw, family) {
+    const entry = authorizationForSource(fw, family);
+    if (entry) return Number(entry.expires_in || 0);
+    return Number(fw?.families?.[family]?.expires_in || 0);
+  }
   function activeFamilyState(fw, family) {
-    const families = fw?.families || {};
-    if (family === 'dual') return Boolean(families?.ipv4?.active || families?.ipv6?.active || fw?.active);
-    return Boolean(families?.[family]?.active || (fw?.active && fw?.family === family));
+    if (family === 'dual') return sourceAuthorized(fw, 'ipv4') && sourceAuthorized(fw, 'ipv6');
+    return sourceAuthorized(fw, family);
+  }
+  function setLockedControls(locked, action, active, activatable) {
+    const form = document.querySelector('.gate-form');
+    if (form) {
+      form.classList.toggle('transaction-locked', locked);
+      form.inert = Boolean(locked);
+      form.querySelectorAll('button, select, input').forEach((control) => {
+        if (locked) {
+          if (!Object.prototype.hasOwnProperty.call(control.dataset, 'transactionWasDisabled')) {
+            control.dataset.transactionWasDisabled = control.disabled ? '1' : '0';
+          }
+          control.disabled = true;
+        } else if (Object.prototype.hasOwnProperty.call(control.dataset, 'transactionWasDisabled')) {
+          control.disabled = control.dataset.transactionWasDisabled === '1';
+          delete control.dataset.transactionWasDisabled;
+        }
+      });
+    }
+    const orb = $('gate-orb');
+    if (orb && locked) orb.disabled = true;
+
+    const activateButton = $('activate-button');
+    const closeButton = $('close-button');
+    if (activateButton) {
+      const showActivate = locked ? action === 'activate' : !active;
+      activateButton.classList.toggle('hidden', !showActivate);
+      activateButton.disabled = locked || !activatable;
+      activateButton.classList.toggle('transaction-locked', locked && action === 'activate');
+      activateButton.setAttribute('aria-disabled', activateButton.disabled ? 'true' : 'false');
+    }
+    if (closeButton) {
+      const showClose = locked ? action === 'close' : active;
+      closeButton.classList.toggle('hidden', !showClose);
+      closeButton.disabled = locked || Boolean(context?.state?.busy);
+      closeButton.classList.toggle('transaction-locked', locked && action === 'close');
+      closeButton.setAttribute('aria-disabled', closeButton.disabled ? 'true' : 'false');
+    }
   }
   function render(currentData = data()) {
     if (!context) return;
@@ -171,34 +232,59 @@
     syncFamily(); syncScope();
     const locked = syncTransaction(currentData);
     const pending = currentData?.gate?.queue?.pending, next = currentData?.gate?.queue?.next, last = currentData?.gate?.queue?.last;
-    const fw = currentData?.agent?.firewall || {}, active = activeFamilyState(fw, state.family) || Boolean(fw.active), pendingAction = pending?.action, orb = $('gate-orb');
+    const fw = currentData?.agent?.firewall || {}, active = activeFamilyState(fw, state.family), pendingAction = pending?.action, orb = $('gate-orb');
     let mode='closed', title=t('gate.closed'), subtitle=t('gate.closedSub'), badge=t('gate.closedBadge');
     if (pendingAction === 'activate' || (locked && lockAction(currentData) === 'activate')) {
       mode='authorizing'; title=t('gate.authorizing');
       const queued = Array.isArray(next) ? next.length : 0;
-      subtitle = queued > 0 ? (zh() ? `正在验证 ${String(pending?.family||'').toUpperCase()}，随后继续下一协议族…` : `Verifying ${String(pending?.family||'').toUpperCase()}, then continuing with the next family…`) : t('gate.waitingAgent');
+      subtitle = queued > 0
+        ? (zh() ? `正在授权 ${String(pending?.family||'').toUpperCase()}，随后继续下一协议族…` : `Authorizing ${String(pending?.family||'').toUpperCase()}, then continuing with the next family…`)
+        : (zh() ? '正在等待 OpenWrt 应用临时授权…' : 'Waiting for OpenWrt to apply the temporary authorization…');
       badge=t('gate.pendingBadge');
-    } else if (pendingAction === 'close' || (locked && lockAction(currentData) === 'close')) { mode='authorizing'; title=t('gate.closing'); subtitle=t('gate.waitingAgent'); badge=t('gate.pendingBadge'); }
-    else if (active) {
+    } else if (pendingAction === 'close' || (locked && lockAction(currentData) === 'close')) {
+      mode='authorizing'; title=t('gate.closing');
+      subtitle=zh() ? '正在等待 OpenWrt 清除临时授权…' : 'Waiting for OpenWrt to clear temporary authorizations…';
+      badge=t('gate.pendingBadge');
+    } else if (active) {
       mode='open'; title=t('gate.open');
-      const fam=fw?.families||{}, values=[fam?.ipv4?.expires_in,fam?.ipv6?.expires_in].map(Number).filter((x)=>x>0), ttl=values.length?Math.min(...values):Number(fw.expires_in||0);
+      const selected = state.family === 'dual'
+        ? [sourceExpiresIn(fw, 'ipv4'), sourceExpiresIn(fw, 'ipv6')]
+        : [sourceExpiresIn(fw, state.family)];
+      const values=selected.map(Number).filter((x)=>x>0), ttl=values.length?Math.min(...values):Number(fw.expires_in||0);
       subtitle=t('gate.expiresIn',{value:remaining(ttl)}); badge=t('gate.authorizedBadge');
-    } else if (last?.state === 'failed') { mode='error'; title=t('gate.error'); subtitle=last.detail||t('gate.agentFailed'); badge=t('gate.errorBadge'); }
+    } else if (last?.state === 'failed' || last?.state === 'expired') {
+      mode='error'; title=t('gate.error');
+      subtitle=last.detail || (last.state === 'expired' ? (zh() ? '请求已过期。' : 'The request expired.') : t('gate.agentFailed'));
+      badge=t('gate.errorBadge');
+    }
     const activatable=canActivate();
+    const action=lockAction(currentData);
     if (orb) {
       orb.dataset.state=mode; orb.dataset.hint=t('gate.activate');
-      orb.disabled = locked ? false : (mode!=='closed'||!activatable);
+      orb.disabled = locked || mode!=='closed' || !activatable;
       orb.classList.toggle('transaction-locked', locked);
-      orb.setAttribute('aria-disabled', locked || orb.disabled ? 'true':'false');
+      orb.setAttribute('aria-disabled', orb.disabled ? 'true':'false');
       orb.setAttribute('aria-label', locked ? lockMessage(currentData) : (activatable?t('gate.activate'):familyReason(state.family)));
       orb.title=locked ? lockMessage(currentData) : (activatable?t('gate.activate'):familyReason(state.family));
     }
-    if ($('gate-state')) $('gate-state').textContent=title; if ($('gate-substate')) $('gate-substate').textContent=subtitle; if ($('gate-state-badge')) $('gate-state-badge').textContent=badge; if ($('gate-lock')) $('gate-lock').textContent=active?'◇':'◆';
-    const form=document.querySelector('.gate-form'); form?.classList.toggle('transaction-locked',locked);
-    $('activate-button')?.classList.toggle('hidden',active && !locked);
-    $('close-button')?.classList.toggle('hidden',!active || locked && lockAction(currentData)!=='close');
-    if ($('activate-button')) { $('activate-button').disabled=locked?false:!activatable; $('activate-button').classList.toggle('transaction-locked',locked); $('activate-button').setAttribute('aria-disabled',locked||!activatable?'true':'false'); }
-    if ($('close-button')) { $('close-button').disabled=locked?false:state.busy; $('close-button').classList.toggle('transaction-locked',locked); $('close-button').setAttribute('aria-disabled',locked||state.busy?'true':'false'); }
+    if ($('gate-state')) $('gate-state').textContent=title;
+    if ($('gate-substate')) $('gate-substate').textContent=subtitle;
+    if ($('gate-state-badge')) $('gate-state-badge').textContent=badge;
+    if ($('gate-lock')) $('gate-lock').textContent=active?'◇':'◆';
+    const trustNote=document.querySelector('.trust-note');
+    if (trustNote) trustNote.textContent=zh()
+      ? 'Cloudflare HTTP 观察和运营商 Candidate 是当前登录 Session 的来源依据；点击 Activate 后由 VPS 解析所选协议族，OpenWrt 直接应用临时授权，不要求 WireGuard 预先握手。'
+      : 'Cloudflare HTTP observations and carrier candidates are source evidence for the signed-in session. Activate resolves the selected family server-side and OpenWrt applies the temporary authorization without requiring a pre-existing WireGuard handshake.';
+    const authorizationSource=$('authorization-source');
+    if (authorizationSource) {
+      if (state.family === 'dual') {
+        const values=['ipv4','ipv6'].filter((family)=>sourceAuthorized(fw,family)).map((family)=>sourceFor(family)).filter(Boolean);
+        authorizationSource.textContent=values.length?values.join(' · '):(sourceFor('ipv4')||sourceFor('ipv6')||t('common.unavailable'));
+      } else {
+        authorizationSource.textContent=sourceFor(state.family)||t('common.unavailable');
+      }
+    }
+    setLockedControls(locked, action, active, activatable);
   }
 
   async function submit(path, body, action) {
@@ -220,7 +306,13 @@
       if (!response.ok) throw new Error(String(payload?.error || `HTTP ${response.status}`));
       transaction.commandId = String(payload?.command_id || '');
       transaction.batchId = String(payload?.batch_id || '');
-      notify(action === 'close' ? (zh() ? '关闭请求已提交，正在等待 OpenWrt 确认。' : 'Close request submitted; waiting for OpenWrt confirmation.') : (zh() ? '授权请求已提交，正在验证 WireGuard。' : 'Authorization submitted; verifying WireGuard.'), 'info', {title: zh() ? '处理中' : 'In progress'});
+      notify(
+        action === 'close'
+          ? (zh() ? '关闭请求已提交，正在等待 OpenWrt 确认。' : 'Close request submitted; waiting for OpenWrt confirmation.')
+          : (zh() ? '激活请求已提交，正在等待 OpenWrt 应用授权。' : 'Activation submitted; waiting for OpenWrt to apply the authorization.'),
+        'info',
+        {title: zh() ? '处理中' : 'In progress'}
+      );
       window.RemoteGateApp?.refresh?.();
     } catch (error) {
       notify(String(error?.message || error || 'request failed'), 'error', {title: zh() ? '请求失败' : 'Request failed', duration: 5200});
@@ -262,7 +354,12 @@
     $('ttl-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-ttl]'); if(!button||transactionLocked())return; state.ttl=Number(button.dataset.ttl); $('ttl-segment').querySelectorAll('button').forEach((item)=>{item.classList.toggle('active',item===button);item.setAttribute('aria-pressed',item===button?'true':'false');});});
     $('family-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-family]'); if(!button||transactionLocked()||button.disabled||!['ipv4','ipv6','dual'].includes(button.dataset.family))return; state.familyManual=true;state.family=button.dataset.family;context.onFamilyChange?.(state.family);render();});
     $('scope-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-scope]');if(!button||transactionLocked()||!['wg','wg_ping'].includes(button.dataset.scope))return;state.scope=button.dataset.scope;syncScope();});
-    endpointSelect()?.addEventListener('change',()=>{if(!transactionLocked())render();}); $('wg-select')?.addEventListener('change',()=>{if(transactionLocked())return;context.onWireGuardChange?.();syncFamily();render();}); $('activate-button')?.addEventListener('click',activate); $('gate-orb')?.addEventListener('click',activate); $('close-button')?.addEventListener('click',closeAccess); window.addEventListener('remote-gate-language',()=>render());
+    endpointSelect()?.addEventListener('change',()=>{if(!transactionLocked())render();});
+    $('wg-select')?.addEventListener('change',()=>{if(transactionLocked())return;context.onWireGuardChange?.();syncFamily();render();});
+    $('activate-button')?.addEventListener('click',activate);
+    $('gate-orb')?.addEventListener('click',activate);
+    $('close-button')?.addEventListener('click',closeAccess);
+    window.addEventListener('remote-gate-language',()=>render());
   }
   window.RemoteGateGateControls={bind,render,canActivate,activate,familyAvailable,familySelectable,transactionLocked};
 })();

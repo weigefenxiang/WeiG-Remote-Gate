@@ -114,25 +114,28 @@ verify_wireguard_source() {
 }
 
 activate() {
-    local rg_source="$1" rg_family="$2" rg_scope="$3" rg_device="$4" rg_port="$5" rg_ttl="$6" rg_kind="${7:-wireguard_verified}" rg_device_file rg_now rg_expires rg_file
-    valid_family "$rg_family" || fail "invalid IP family"; valid_scope "$rg_scope" || fail "invalid access scope"
+    local rg_source="$1" rg_family="$2" rg_scope="$3" rg_device="$4" rg_port="$5" rg_ttl="$6" rg_kind="${7:-web_verified}" rg_device_file rg_now rg_expires rg_file rg_existing rg_existing_dev rg_existing_port rg_existing_meta rg_existing_scope
+    ensure_state
+    valid_family "$rg_family" || fail "invalid IP family"; valid_scope "$rg_scope" || fail "invalid access scope"; valid_source_kind "$rg_kind" || fail "invalid source kind"
     if [ "$rg_family" = ipv4 ]; then valid_ipv4 "$rg_source" || fail "invalid IPv4"; else valid_ipv6 "$rg_source" || fail "invalid IPv6"; [ "$(backend 2>/dev/null || true)" != fw3-iptables ] || fw3_ipv6_capable || fail "IPv6 Gate unavailable"; fi
     valid_device "$rg_device" || fail "invalid WAN device"; valid_uint "$rg_port" || fail "invalid UDP port"; valid_ttl "$rg_ttl" || fail "TTL must be 1m/5m/15m/30m or 30m steps up to 12h"
     [ "$rg_port" -ge 1 ] && [ "$rg_port" -le 65535 ] || fail "UDP port out of range"
     ip link show "$rg_device" >/dev/null 2>&1 || fail "WAN device does not exist: $rg_device"
     rg_device_file="$(family_device_file "$rg_family")"; grep -Fqx "$rg_device" "$rg_device_file" 2>/dev/null || fail "WAN device is not in the protected $rg_family policy: $rg_device"; grep -Fqx "$rg_port" "$PORTS_FILE" 2>/dev/null || fail "UDP port is not a discovered WireGuard listen port: $rg_port"
-    local rg_verified rg_verify_rc
-    if rg_verified="$(verify_wireguard_source "$rg_source" "$rg_family" "$rg_device" "$rg_port")"; then rg_verify_rc=0; else rg_verify_rc=$?; fi
-    case "$rg_verify_rc" in
-        0) [ -n "$rg_verified" ] || fail "WireGuard source verification returned no address" ;;
-        3) fail "WireGuard source verification ambiguous: multiple peers became active" ;;
-        4) fail "WireGuard source verification unavailable for UDP/$rg_port" ;;
-        *) fail "WireGuard source verification timed out" ;;
-    esac
-    rg_source="$rg_verified"; rg_kind="wireguard_verified"
-    rg_now="$(date +%s)"; rg_expires="$((rg_now + rg_ttl))"; rg_file="$(family_auth_file "$rg_family")"
+
+    reconcile_family "$rg_family"
+    rg_existing="$(read_auth_record "$rg_family" 2>/dev/null || true)"
+    if [ -n "$rg_existing" ]; then
+        set -- $rg_existing
+        rg_existing_dev="$2"; rg_existing_port="$3"; rg_existing_meta="$6"; rg_existing_scope="${rg_existing_meta%%:*}"
+        [ "$rg_existing_dev" = "$rg_device" ] && [ "$rg_existing_port" = "$rg_port" ] && [ "$rg_existing_scope" = "$rg_scope" ] || fail "authorization profile conflict; close existing access before switching WAN, port, or scope"
+    fi
+
+    rg_now="$(date +%s)"; rg_expires="$((rg_now + rg_ttl))"; rg_file="$(auth_record_file "$rg_family" "$rg_source")"
     { printf '%s\n' "$rg_source"; printf '%s\n' "$rg_device"; printf '%s\n' "$rg_port"; printf '%s\n' "$rg_expires"; printf '%s\n' "$rg_family"; printf '%s\n' "$rg_scope"; printf '%s\n' "$rg_kind"; } > "$rg_file"
-    chmod 600 "$rg_file"; restore_rules; logger -t "$TAG" "verified $rg_family/$rg_scope authorization active on $rg_device UDP/$rg_port for $rg_source (${rg_ttl}s)" 2>/dev/null || true
+    chmod 600 "$rg_file"
+    restore_rules
+    logger -t "$TAG" "$rg_family/$rg_scope web authorization active on $rg_device UDP/$rg_port for $rg_source (${rg_ttl}s, $rg_kind)" 2>/dev/null || true
 }
 
 verify_open() {
@@ -148,28 +151,61 @@ verify_open() {
 verify_clear() { local rg_family="$1" rg_file; valid_family "$rg_family" || fail "invalid verification family"; rg_file="$(family_verify_file "$rg_family")"; rm -f "$rg_file"; restore_rules; }
 
 clear_auth() {
-    local rg_family="${1:-all}" rg_b
-    case "$rg_family" in ipv4|ipv6) rm -f "$(family_auth_file "$rg_family")" ;; all|'') rm -f "$AUTH_FILE_V4" "$AUTH_FILE_V6" ;; *) fail "invalid clear family" ;; esac
+    local rg_family="${1:-all}" rg_b rg_dir
+    case "$rg_family" in
+        ipv4|ipv6) rg_dir="$(family_auth_dir "$rg_family")"; rm -f "$rg_dir"/* "$(family_auth_file "$rg_family")" 2>/dev/null || true ;;
+        all|'') rm -f "$AUTH_DIR_V4"/* "$AUTH_DIR_V6"/* "$AUTH_FILE_V4" "$AUTH_FILE_V6" 2>/dev/null || true ;;
+        *) fail "invalid clear family" ;;
+    esac
     rg_b="$(backend 2>/dev/null || true)"; case "$rg_b" in fw3-iptables) fw3_rebuild ;; fw4-nftables) fw4_restore_sets ;; esac
     logger -t "$TAG" "temporary authorization cleared ($rg_family)" 2>/dev/null || true
 }
 
 ready_state() { local rg_b; rg_b="$(backend 2>/dev/null || true)"; case "$rg_b" in fw3-iptables) fw3_verify >/dev/null 2>&1 ;; fw4-nftables) nft list set inet fw4 weig_remote_gate_protected_ifname_v4 >/dev/null 2>&1 && fw4_check_order >/dev/null 2>&1 ;; *) return 1 ;; esac; }
 
+kernel_auth_active() {
+    local rg_b="$1" rg_family="$2" rg_ip="$3"
+    case "$rg_b:$rg_family" in
+        fw3-iptables:ipv4) ipset test "$FW3_AUTH_SET_V4" "$rg_ip" >/dev/null 2>&1 ;;
+        fw3-iptables:ipv6) ipset test "$FW3_AUTH_SET_V6" "$rg_ip" >/dev/null 2>&1 ;;
+        fw4-nftables:ipv4) nft list set inet fw4 weig_remote_gate_auth_ipv4 2>/dev/null | grep -Fq "$rg_ip" ;;
+        fw4-nftables:ipv6) nft list set inet fw4 weig_remote_gate_auth_ipv6 2>/dev/null | grep -Fq "$rg_ip" ;;
+        *) return 1 ;;
+    esac
+}
+
 family_status_json() {
-    local rg_family="$1" rg_b="$2" rg_record rg_ip rg_dev rg_port rg_expires rg_remaining rg_meta rg_scope rg_kind rg_active=false rg_file
-    rg_record="$(read_auth_record "$rg_family" 2>/dev/null || true)"
-    if [ -n "$rg_record" ]; then
-        set -- $rg_record; rg_ip="$1"; rg_dev="$2"; rg_port="$3"; rg_expires="$4"; rg_remaining="$5"; rg_meta="$6"; rg_scope="${rg_meta%%:*}"; rg_kind="${rg_meta#*:}"
-        case "$rg_b:$rg_family" in fw3-iptables:ipv4) ipset test "$FW3_AUTH_SET_V4" "$rg_ip" >/dev/null 2>&1 && rg_active=true ;; fw3-iptables:ipv6) ipset test "$FW3_AUTH_SET_V6" "$rg_ip" >/dev/null 2>&1 && rg_active=true ;; fw4-nftables:ipv4) nft list set inet fw4 weig_remote_gate_auth_ipv4 2>/dev/null | grep -Fq "$rg_ip" && rg_active=true ;; fw4-nftables:ipv6) nft list set inet fw4 weig_remote_gate_auth_ipv6 2>/dev/null | grep -Fq "$rg_ip" && rg_active=true ;; esac
-        if [ "$rg_active" != true ]; then rg_file="$(family_auth_file "$rg_family")"; rm -f "$rg_file"; rg_ip=""; rg_dev=""; rg_port=0; rg_remaining=0; rg_scope=""; rg_kind=""; fi
-    else rg_ip=""; rg_dev=""; rg_port=0; rg_remaining=0; rg_scope=""; rg_kind=""; fi
-    printf '{"active":%s,"family":"%s","scope":"%s","source_ip":"%s","source_kind":"%s","device":"%s","wg_port":%s,"expires_in":%s}' "$rg_active" "$rg_family" "$rg_scope" "$rg_ip" "$rg_kind" "$rg_dev" "$rg_port" "$rg_remaining"
+    local rg_family="$1" rg_b="$2" rg_records rg_record rg_ip rg_dev rg_port rg_expires rg_remaining rg_meta rg_scope rg_kind rg_active=false rg_count=0 rg_sources="" rg_entries="" rg_first_ip="" rg_first_dev="" rg_first_port=0 rg_first_scope="" rg_first_kind="" rg_min=0 rg_file
+    reconcile_family "$rg_family"
+    rg_records="$(read_auth_records "$rg_family" 2>/dev/null || true)"
+    if [ -n "$rg_records" ]; then
+        while IFS= read -r rg_record; do
+            [ -n "$rg_record" ] || continue
+            set -- $rg_record; rg_ip="$1"; rg_dev="$2"; rg_port="$3"; rg_expires="$4"; rg_remaining="$5"; rg_meta="$6"; rg_scope="${rg_meta%%:*}"; rg_kind="${rg_meta#*:}"
+            if ! kernel_auth_active "$rg_b" "$rg_family" "$rg_ip"; then
+                rg_file="$(auth_record_file "$rg_family" "$rg_ip")"; rm -f "$rg_file"
+                continue
+            fi
+            rg_active=true; rg_count=$((rg_count + 1))
+            [ -n "$rg_sources" ] && rg_sources="$rg_sources,"
+            rg_sources="${rg_sources}\"${rg_ip}\""
+            [ -n "$rg_entries" ] && rg_entries="$rg_entries,"
+            rg_entries="${rg_entries}{\"source_ip\":\"${rg_ip}\",\"source_kind\":\"${rg_kind}\",\"expires_in\":${rg_remaining}}"
+            if [ -z "$rg_first_ip" ]; then
+                rg_first_ip="$rg_ip"; rg_first_dev="$rg_dev"; rg_first_port="$rg_port"; rg_first_scope="$rg_scope"; rg_first_kind="$rg_kind"; rg_min="$rg_remaining"
+            elif [ "$rg_remaining" -lt "$rg_min" ]; then
+                rg_min="$rg_remaining"
+            fi
+        done <<EOF2
+$rg_records
+EOF2
+    fi
+    printf '{"active":%s,"family":"%s","scope":"%s","source_ip":"%s","source_kind":"%s","device":"%s","wg_port":%s,"expires_in":%s,"source_count":%s,"authorized_sources":[%s],"authorizations":[%s]}' "$rg_active" "$rg_family" "$rg_first_scope" "$rg_first_ip" "$rg_first_kind" "$rg_first_dev" "$rg_first_port" "$rg_min" "$rg_count" "$rg_sources" "$rg_entries"
 }
 
 status_json() {
     ensure_state
-    local rg_b rg_ready=false rg_ipv6=false rg_pv4 rg_pv6 rg_pp rg_v4 rg_v6 rg_any=false rg_top_family rg_top_scope rg_top_ip rg_top_dev rg_top_port rg_top_exp
+    local rg_b rg_ready=false rg_ipv6=false rg_pv4 rg_pv6 rg_pp rg_v4 rg_v6 rg_any=false rg_top_family rg_top_scope rg_top_ip rg_top_dev rg_top_port rg_top_exp rg_record rg_meta
     rg_b="$(backend 2>/dev/null || printf unsupported)"; ready_state && rg_ready=true; case "$rg_b" in fw3-iptables) fw3_ipv6_capable && rg_ipv6=true ;; fw4-nftables) rg_ipv6=true ;; esac
     rg_pv4="$(awk 'END{print NR+0}' "$DEVICES_V4_FILE" 2>/dev/null)"; rg_pv6="$(awk 'END{print NR+0}' "$DEVICES_V6_FILE" 2>/dev/null)"; rg_pp="$(awk 'END{print NR+0}' "$PORTS_FILE" 2>/dev/null)"
     reconcile_policy; rg_v4="$(family_status_json ipv4 "$rg_b")"; rg_v6="$(family_status_json ipv6 "$rg_b")"
@@ -190,5 +226,6 @@ uninstall_rules() {
         fw4-nftables) rm -f "$FW4_TABLE_INCLUDE" "$FW4_INPUT_INCLUDE"; fw4 -q check >/dev/null 2>&1 || fail "firewall4 check failed after removing Remote Gate includes"; /etc/init.d/firewall reload ;;
     esac
     rm -f "$BACKEND_FILE" "$LEGACY_AUTH_FILE" "$AUTH_FILE_V4" "$AUTH_FILE_V6" "$VERIFY_FILE_V4" "$VERIFY_FILE_V6" "$DEVICES_V4_FILE" "$DEVICES_V6_FILE" "$LEGACY_DEVICES_FILE" "$PORTS_FILE"
+    rm -rf "$AUTH_DIR_V4" "$AUTH_DIR_V6"
     logger -t "$TAG" "firewall integration removed; original firewall behavior restored" 2>/dev/null || true
 }

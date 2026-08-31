@@ -85,10 +85,9 @@ def _record(
     families = record.setdefault("families", {})
     existing = families.get(family)
 
-    # A family-specific carrier probe is a better routing hint than the HTTP
-    # path used to reach the dashboard. Keep it until it expires. Neither hint
-    # is data-plane authority: OpenWrt must verify a fresh WireGuard peer before
-    # installing the real authorization.
+    # Candidate probes fill a family that the authenticated dashboard request
+    # did not directly expose. A fresh Cloudflare observation is stronger and
+    # replaces a candidate for the same family before direct Gate authorization.
     if (
         preserve_candidate
         and isinstance(existing, dict)
@@ -124,7 +123,7 @@ def observe_source(
         confidence="observed",
         now=now,
         ttl=ttl,
-        preserve_candidate=True,
+        preserve_candidate=False,
     )
 
 
@@ -167,7 +166,7 @@ def trusted_sources(store: JsonStore, session_token: str, *, now: int | None = N
             continue
         confidence = str(item.get("confidence") or "")
         # Rolling-upgrade compatibility: old HTTP observations were labelled
-        # "verified". They are only transport observations, never WG authority.
+        # "verified". Normalize them to the current "observed" source kind.
         if confidence == "verified":
             confidence = "observed"
         if confidence not in {"observed", "candidate"}:

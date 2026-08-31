@@ -37,20 +37,25 @@ class TrustedSourceTests(unittest.TestCase):
         self.assertEqual(record["source"], "carrier_probe")
         self.assertEqual(source_for_family(self.store, self.token, "ipv4", now=111), "1.1.1.1")
 
-    def test_candidate_replaces_http_observation_and_survives_http_refresh(self):
+    def test_fresh_cloudflare_observation_replaces_same_family_candidate(self):
         observe_source(self.store, self.token, "8.8.8.8", now=100)
         record = observe_candidate(self.store, self.token, "1.1.1.1", "ipv4", now=110)
         self.assertEqual(record["address"], "1.1.1.1")
         self.assertEqual(record["confidence"], "candidate")
 
-        # A later dashboard request may arrive through a different HTTP path.
-        # It must not overwrite the family-specific carrier candidate while the
-        # candidate is fresh; OpenWrt/WireGuard remains final authority.
         refreshed = observe_source(self.store, self.token, "8.8.4.4", now=115)
-        self.assertEqual(refreshed["address"], "1.1.1.1")
+        self.assertEqual(refreshed["address"], "8.8.4.4")
+        self.assertEqual(refreshed["confidence"], "observed")
         selected = source_record_for_family(self.store, self.token, "ipv4", now=116)
-        self.assertEqual(selected["address"], "1.1.1.1")
-        self.assertEqual(selected["confidence"], "candidate")
+        self.assertEqual(selected["address"], "8.8.4.4")
+        self.assertEqual(selected["confidence"], "observed")
+
+    def test_observing_one_family_does_not_delete_other_family_candidate(self):
+        observe_candidate(self.store, self.token, "2001:4860:4860::8888", "ipv6", now=100)
+        observe_source(self.store, self.token, "8.8.8.8", now=110)
+        sources = trusted_sources(self.store, self.token, now=111)
+        self.assertEqual(sources["ipv4"]["confidence"], "observed")
+        self.assertEqual(sources["ipv6"]["confidence"], "candidate")
 
     def test_non_public_or_special_addresses_are_rejected(self):
         for family, address in (

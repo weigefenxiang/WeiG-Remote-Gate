@@ -3,7 +3,7 @@ import time
 import unittest
 from pathlib import Path
 
-from server.app.gate import GateError, ack_command, pull_command, queue_activate, queue_close, valid_ttl
+from server.app.gate import GateError, ack_command, gate_view, pull_command, queue_activate, queue_close, valid_ttl
 from server.app.store import JsonStore
 
 
@@ -83,6 +83,32 @@ class GateTests(unittest.TestCase):
         self.assertTrue(ack_command(self.store, command["id"], True, "ok"))
         self.assertIsNone(pull_command(self.store))
         self.assertFalse(ack_command(self.store, command["id"], True, "again"))
+
+    def test_failed_batch_command_cancels_remaining_family(self):
+        now = int(time.time())
+        first = {"id": "first", "action": "activate", "family": "ipv4", "batch_id": "batch", "state": "pending", "created_at": now, "expires_at": now + 60}
+        second = {"id": "second", "action": "activate", "family": "ipv6", "batch_id": "batch", "state": "pending", "created_at": now, "expires_at": now + 60}
+        self.store.write("commands.json", {"pending": first, "next": [second], "last": None})
+        self.assertTrue(ack_command(self.store, "first", False, "failed-v4"))
+        queue = self.store.read("commands.json", {})
+        self.assertIsNone(queue["pending"])
+        self.assertEqual(queue["next"], [])
+        self.assertEqual(queue["last"]["state"], "failed")
+        self.assertEqual(queue["last"]["detail"], "failed-v4")
+
+    def test_dashboard_view_archives_expired_pending_command(self):
+        expired = {
+            "schema": 2,
+            "id": "dashboard-expired",
+            "action": "activate",
+            "created_at": int(time.time()) - 120,
+            "expires_at": int(time.time()) - 1,
+            "state": "pending",
+        }
+        self.store.write("commands.json", {"pending": expired, "next": [], "last": None})
+        view = gate_view(self.store)
+        self.assertIsNone(view["queue"]["pending"])
+        self.assertEqual(view["queue"]["last"]["state"], "expired")
 
     def test_pending_command_cannot_be_silently_overwritten(self):
         first = self.activate()

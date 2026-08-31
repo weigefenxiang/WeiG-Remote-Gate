@@ -355,7 +355,7 @@ def ack_command(store: JsonStore, command_id: str, ok: bool, detail: str = "") -
         queue["last"] = command
 
         next_commands = queue.get("next") if isinstance(queue.get("next"), list) else []
-        if next_commands:
+        if ok and next_commands:
             next_command = next_commands.pop(0)
             if isinstance(next_command, dict):
                 # Refresh the short command transport window for the next family.
@@ -368,6 +368,7 @@ def ack_command(store: JsonStore, command_id: str, ok: bool, detail: str = "") -
                 queue["pending"] = None
             queue["next"] = next_commands
         else:
+            # A failed family stops the batch so a later success cannot mask it.
             queue["pending"] = None
             queue["next"] = []
 
@@ -386,9 +387,20 @@ def ack_command(store: JsonStore, command_id: str, ok: bool, detail: str = "") -
 
 
 def gate_view(store: JsonStore) -> dict[str, Any]:
-    queue = store.read("commands.json", _empty_queue())
+    with QUEUE_LOCK:
+        queue = store.read("commands.json", _empty_queue())
+        if not isinstance(queue, dict):
+            queue = _empty_queue()
+        pending = queue.get("pending")
+        if isinstance(pending, dict) and pending.get("state") == "pending" and int(pending.get("expires_at", 0) or 0) <= int(time.time()):
+            pending["state"] = "expired"
+            queue["last"] = pending
+            queue["pending"] = None
+            queue["next"] = []
+            store.write("commands.json", queue)
+            store.append_activity({"type": "command_expired", "command_id": pending.get("id", "")})
     agent = store.read("agent-status.json", {})
     return {
-        "queue": queue if isinstance(queue, dict) else _empty_queue(),
+        "queue": queue,
         "agent": agent if isinstance(agent, dict) else {},
     }

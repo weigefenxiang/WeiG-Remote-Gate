@@ -1,28 +1,49 @@
 # Security Model
 
-## Trust levels
+## Control plane and data plane
 
-Remote Gate distinguishes an observed source from an authorized source.
+Remote Gate separates two decisions:
 
-- **Cloudflare verified**: the source family observed by the VPS through the authenticated control request.
-- **Candidate**: an address returned to the browser by a public IPv4/IPv6 echo service. It may be useful for CGNAT discovery but is never sufficient for firewall authorization.
-- **WireGuard verified**: the address obtained from fresh authenticated WireGuard peer activity on the selected WAN and dynamically discovered WireGuard listen port. This is the final authorization source.
+1. **Control-plane authorization** decides which external source address may send router-local WireGuard UDP traffic (and optionally Echo Request) for a limited TTL.
+2. **WireGuard authentication** still decides which peer may establish the encrypted tunnel. A temporary Gate authorization does not replace WireGuard public-key authentication.
 
-The browser cannot submit an `authorized source_ip`.
+Normal Activate no longer requires a pre-existing WireGuard handshake. This allows a user to open the Gate from the authenticated web console and start WireGuard afterwards.
 
-## Candidate verification
+## Source records
 
-For an Activate request, OpenWrt snapshots the selected WireGuard listener and opens an exact-source WireGuard UDP verification window for a few seconds. A successful fresh peer handshake or receive counter change must identify the same source.
+IPv4 and IPv6 are independent source records in the authenticated browser session.
 
-If the candidate is not the actual UDP egress (for example, carrier CGNAT maps HTTP and UDP differently), the exact-source window closes and a second short **WireGuard-only discovery** window is opened on the selected WAN and WireGuard UDP port. Only authenticated WireGuard peer activity can produce the final source. Multiple peers becoming active during discovery is ambiguous and fails closed.
+- **Cloudflare observed / verified**: learned from the authenticated HTTPS request path.
+- **Candidate**: a short-lived address reported by the browser after a family-specific public IP echo probe. It is useful when the dashboard request itself used the other family.
 
-Verification windows never open Ping and never touch `FORWARD`.
+The Activate body never carries an arbitrary `source_ip`. The VPS resolves the selected family from the session source store and validates the selected endpoint server-side. Candidate records are therefore session-bound and CSRF-protected, but they are not equivalent to a WireGuard peer proof; possession of a valid WireGuard peer key remains required to establish the data-plane tunnel.
+
+## Direct temporary authorization
+
+After the VPS queues a command, OpenWrt independently validates:
+
+- source address and IP family;
+- selected protected WAN device;
+- dynamically discovered WireGuard UDP listen port;
+- access scope;
+- TTL;
+- IPv6 Gate capability when applicable.
+
+If validation succeeds, OpenWrt immediately creates the temporary source authorization. The historical WireGuard activity verifier remains available through the explicit `verify-wireguard` diagnostic action but is not part of normal Activate.
+
+## Concurrent sources
+
+A family may hold multiple authorized source addresses simultaneously. Each source has its own expiry and source-kind metadata. This supports multiple devices or networks using the same WireGuard listener concurrently.
+
+The shared firewall profile for a family remains exact: active records must use the same WAN device, WireGuard UDP port and scope. A request attempting to change that profile while other sources remain active fails closed and asks the user to close existing access first.
+
+`Close access now` clears all temporary IPv4 and IPv6 authorizations.
 
 ## IPv4 and IPv6
 
-IPv4 and IPv6 authorizations are independent records with independent source address, WAN device, WireGuard port, scope and expiry. The UI may activate IPv4 only, IPv6 only, or queue both families in one dual-stack request. Each family must pass its own WireGuard verification.
+IPv4 and IPv6 authorization sets are independent. The UI may activate IPv4 only, IPv6 only, or queue both in one Dual transaction. A failed family stops the Dual batch instead of allowing a later family to hide the failure.
 
-Return routing is also maintained per family so IPv4 and IPv6 can use different WAN policy tables without overwriting each other.
+Return routing is maintained per authorized source and per family, so multiple `/32` IPv4 or `/128` IPv6 client destinations can coexist on Multi-WAN systems.
 
 ## Public-address filtering
 
@@ -34,12 +55,12 @@ The policy excludes link-local (`fe80::/10`), unique-local (`fc00::/7`), loopbac
 
 Remote Gate owns only router-local `INPUT` policy for:
 
-- ICMP/ICMPv6 echo request when the selected scope includes Ping;
+- ICMP/ICMPv6 Echo Request when the selected scope includes Ping;
 - dynamically discovered WireGuard UDP listen ports;
-- short WireGuard UDP-only verification windows.
+- optional short WireGuard UDP-only diagnostic verification windows.
 
 Remote Gate must not own or rewrite `FORWARD`, DNAT, SNAT/MASQUERADE, UPnP, NAT-PMP, qBittorrent forwarding, or unrelated firewall rules.
 
 ## Multi-WAN return path
 
-When a verified WireGuard source arrives on a non-default WAN, Remote Gate installs only a destination-specific router-local policy route so the locally generated WireGuard response leaves through the same WAN. IPv4 and IPv6 route state are independent and removed with authorization expiry/close.
+When an authorized source reaches a non-default WAN, Remote Gate installs only a destination-specific router-local policy route so locally generated WireGuard responses leave through the same WAN. Each source is tracked independently and its route disappears when that source expires or all access is closed.

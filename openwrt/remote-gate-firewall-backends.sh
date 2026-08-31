@@ -63,9 +63,8 @@ fw3_ensure_sets() {
     fi
 }
 
-read_auth_record() {
-    local rg_family="$1" rg_file rg_ip rg_dev rg_port rg_expires rg_file_family rg_scope rg_kind rg_now rg_remaining
-    rg_file="$(family_auth_file "$rg_family")" || return 1
+read_auth_record_file() {
+    local rg_family="$1" rg_file="$2" rg_ip rg_dev rg_port rg_expires rg_file_family rg_scope rg_kind rg_now rg_remaining
     [ -r "$rg_file" ] || return 1
     rg_ip="$(sed -n '1p' "$rg_file")"; rg_dev="$(sed -n '2p' "$rg_file")"; rg_port="$(sed -n '3p' "$rg_file")"
     rg_expires="$(sed -n '4p' "$rg_file")"; rg_file_family="$(sed -n '5p' "$rg_file")"; rg_scope="$(sed -n '6p' "$rg_file")"; rg_kind="$(sed -n '7p' "$rg_file")"
@@ -75,10 +74,23 @@ read_auth_record() {
     rg_now="$(date +%s)"
     valid_family "$rg_file_family" && [ "$rg_file_family" = "$rg_family" ] || { rm -f "$rg_file"; return 1; }
     valid_scope "$rg_scope" || { rm -f "$rg_file"; return 1; }
+    valid_source_kind "$rg_kind" || { rm -f "$rg_file"; return 1; }
     case "$rg_family" in ipv4) valid_ipv4 "$rg_ip" ;; ipv6) valid_ipv6 "$rg_ip" ;; esac || { rm -f "$rg_file"; return 1; }
     valid_device "$rg_dev" && valid_uint "$rg_port" && valid_uint "$rg_expires" && [ "$rg_expires" -gt "$rg_now" ] || { rm -f "$rg_file"; return 1; }
     rg_remaining="$((rg_expires - rg_now))"
     printf '%s %s %s %s %s %s\n' "$rg_ip" "$rg_dev" "$rg_port" "$rg_expires" "$rg_remaining" "$rg_scope:$rg_kind"
+}
+read_auth_records() {
+    local rg_family="$1" rg_dir rg_file
+    rg_dir="$(family_auth_dir "$rg_family")" || return 1
+    [ -d "$rg_dir" ] || return 0
+    for rg_file in "$rg_dir"/*; do
+        [ -f "$rg_file" ] || continue
+        read_auth_record_file "$rg_family" "$rg_file" 2>/dev/null || true
+    done
+}
+read_auth_record() {
+    read_auth_records "$1" | sed -n '1p'
 }
 
 read_verify_record() {
@@ -98,9 +110,9 @@ read_verify_record() {
     printf '%s %s %s %s %s %s\n' "$rg_source" "$rg_dev" "$rg_port" "$rg_expires" "$rg_remaining" "$rg_mode"
 }
 
-auth_policy_current() {
-    local rg_family="$1" rg_record rg_ip rg_dev rg_port rg_expires rg_remaining rg_meta rg_device_file
-    rg_record="$(read_auth_record "$rg_family" 2>/dev/null || true)"; [ -n "$rg_record" ] || return 1
+auth_record_policy_current() {
+    local rg_family="$1" rg_record="$2" rg_ip rg_dev rg_port rg_expires rg_remaining rg_meta rg_device_file
+    [ -n "$rg_record" ] || return 1
     set -- $rg_record; rg_ip="$1"; rg_dev="$2"; rg_port="$3"; rg_expires="$4"; rg_remaining="$5"; rg_meta="$6"
     rg_device_file="$(family_device_file "$rg_family")"
     grep -Fqx "$rg_dev" "$rg_device_file" 2>/dev/null || return 1
@@ -115,12 +127,26 @@ verify_policy_current() {
     grep -Fqx "$rg_port" "$PORTS_FILE" 2>/dev/null || return 1
 }
 reconcile_family() {
-    local rg_family="$1" rg_auth rg_verify
-    rg_auth="$(family_auth_file "$rg_family")"; rg_verify="$(family_verify_file "$rg_family")"
-    if [ -e "$rg_auth" ] && ! auth_policy_current "$rg_family"; then
-        logger -t "$TAG" "$rg_family authorization revoked because protected WAN/port policy changed" 2>/dev/null || true
-        rm -f "$rg_auth"
-    fi
+    local rg_family="$1" rg_dir rg_file rg_record rg_first="" rg_first_dev="" rg_first_port="" rg_first_scope="" rg_ip rg_dev rg_port rg_expires rg_remaining rg_meta rg_scope rg_verify
+    rg_dir="$(family_auth_dir "$rg_family")"
+    for rg_file in "$rg_dir"/*; do
+        [ -f "$rg_file" ] || continue
+        rg_record="$(read_auth_record_file "$rg_family" "$rg_file" 2>/dev/null || true)"
+        [ -n "$rg_record" ] || continue
+        if ! auth_record_policy_current "$rg_family" "$rg_record"; then
+            logger -t "$TAG" "$rg_family authorization revoked because protected WAN/port policy changed" 2>/dev/null || true
+            rm -f "$rg_file"
+            continue
+        fi
+        set -- $rg_record; rg_ip="$1"; rg_dev="$2"; rg_port="$3"; rg_expires="$4"; rg_remaining="$5"; rg_meta="$6"; rg_scope="${rg_meta%%:*}"
+        if [ -z "$rg_first" ]; then
+            rg_first=1; rg_first_dev="$rg_dev"; rg_first_port="$rg_port"; rg_first_scope="$rg_scope"
+        elif [ "$rg_dev" != "$rg_first_dev" ] || [ "$rg_port" != "$rg_first_port" ] || [ "$rg_scope" != "$rg_first_scope" ]; then
+            logger -t "$TAG" "$rg_family authorization revoked because concurrent authorization profile differed" 2>/dev/null || true
+            rm -f "$rg_file"
+        fi
+    done
+    rg_verify="$(family_verify_file "$rg_family")"
     if [ -e "$rg_verify" ] && ! verify_policy_current "$rg_family"; then rm -f "$rg_verify"; fi
 }
 reconcile_policy() { reconcile_family ipv4; reconcile_family ipv6; }
@@ -138,11 +164,16 @@ fw3_load_verify() {
 }
 
 fw3_load_auth() {
-    local rg_family="$1" rg_record rg_ip rg_dev rg_port rg_expires rg_remaining rg_meta rg_scope rg_kind rg_set rg_chain rg_cmd
-    rg_record="$(read_auth_record "$rg_family" 2>/dev/null || true)"; [ -n "$rg_record" ] || return 0
-    set -- $rg_record; rg_ip="$1"; rg_dev="$2"; rg_port="$3"; rg_expires="$4"; rg_remaining="$5"; rg_meta="$6"; rg_scope="${rg_meta%%:*}"; rg_kind="${rg_meta#*:}"
+    local rg_family="$1" rg_records rg_record rg_ip rg_dev rg_port rg_expires rg_remaining rg_meta rg_scope rg_set rg_chain rg_cmd rg_first=1
+    rg_records="$(read_auth_records "$rg_family" 2>/dev/null || true)"; [ -n "$rg_records" ] || return 0
     if [ "$rg_family" = ipv4 ]; then rg_set="$FW3_AUTH_SET_V4"; rg_chain="$FW3_CHAIN_V4"; rg_cmd=iptables; else rg_set="$FW3_AUTH_SET_V6"; rg_chain="$FW3_CHAIN_V6"; rg_cmd=ip6tables; fi
-    ipset -exist add "$rg_set" "$rg_ip" timeout "$rg_remaining" >/dev/null
+    printf '%s\n' "$rg_records" | while IFS= read -r rg_record; do
+        [ -n "$rg_record" ] || continue
+        set -- $rg_record; rg_ip="$1"; rg_dev="$2"; rg_port="$3"; rg_expires="$4"; rg_remaining="$5"; rg_meta="$6"
+        ipset -exist add "$rg_set" "$rg_ip" timeout "$rg_remaining" >/dev/null
+    done
+    rg_record="$(printf '%s\n' "$rg_records" | sed -n '1p')"
+    set -- $rg_record; rg_ip="$1"; rg_dev="$2"; rg_port="$3"; rg_expires="$4"; rg_remaining="$5"; rg_meta="$6"; rg_scope="${rg_meta%%:*}"
     if [ "$rg_scope" = wg_ping ]; then
         if [ "$rg_family" = ipv4 ]; then "$rg_cmd" -A "$rg_chain" -i "$rg_dev" -p icmp --icmp-type echo-request -m set --match-set "$rg_set" src -j ACCEPT; else "$rg_cmd" -A "$rg_chain" -i "$rg_dev" -p ipv6-icmp --icmpv6-type echo-request -m set --match-set "$rg_set" src -j ACCEPT; fi
     fi
@@ -207,7 +238,7 @@ EOF2
     done < "$rg_file"
 }
 fw4_load_family() {
-    local rg_family="$1" rg_record rg_ip rg_dev rg_port rg_expires rg_remaining rg_meta rg_scope rg_kind rg_auth_set rg_auth_if rg_ping_if rg_auth_port rg_verify_set rg_verify_if rg_verify_port rg_source rg_mode rg_network
+    local rg_family="$1" rg_record rg_records rg_ip rg_dev rg_port rg_expires rg_remaining rg_meta rg_scope rg_auth_set rg_auth_if rg_ping_if rg_auth_port rg_verify_set rg_verify_if rg_verify_port rg_source rg_mode rg_network
     if [ "$rg_family" = ipv4 ]; then rg_auth_set=weig_remote_gate_auth_ipv4; rg_auth_if=weig_remote_gate_auth_ifname_v4; rg_ping_if=weig_remote_gate_auth_ping_ifname_v4; rg_auth_port=weig_remote_gate_auth_udp_port_v4; rg_verify_set=weig_remote_gate_verify_ipv4; rg_verify_if=weig_remote_gate_verify_ifname_v4; rg_verify_port=weig_remote_gate_verify_udp_port_v4; else rg_auth_set=weig_remote_gate_auth_ipv6; rg_auth_if=weig_remote_gate_auth_ifname_v6; rg_ping_if=weig_remote_gate_auth_ping_ifname_v6; rg_auth_port=weig_remote_gate_auth_udp_port_v6; rg_verify_set=weig_remote_gate_verify_ipv6; rg_verify_if=weig_remote_gate_verify_ifname_v6; rg_verify_port=weig_remote_gate_verify_udp_port_v6; fi
     rg_record="$(read_verify_record "$rg_family" 2>/dev/null || true)"
     if [ -n "$rg_record" ]; then
@@ -219,11 +250,18 @@ add element inet fw4 $rg_verify_if { "$rg_dev" }
 add element inet fw4 $rg_verify_port { $rg_port }
 EOF2
     fi
-    rg_record="$(read_auth_record "$rg_family" 2>/dev/null || true)"
-    if [ -n "$rg_record" ]; then
-        set -- $rg_record; rg_ip="$1"; rg_dev="$2"; rg_port="$3"; rg_expires="$4"; rg_remaining="$5"; rg_meta="$6"; rg_scope="${rg_meta%%:*}"; rg_kind="${rg_meta#*:}"
-        nft -f - <<EOF2
+    rg_records="$(read_auth_records "$rg_family" 2>/dev/null || true)"
+    if [ -n "$rg_records" ]; then
+        printf '%s\n' "$rg_records" | while IFS= read -r rg_record; do
+            [ -n "$rg_record" ] || continue
+            set -- $rg_record; rg_ip="$1"; rg_dev="$2"; rg_port="$3"; rg_expires="$4"; rg_remaining="$5"; rg_meta="$6"
+            nft -f - <<EOF2
 add element inet fw4 $rg_auth_set { $rg_ip timeout ${rg_remaining}s }
+EOF2
+        done
+        rg_record="$(printf '%s\n' "$rg_records" | sed -n '1p')"
+        set -- $rg_record; rg_ip="$1"; rg_dev="$2"; rg_port="$3"; rg_expires="$4"; rg_remaining="$5"; rg_meta="$6"; rg_scope="${rg_meta%%:*}"
+        nft -f - <<EOF2
 add element inet fw4 $rg_auth_if { "$rg_dev" }
 add element inet fw4 $rg_auth_port { $rg_port }
 EOF2

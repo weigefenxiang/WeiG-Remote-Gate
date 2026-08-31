@@ -50,11 +50,76 @@ def _safe_device(value: object) -> str:
     return text
 
 
+def _clean_authorization(value: object, family: str) -> dict | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        address = ipaddress.ip_address(str(value.get("source_ip") or "").strip())
+        expected = 4 if family == "ipv4" else 6
+        expires = max(0, int(value.get("expires_in", 0) or 0))
+    except (ValueError, TypeError):
+        return None
+    if address.version != expected:
+        return None
+    return {
+        "source_ip": str(address),
+        "source_kind": str(value.get("source_kind", ""))[:32],
+        "expires_in": expires,
+    }
+
+
 def _clean_fw_family(value: object, family: str) -> dict:
     item = value if isinstance(value, dict) else {}
-    try: port = max(0, int(item.get("wg_port", 0) or 0)); expires = max(0, int(item.get("expires_in", 0) or 0))
-    except (TypeError, ValueError): port = 0; expires = 0
-    return {"active": bool(item.get("active", False)), "family": family, "scope": str(item.get("scope", ""))[:16], "expires_in": expires, "source_ip": str(item.get("source_ip", ""))[:64], "source_kind": str(item.get("source_kind", ""))[:32], "device": str(item.get("device", ""))[:128], "wg_port": port}
+    try:
+        port = max(0, int(item.get("wg_port", 0) or 0))
+        expires = max(0, int(item.get("expires_in", 0) or 0))
+    except (TypeError, ValueError):
+        port = 0
+        expires = 0
+    result = {
+        "active": bool(item.get("active", False)),
+        "family": family,
+        "scope": str(item.get("scope", ""))[:16],
+        "expires_in": expires,
+        "source_ip": str(item.get("source_ip", ""))[:64],
+        "source_kind": str(item.get("source_kind", ""))[:32],
+        "device": str(item.get("device", ""))[:128],
+        "wg_port": port,
+    }
+
+    sources_known = isinstance(item.get("authorized_sources"), list)
+    entries_known = isinstance(item.get("authorizations"), list)
+    entries: list[dict] = []
+    if entries_known:
+        for raw in item.get("authorizations", [])[:64]:
+            clean = _clean_authorization(raw, family)
+            if clean is not None:
+                entries.append(clean)
+
+    if sources_known or entries_known:
+        sources: list[str] = []
+        seen: set[str] = set()
+        raw_sources = item.get("authorized_sources", []) if sources_known else []
+        for raw in raw_sources[:64]:
+            try:
+                address = ipaddress.ip_address(str(raw or "").strip())
+            except ValueError:
+                continue
+            expected = 4 if family == "ipv4" else 6
+            if address.version != expected:
+                continue
+            text = str(address)
+            if text not in seen:
+                seen.add(text); sources.append(text)
+        for entry in entries:
+            text = entry["source_ip"]
+            if text not in seen:
+                seen.add(text); sources.append(text)
+        result["authorized_sources"] = sources
+        result["authorizations"] = entries
+        result["source_count"] = len(sources)
+        result["active"] = bool(result["active"] and sources)
+    return result
 
 
 def _sanitize_inventory(data: dict) -> dict:

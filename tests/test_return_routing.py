@@ -7,14 +7,16 @@ INIT = ROOT / "openwrt/remote-gate-agent.init"
 
 
 class ReturnRoutingTests(unittest.TestCase):
-    def test_ipv4_and_ipv6_have_independent_auth_and_route_state(self):
+    def test_ipv4_and_ipv6_have_independent_multi_source_auth_and_route_state(self):
         source = HOTPLUG.read_text(encoding="utf-8")
         for token in (
-            "authorization-ipv4", "authorization-ipv6",
-            "return-route-ipv4", "return-route-ipv6",
+            "authorization-ipv4.d", "authorization-ipv6.d",
+            "return-route-ipv4.d", "return-route-ipv6.d",
             "return-route-verify-ipv4", "return-route-verify-ipv6",
         ):
             self.assertIn(token, source)
+        self.assertIn("read_route_sources", source)
+        self.assertIn("sync_return_route_record", source)
         self.assertIn("return_route_sync_family ipv4", source)
         self.assertIn("return_route_sync_family ipv6", source)
 
@@ -25,6 +27,14 @@ class ReturnRoutingTests(unittest.TestCase):
         self.assertIn('rg_target="$rg_source/128"', source)
         self.assertNotIn("FORWARD", source)
         self.assertNotIn("DNAT", source)
+
+    def test_each_authorized_source_gets_independent_route_state(self):
+        source = HOTPLUG.read_text(encoding="utf-8")
+        self.assertIn("return_state_file_for_source", source)
+        self.assertIn("route_state_key", source)
+        self.assertIn('for rg_file in "$rg_auth_dir"/*', source)
+        self.assertIn("awk '!seen[$1]++'", source)
+        self.assertIn('grep -Fqx "$rg_key" "$rg_active"', source)
 
     def test_policy_table_and_wireguard_port_are_dynamic(self):
         source = HOTPLUG.read_text(encoding="utf-8")
@@ -48,7 +58,7 @@ class ReturnRoutingTests(unittest.TestCase):
         self.assertIn('ip -6 route get "$rg_source" from "$rg_local_src" oif "$rg_wanted"', source)
         self.assertIn('src "$rg_local_src"', source)
 
-    def test_verification_route_overrides_only_requested_family_then_restores(self):
+    def test_verification_route_is_diagnostic_and_family_scoped(self):
         source = HOTPLUG.read_text(encoding="utf-8")
         self.assertIn("verify_route_set", source)
         self.assertIn("verify_route_clear", source)

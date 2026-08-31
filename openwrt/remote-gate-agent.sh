@@ -412,7 +412,7 @@ post_status() {
     fw="$("$FIREWALL" status-json 2>/dev/null || printf '{"backend":"unsupported","ready":false,"active":false,"source_ip":"","device":"","wg_port":0,"expires_in":0,"protected_devices_v4":0,"protected_devices_v6":0,"protected_ports":0}')"
     wg_json="$(wireguard_json)"
     transport="$(transport_json)"
-    payload="{\"schema\":2,\"wireguard\":${wg_json},\"firewall\":${fw},\"transport\":${transport}}"
+    payload="{\"schema\":3,\"wireguard\":${wg_json},\"firewall\":${fw},\"transport\":${transport}}"
     control_request POST "/api/v1/agent/status" "$BODY" "$payload" >/dev/null 2>&1 || true
 }
 
@@ -442,6 +442,7 @@ pull_once() {
     case "$action" in
         activate)
             source_ip="$(jsonfilter -i "$BODY" -e '@.source_ip' 2>/dev/null | sed -n '1p')"
+            source_confidence="$(jsonfilter -i "$BODY" -e '@.source_confidence' 2>/dev/null | sed -n '1p')"
             family="$(jsonfilter -i "$BODY" -e '@.family' 2>/dev/null | sed -n '1p')"
             scope="$(jsonfilter -i "$BODY" -e '@.scope' 2>/dev/null | sed -n '1p')"
             device="$(jsonfilter -i "$BODY" -e '@.device' 2>/dev/null | sed -n '1p')"
@@ -449,11 +450,17 @@ pull_once() {
             ttl="$(jsonfilter -i "$BODY" -e '@.ttl' 2>/dev/null | sed -n '1p')"
             [ -n "$family" ] || family=ipv4
             [ -n "$scope" ] || scope=wg_ping
+            case "$source_confidence" in
+                verified) source_kind=web_verified ;;
+                observed) source_kind=web_observed ;;
+                candidate) source_kind=web_candidate ;;
+                *) source_kind=web_verified ;;
+            esac
             sync_firewall_policy || true
             error_file="${TMP_BASE}.firewall-error"
             rm -f "$error_file"
-            if "$FIREWALL" activate "$source_ip" "$family" "$scope" "$device" "$port" "$ttl" 2>"$error_file"; then
-                ack "$id" true "authorization-active"
+            if "$FIREWALL" activate "$source_ip" "$family" "$scope" "$device" "$port" "$ttl" "$source_kind" 2>"$error_file"; then
+                ack "$id" true "web-authorization-active"
             else
                 detail="$(sed -n 's/^ERROR: //p' "$error_file" 2>/dev/null | tail -n 1)"
                 [ -n "$detail" ] || detail="$(tail -n 1 "$error_file" 2>/dev/null || true)"
@@ -464,7 +471,7 @@ pull_once() {
             rm -f "$error_file"
             ;;
         close)
-            if "$FIREWALL" clear; then ack "$id" true "authorization-cleared"; else ack "$id" false "firewall-clear-failed"; fi
+            if "$FIREWALL" clear; then ack "$id" true "all-authorizations-cleared"; else ack "$id" false "firewall-clear-failed"; fi
             ;;
         *) ack "$id" false "unsupported-action" ;;
     esac

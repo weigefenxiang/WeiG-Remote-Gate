@@ -10,6 +10,8 @@ PORTS_FILE="$STATE_ROOT/protected-ports"
 LEGACY_AUTH_FILE="$STATE_ROOT/authorization"
 AUTH_FILE_V4="$STATE_ROOT/authorization-ipv4"
 AUTH_FILE_V6="$STATE_ROOT/authorization-ipv6"
+AUTH_DIR_V4="$STATE_ROOT/authorization-ipv4.d"
+AUTH_DIR_V6="$STATE_ROOT/authorization-ipv6.d"
 VERIFY_FILE_V4="$STATE_ROOT/verification-ipv4"
 VERIFY_FILE_V6="$STATE_ROOT/verification-ipv6"
 FW3_CHAIN_V4="WEIG_REMOTE_GATE"
@@ -47,6 +49,7 @@ valid_device() { case "$1" in ''|*[!A-Za-z0-9_.:@+-]*) return 1 ;; *) return 0 ;
 valid_uint() { case "$1" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
 valid_family() { case "$1" in ipv4|ipv6) return 0 ;; *) return 1 ;; esac; }
 valid_scope() { case "$1" in wg|wg_ping) return 0 ;; *) return 1 ;; esac; }
+valid_source_kind() { case "$1" in legacy|wireguard_verified|web_verified|web_observed|web_candidate) return 0 ;; *) return 1 ;; esac; }
 valid_ttl() {
     valid_uint "$1" || return 1
     case "$1" in 60|300|900|1800) return 0 ;; esac
@@ -56,6 +59,19 @@ valid_ttl() {
 
 family_auth_file() {
     case "$1" in ipv4) printf '%s\n' "$AUTH_FILE_V4" ;; ipv6) printf '%s\n' "$AUTH_FILE_V6" ;; *) return 1 ;; esac
+}
+family_auth_dir() {
+    case "$1" in ipv4) printf '%s\n' "$AUTH_DIR_V4" ;; ipv6) printf '%s\n' "$AUTH_DIR_V6" ;; *) return 1 ;; esac
+}
+auth_record_key() {
+    printf '%s' "$1" | sed 's/[^A-Za-z0-9_.-]/_/g'
+}
+auth_record_file() {
+    local rg_dir rg_key
+    rg_dir="$(family_auth_dir "$1")" || return 1
+    rg_key="$(auth_record_key "$2")"
+    [ -n "$rg_key" ] || return 1
+    printf '%s/%s\n' "$rg_dir" "$rg_key"
 }
 family_verify_file() {
     case "$1" in ipv4) printf '%s\n' "$VERIFY_FILE_V4" ;; ipv6) printf '%s\n' "$VERIFY_FILE_V6" ;; *) return 1 ;; esac
@@ -71,21 +87,35 @@ fw3_ipv6_capable() {
     ipset help hash:net 2>&1 | grep -qi 'inet6' || return 1
 }
 
-migrate_legacy_auth() {
-    [ -r "$LEGACY_AUTH_FILE" ] || return 0
-    local rg_family rg_target
-    rg_family="$(sed -n '5p' "$LEGACY_AUTH_FILE")"
-    [ -n "$rg_family" ] || rg_family=ipv4
-    valid_family "$rg_family" || { rm -f "$LEGACY_AUTH_FILE"; return 0; }
-    rg_target="$(family_auth_file "$rg_family")"
-    [ -e "$rg_target" ] || cp "$LEGACY_AUTH_FILE" "$rg_target"
-    rm -f "$LEGACY_AUTH_FILE"
+migrate_family_auth_file() {
+    local rg_family="$1" rg_legacy rg_source rg_target
+    rg_legacy="$(family_auth_file "$rg_family")" || return 0
+    [ -r "$rg_legacy" ] || return 0
+    rg_source="$(sed -n '1p' "$rg_legacy")"
+    case "$rg_family" in ipv4) valid_ipv4 "$rg_source" ;; ipv6) valid_ipv6 "$rg_source" ;; esac || { rm -f "$rg_legacy"; return 0; }
+    rg_target="$(auth_record_file "$rg_family" "$rg_source")" || { rm -f "$rg_legacy"; return 0; }
+    [ -e "$rg_target" ] || cp "$rg_legacy" "$rg_target"
+    rm -f "$rg_legacy"
     chmod 600 "$rg_target" 2>/dev/null || true
+}
+migrate_legacy_auth() {
+    if [ -r "$LEGACY_AUTH_FILE" ]; then
+        local rg_family rg_target
+        rg_family="$(sed -n '5p' "$LEGACY_AUTH_FILE")"
+        [ -n "$rg_family" ] || rg_family=ipv4
+        if valid_family "$rg_family"; then
+            rg_target="$(family_auth_file "$rg_family")"
+            [ -e "$rg_target" ] || cp "$LEGACY_AUTH_FILE" "$rg_target"
+        fi
+        rm -f "$LEGACY_AUTH_FILE"
+    fi
+    migrate_family_auth_file ipv4
+    migrate_family_auth_file ipv6
 }
 
 ensure_state() {
-    mkdir -p "$STATE_ROOT"
-    chmod 700 "$STATE_ROOT" 2>/dev/null || true
+    mkdir -p "$STATE_ROOT" "$AUTH_DIR_V4" "$AUTH_DIR_V6"
+    chmod 700 "$STATE_ROOT" "$AUTH_DIR_V4" "$AUTH_DIR_V6" 2>/dev/null || true
     if [ ! -f "$DEVICES_V4_FILE" ] && [ -f "$LEGACY_DEVICES_FILE" ]; then
         cp "$LEGACY_DEVICES_FILE" "$DEVICES_V4_FILE"
     fi
@@ -143,12 +173,13 @@ case "${1:-}" in
     ipv6-capable) rg_b="$(detect_backend 2>/dev/null || true)"; case "$rg_b" in fw4-nftables) printf '%s\n' yes ;; fw3-iptables) fw3_ipv6_capable && printf '%s\n' yes || { printf '%s\n' no; exit 1; } ;; *) printf '%s\n' no; exit 1 ;; esac ;;
     install) install_rules ;;
     sync) shift; sync_policy "$@" ;;
-    activate) case "$#" in 5) activate "$2" ipv4 wg_ping "$3" "$4" "$5" legacy ;; 7) activate "$2" "$3" "$4" "$5" "$6" "$7" wireguard_verified ;; 8) activate "$2" "$3" "$4" "$5" "$6" "$7" "$8" ;; *) fail "usage: $0 activate <source> [family scope] <wan-device> <udp-port> <ttl-seconds> [source-kind]" ;; esac ;;
+    activate) case "$#" in 5) activate "$2" ipv4 wg_ping "$3" "$4" "$5" legacy ;; 7) activate "$2" "$3" "$4" "$5" "$6" "$7" web_verified ;; 8) activate "$2" "$3" "$4" "$5" "$6" "$7" "$8" ;; *) fail "usage: $0 activate <source> [family scope] <wan-device> <udp-port> <ttl-seconds> [source-kind]" ;; esac ;;
     verify) [ "$#" -eq 7 ] || fail "usage: $0 verify <source|any> <family> <wan-device> <udp-port> <seconds> <candidate|discovery>"; verify_open "$2" "$3" "$4" "$5" "$6" "$7" ;;
+    verify-wireguard) [ "$#" -eq 5 ] || fail "usage: $0 verify-wireguard <source> <family> <wan-device> <udp-port>"; verify_wireguard_source "$2" "$3" "$4" "$5" ;;
     verify-clear) [ "$#" -eq 2 ] || fail "usage: $0 verify-clear <ipv4|ipv6>"; verify_clear "$2" ;;
     clear) clear_auth "${2:-all}" ;;
     restore) restore_rules ;;
     status-json) status_json ;;
     uninstall) uninstall_rules ;;
-    *) fail "usage: $0 detect|ipv6-capable|install|sync|activate|verify|verify-clear|clear|restore|status-json|uninstall" ;;
+    *) fail "usage: $0 detect|ipv6-capable|install|sync|activate|verify|verify-wireguard|verify-clear|clear|restore|status-json|uninstall" ;;
 esac
