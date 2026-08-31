@@ -41,7 +41,7 @@ try {
     await page.waitForSelector('#ttl-custom-button');
     await page.waitForFunction(() => document.querySelector('#activate-button') && !document.querySelector('#activate-button').disabled);
 
-    const v031 = await page.evaluate(() => ({
+    const v032 = await page.evaluate(() => ({
       brandSrc: document.querySelector('.brand-icon-image')?.getAttribute('src'),
       brandChassis: document.querySelector('#utility-trigger')?.classList.contains('brand-icon-chassis'),
       nativeHidden: document.querySelector('#endpoint-select')?.classList.contains('endpoint-native-select'),
@@ -49,13 +49,15 @@ try {
       customMin: document.querySelector('#duration-slider')?.min,
       customMax: document.querySelector('#duration-slider')?.max,
       customStep: document.querySelector('#duration-slider')?.step,
+      dualPresent: Boolean(document.querySelector('[data-family="dual"]')),
     }));
-    assert(v031.brandSrc === '/static/Wei.G.ico', `${width}x${height}: header is not using Wei.G.ico`);
-    assert(v031.brandChassis, `${width}x${height}: brand icon 3D chassis missing`);
-    assert(v031.nativeHidden, `${width}x${height}: native endpoint select is still visual`);
-    assert(JSON.stringify(v031.presetLabels) === JSON.stringify(['1m', '5m', '15m', '30m', 'Custom']), `${width}x${height}: wrong TTL presets ${v031.presetLabels}`);
-    assert(!v031.presetLabels.includes('1h'), `${width}x${height}: forbidden 1h preset present`);
-    assert(v031.customMin === '1800' && v031.customMax === '43200' && v031.customStep === '1800', `${width}x${height}: custom duration bounds/step incorrect`);
+    assert(v032.brandSrc === '/static/Wei.G.ico', `${width}x${height}: header is not using Wei.G.ico`);
+    assert(v032.brandChassis, `${width}x${height}: brand icon 3D chassis missing`);
+    assert(v032.nativeHidden, `${width}x${height}: native endpoint select is still visual`);
+    assert(v032.dualPresent, `${width}x${height}: dual-stack family control missing`);
+    assert(JSON.stringify(v032.presetLabels) === JSON.stringify(['1m', '5m', '15m', '30m', 'Custom']), `${width}x${height}: wrong TTL presets ${v032.presetLabels}`);
+    assert(!v032.presetLabels.includes('1h'), `${width}x${height}: forbidden 1h preset present`);
+    assert(v032.customMin === '1800' && v032.customMax === '43200' && v032.customStep === '1800', `${width}x${height}: custom duration bounds/step incorrect`);
 
     const geometry = await page.evaluate(() => {
       const cards = [...document.querySelectorAll('.workspace-card')].map((node) => {
@@ -73,7 +75,6 @@ try {
     });
 
     assert(geometry.scrollWidth <= geometry.innerWidth + 1, `${width}x${height}: horizontal overflow ${geometry.scrollWidth} > ${geometry.innerWidth}`);
-
     for (let i = 0; i < geometry.cards.length; i += 1) {
       for (let j = i + 1; j < geometry.cards.length; j += 1) {
         const a = geometry.cards[i];
@@ -119,7 +120,6 @@ try {
     assert(ipv6.right <= ipv6.cardRight + 1, `${width}x${height}: IPv6 escapes its card`);
     assert(ipv6.text.includes(':'), `${width}x${height}: fixture IPv6 missing`);
 
-    // IPv4 is the automatic preferred family even though the fixture request itself is IPv6.
     const autoFamily = await page.locator('#family-segment .active').getAttribute('data-family');
     assert(autoFamily === 'ipv4', `${width}x${height}: IPv4 was not preferred automatically`);
 
@@ -183,7 +183,7 @@ try {
     assert(body.family === 'ipv4', `${width}x${height}: family not submitted`);
     assert(body.scope === 'wg_ping', `${width}x${height}: scope not submitted`);
     assert(body.ttl === 7200, `${width}x${height}: custom TTL not submitted (${body.ttl})`);
-    assert(!('source_ip' in body), `${width}x${height}: browser must never submit source_ip`);
+    assert(!('source_ip' in body) && !('address' in body), `${width}x${height}: authorization request included a browser address`);
 
     await page.reload({waitUntil: 'networkidle'});
     await page.waitForSelector('#wan-list .wan-row');
@@ -207,26 +207,45 @@ try {
     await page.close();
   }
 
-  // Regression for an IPv6-first request where the IPv4 source is temporarily missing.
-  // The browser receives only a one-time observer URL; the observer itself records the
-  // address from the network request and never accepts an address supplied by JavaScript.
+  // Dual-stack regression: one click submits two families without any browser-supplied source address.
+  const dualPage = await browser.newPage({viewport: {width: 390, height: 844}});
+  await dualPage.goto('http://127.0.0.1:8765/', {waitUntil: 'networkidle'});
+  await dualPage.waitForSelector('[data-family="dual"]');
+  await dualPage.locator('[data-family="dual"]').click();
+  assert(!(await dualPage.locator('#activate-button').isDisabled()), 'dual-stack selection did not enable Activate');
+  const dualRequestPromise = dualPage.waitForRequest((request) => request.url().endsWith('/api/v1/gate/activate') && request.method() === 'POST');
+  await dualPage.locator('#activate-button').click();
+  const dualBody = (await dualRequestPromise).postDataJSON();
+  assert(JSON.stringify(dualBody.families) === JSON.stringify(['ipv4', 'ipv6']), 'dual-stack family list is incorrect');
+  assert(dualBody.endpoint_ids?.ipv4 === 'ep-wan2-v4', 'dual-stack IPv4 endpoint is incorrect');
+  assert(dualBody.endpoint_ids?.ipv6 === 'ep-wan2-v6', 'dual-stack IPv6 endpoint is incorrect');
+  assert(!('source_ip' in dualBody) && !('address' in dualBody), 'dual-stack authorization request included a browser address');
+  await dualPage.close();
+
+  // IPv6-first request with no IPv4 source: the browser may submit only an untrusted candidate.
+  // The Gate authorization request still carries no IP address; OpenWrt/WireGuard performs final verification.
   const sourcePage = await browser.newPage({viewport: {width: 390, height: 844}});
-  let ipv4Observed = false;
-  let observerAttempts = 0;
-  let challengeRequests = 0;
+  let candidateSaved = false;
+  let echoRequests = 0;
+  let candidatePosts = 0;
+  let candidateBody = null;
+  let releaseEcho;
+  let markEchoStarted;
+  const echoGate = new Promise((resolve) => { releaseEcho = resolve; });
+  const echoStarted = new Promise((resolve) => { markEchoStarted = resolve; });
 
   await sourcePage.route('**/api/v1/dashboard', async (route) => {
     const response = await route.fetch();
     const payload = await response.json();
     payload.inventory.capabilities.gate_ipv6 = false;
-    if (ipv4Observed) {
+    if (candidateSaved) {
       const now = Math.floor(Date.now() / 1000);
       payload.client_sources.ipv4 = {
         address: '112.96.156.107',
         observed_at: now,
         expires_at: now + 300,
-        source: 'cloudflare_observer',
-        confidence: 'verified',
+        source: 'browser_candidate',
+        confidence: 'candidate',
       };
     } else {
       delete payload.client_sources.ipv4;
@@ -234,75 +253,84 @@ try {
     await route.fulfill({response, contentType: 'application/json', body: JSON.stringify(payload)});
   });
 
-  await sourcePage.route('**/api/v1/client-source/challenge?family=ipv4', async (route) => {
-    challengeRequests += 1;
+  await sourcePage.route('https://api.ipify.org/**', async (route) => {
+    echoRequests += 1;
+    markEchoStarted();
+    await echoGate;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: {'Access-Control-Allow-Origin': '*'},
+      body: JSON.stringify({ip: '112.96.156.107'}),
+    });
+  });
+
+  await sourcePage.route('**/api/v1/client-source/candidate', async (route) => {
+    candidatePosts += 1;
+    candidateBody = route.request().postDataJSON();
+    assert(route.request().headers()['x-csrf-token'] === 'fixture-csrf', 'candidate request lost CSRF binding');
+    assert(candidateBody.family === 'ipv4', 'candidate request used wrong family');
+    assert(candidateBody.address === '112.96.156.107', 'candidate request used wrong IPv4');
+    assert(!('source_ip' in candidateBody), 'candidate endpoint used authorization source_ip field');
+    candidateSaved = true;
+    const now = Math.floor(Date.now() / 1000);
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
         family: 'ipv4',
-        url: 'https://v4.remote.example.test/api/v1/client-source/observe?token=test-token',
-        expires_in: 90,
+        address: '112.96.156.107',
+        observed_at: now,
+        expires_at: now + 300,
+        source: 'browser_candidate',
+        confidence: 'candidate',
       }),
     });
   });
 
-  await sourcePage.route('https://v4.remote.example.test/**', async (route) => {
-    observerAttempts += 1;
-    if (observerAttempts === 1) {
-      await route.abort('failed');
-      return;
-    }
-    const callback = new URL(route.request().url()).searchParams.get('callback');
-    assert(callback, 'source observer retry did not include a callback');
-    ipv4Observed = true;
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/javascript',
-      body: `${callback}({"ok":true});`,
-    });
-  });
-
-  await sourcePage.goto('http://127.0.0.1:8765/', {waitUntil: 'networkidle'});
+  await sourcePage.goto('http://127.0.0.1:8765/', {waitUntil: 'domcontentloaded'});
+  await echoStarted;
   await sourcePage.waitForSelector('#endpoint-picker-trigger');
   await sourcePage.waitForFunction(() =>
     document.querySelector('#family-segment .active')?.dataset.family === 'ipv4' &&
     document.querySelector('#endpoint-select')?.value === 'ep-wan2-v4'
   );
 
-  const beforeProbe = await sourcePage.evaluate(() => ({
+  const beforeCandidate = await sourcePage.evaluate(() => ({
     family: document.querySelector('#family-segment .active')?.dataset.family,
     endpoint: document.querySelector('#endpoint-select')?.value,
     activateDisabled: document.querySelector('#activate-button')?.disabled,
     ipv6Disabled: document.querySelector('[data-family="ipv6"]')?.disabled,
     ipv4Source: document.querySelector('#client-ipv4')?.textContent,
   }));
-  assert(beforeProbe.family === 'ipv4', 'missing IPv4 source incorrectly fell back to request IPv6');
-  assert(beforeProbe.endpoint === 'ep-wan2-v4', 'IPv4 endpoint disappeared while its source was missing');
-  assert(beforeProbe.activateDisabled, 'Activate enabled before the IPv4 source was observed');
-  assert(beforeProbe.ipv6Disabled, 'disabled IPv6 Gate remained selectable');
-  assert(beforeProbe.ipv4Source !== '112.96.156.107', 'fixture unexpectedly started with an IPv4 source');
+  assert(beforeCandidate.family === 'ipv4', 'missing IPv4 source incorrectly fell back to request IPv6');
+  assert(beforeCandidate.endpoint === 'ep-wan2-v4', 'IPv4 endpoint disappeared while its source was missing');
+  assert(beforeCandidate.activateDisabled, 'Activate enabled before an IPv4 candidate existed');
+  assert(beforeCandidate.ipv6Disabled, 'disabled IPv6 Gate remained selectable');
+  assert(beforeCandidate.ipv4Source !== '112.96.156.107', 'fixture unexpectedly started with an IPv4 source');
 
+  const reloadPromise = sourcePage.waitForNavigation({waitUntil: 'domcontentloaded'});
+  releaseEcho();
+  await reloadPromise;
+  await sourcePage.waitForSelector('#endpoint-picker-trigger');
   await sourcePage.waitForFunction(() =>
     document.querySelector('#client-ipv4')?.textContent === '112.96.156.107' &&
-    !document.querySelector('#activate-button')?.disabled,
-    null,
-    {timeout: 12000}
+    !document.querySelector('#activate-button')?.disabled
   );
 
-  const afterProbe = await sourcePage.evaluate(() => ({
-    family: document.querySelector('#family-segment .active')?.dataset.family,
-    endpoint: document.querySelector('#endpoint-select')?.value,
-    activateDisabled: document.querySelector('#activate-button')?.disabled,
-  }));
-  assert(observerAttempts === 2, `IPv4 source observer did not retry exactly once (${observerAttempts} attempts)`);
-  assert(challengeRequests === 2, `IPv4 source observer did not obtain a fresh challenge for retry (${challengeRequests})`);
-  assert(afterProbe.family === 'ipv4', 'successful IPv4 observation changed the selected family');
-  assert(afterProbe.endpoint === 'ep-wan2-v4', 'successful IPv4 observation changed the selected endpoint');
-  assert(!afterProbe.activateDisabled, 'Activate did not recover after the IPv4 source was observed');
+  assert(echoRequests === 1, `IPv4 echo should be requested exactly once (${echoRequests})`);
+  assert(candidatePosts === 1, `IPv4 candidate should be submitted exactly once (${candidatePosts})`);
+  assert(candidateBody?.address === '112.96.156.107', 'candidate body was not preserved');
+
+  const candidateActivatePromise = sourcePage.waitForRequest((request) => request.url().endsWith('/api/v1/gate/activate') && request.method() === 'POST');
+  await sourcePage.locator('#activate-button').click();
+  const candidateActivate = (await candidateActivatePromise).postDataJSON();
+  assert(candidateActivate.family === 'ipv4', 'candidate recovery changed the selected family');
+  assert(candidateActivate.endpoint_id === 'ep-wan2-v4', 'candidate recovery changed the selected endpoint');
+  assert(!('source_ip' in candidateActivate) && !('address' in candidateActivate), 'candidate leaked into the authorization request');
   await sourcePage.close();
 
-  console.log(`Browser layout regression passed for ${viewports.length} viewports plus verified missing-source recovery.`);
+  console.log(`Browser layout regression passed for ${viewports.length} viewports plus dual-stack and candidate-source recovery.`);
 } finally {
   await browser.close();
 }
