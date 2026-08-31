@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from server.app.gate import GateError, queue_activate
+from server.app.gate import GateError, egress_wan, queue_activate
 from server.app.store import JsonStore
 
 
@@ -78,13 +78,24 @@ class EgressSelectionTests(unittest.TestCase):
     def test_lan_only_keeps_egress_empty(self):
         self.assertEqual(self.activate()["egress_wan"], "")
 
-    def test_public_or_cgnat_default_wan_can_be_selected_as_exit(self):
+    def test_public_or_cgnat_default_wan_can_be_selected_as_ipv4_exit(self):
         self.assertEqual(self.activate("WAN2")["egress_wan"], "WAN2")
         self.reset_queue()
         command = self.activate("WAN")
         self.assertEqual(command["egress_wan"], "WAN")
+        self.assertEqual(command["egress_mode"], "ipv4")
 
-    def test_non_default_or_unknown_exit_is_rejected(self):
+    def test_dual_exit_requires_both_default_routes_and_global_ipv6(self):
+        self.assertEqual(egress_wan(self.store, "WAN2", "dual"), "WAN2")
+        with self.assertRaisesRegex(GateError, "egress_ipv6_unavailable"):
+            egress_wan(self.store, "WAN", "dual")
+
+    def test_ipv6_exit_requires_global_ipv6(self):
+        self.assertEqual(egress_wan(self.store, "WAN2", "ipv6"), "WAN2")
+        with self.assertRaisesRegex(GateError, "egress_ipv6_unavailable"):
+            egress_wan(self.store, "WAN", "ipv6")
+
+    def test_non_default_or_unknown_ipv4_exit_is_rejected(self):
         with self.assertRaisesRegex(GateError, "egress_ipv4_unavailable"):
             self.activate("AUX")
         with self.assertRaisesRegex(GateError, "egress_wan_unavailable"):
