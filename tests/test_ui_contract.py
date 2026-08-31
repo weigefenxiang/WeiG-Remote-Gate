@@ -6,6 +6,7 @@ TEMPLATE = ROOT / "server/app/templates/dashboard.html"
 APP = ROOT / "server/app/static/js/app.js"
 GATE = ROOT / "server/app/static/js/gate-controls.js"
 CLIENT_SOURCES = ROOT / "server/app/static/js/client-sources.js"
+BOOTSTRAP = ROOT / "server/app/static/js/theme-bootstrap.js"
 INSTALL = ROOT / "server/install.sh"
 UPDATE = ROOT / "server/update.sh"
 
@@ -22,12 +23,15 @@ class UIContractTests(unittest.TestCase):
         self.assertNotIn("createElement('script')", source)
         self.assertNotIn("/api/v1/client-source/challenge", source)
 
-    def test_production_dashboard_loads_candidate_probe(self):
+    def test_production_dashboard_loads_candidate_probe_exactly_once(self):
         template = TEMPLATE.read_text(encoding="utf-8")
+        bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
         marker = '<script src="/static/js/client-sources.js"></script>'
-        self.assertIn(marker, template)
+        self.assertEqual(template.count(marker), 1)
         self.assertLess(template.index(marker), template.index('<script src="/static/js/gate-controls.js"></script>'))
         self.assertLess(template.index(marker), template.index('<script src="/static/js/app.js"></script>'))
+        self.assertNotIn("'/static/js/client-sources.js'", bootstrap)
+        self.assertNotIn('"/static/js/client-sources.js"', bootstrap)
 
     def test_browser_never_submits_authorized_source_ip(self):
         gate = GATE.read_text(encoding="utf-8")
