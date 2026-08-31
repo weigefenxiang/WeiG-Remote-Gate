@@ -18,6 +18,8 @@ INTERACTION = ROOT / "server/app/static/css/interaction.css"
 I18N = ROOT / "server/app/static/js/i18n.js"
 INSTALL = ROOT / "server/install.sh"
 UPDATE = ROOT / "server/update.sh"
+REMOTE_GATE = ROOT / "server/remote-gate.py"
+CLIENT_SOURCE_MODEL = ROOT / "server/app/client_sources.py"
 
 
 class UIContractTests(unittest.TestCase):
@@ -45,21 +47,31 @@ class UIContractTests(unittest.TestCase):
     def test_browser_never_supplies_authorization_ip_directly(self):
         app = APP.read_text(encoding="utf-8")
         gate = GATE.read_text(encoding="utf-8")
+        source_probe = CLIENT_SOURCES.read_text(encoding="utf-8")
         self.assertNotIn("CLIENT_MEMORY_KEY", app)
         self.assertNotRegex(gate, r"source_ip\s*:")
         self.assertIn("client_sources", app)
         self.assertIn("endpoint_id", gate)
         self.assertIn("scope", gate)
+        self.assertNotIn("body: JSON.stringify({family, address})", source_probe)
+        self.assertNotIn("api.ipify.org", source_probe)
 
-    def test_dual_stack_source_probe_is_automatic_and_independent(self):
+    def test_dual_stack_source_observer_is_automatic_and_independent(self):
         source = CLIENT_SOURCES.read_text(encoding="utf-8")
-        self.assertIn("https://api.ipify.org", source)
-        self.assertIn("https://api6.ipify.org", source)
-        self.assertIn("/api/v1/client-source/probe", source)
+        runtime = REMOTE_GATE.read_text(encoding="utf-8")
+        model = CLIENT_SOURCE_MODEL.read_text(encoding="utf-8")
+        self.assertIn("/api/v1/client-source/challenge", source)
+        self.assertIn("observerProbe", source)
         self.assertIn("PROBE_INTERVAL", source)
         self.assertIn("PROBE_TIMEOUT", source)
         self.assertIn("['ipv4', 'ipv6']", source)
         self.assertIn("data?.client_sources?.[family]?.address", source)
+        self.assertIn("/api/v1/client-source/observe", runtime)
+        self.assertIn("CF-Connecting-IP", (ROOT / "server/app/security.py").read_text(encoding="utf-8"))
+        self.assertIn("untrusted_source_probe_disabled", runtime)
+        self.assertIn("untrusted_source_probe_disabled", model)
+        self.assertNotIn("https://api.ipify.org", runtime)
+        self.assertNotIn("https://api6.ipify.org", runtime)
 
     def test_private_and_egress_wan_paths_are_manual_try_options(self):
         app = APP.read_text(encoding="utf-8")
@@ -94,7 +106,7 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("endpoint-picker-trigger", picker)
         self.assertIn("endpoint-picker-layer", picker)
         self.assertIn("endpoint-option-card", picker)
-        self.assertIn("role=\"listbox\"", picker)
+        self.assertIn('role="listbox"', picker)
         self.assertIn("endpoint-native-select", picker)
         self.assertIn(".endpoint-native-select", css)
         self.assertIn("pointer-events: none", css)
@@ -109,7 +121,7 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("ttl-custom-button", source)
         self.assertIn("duration-slider", source)
         self.assertIn("RemoteGateFeedback", source)
-        self.assertNotIn("data-ttl=\"3600\"", TEMPLATE.read_text(encoding="utf-8"))
+        self.assertNotIn('data-ttl="3600"', TEMPLATE.read_text(encoding="utf-8"))
 
     def test_feedback_module_has_sound_haptic_and_user_controls(self):
         source = FEEDBACK.read_text(encoding="utf-8")
