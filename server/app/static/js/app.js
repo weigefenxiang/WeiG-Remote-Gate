@@ -171,8 +171,8 @@
     const trustNote = document.querySelector('.trust-note');
     if (trustNote) {
       trustNote.textContent = zh
-        ? 'Cloudflare HTTP 观察和运营商 Candidate 都只是来源提示；只有 OpenWrt 观察到新鲜、经过加密认证的 WireGuard Peer 后才会正式授权。'
-        : 'Cloudflare HTTP observations and carrier candidates are hints only; OpenWrt authorizes only after fresh authenticated WireGuard peer activity.';
+        ? 'Cloudflare HTTP 观察和运营商 Candidate 用于识别当前 Session 的客户端来源；点击 Activate 后由 VPS 解析所选协议族，OpenWrt 直接应用临时授权，不要求 WireGuard 预先握手。'
+        : 'Cloudflare HTTP observations and carrier candidates identify the current session source. Activate resolves the selected family on the VPS and OpenWrt applies the temporary authorization without requiring a pre-existing WireGuard handshake.';
     }
 
     const requestLabel = state.requestFamily === 'ipv4' ? 'IPv4' : state.requestFamily === 'ipv6' ? 'IPv6' : '—';
@@ -421,8 +421,6 @@
     renderSystem(data);
     window.RemoteGateActivity?.render($('activity-list'), data?.activity, t);
     window.RemoteGateGateControls?.render(data);
-    syncEndpointSelect(data);
-    renderClient(data);
     window.RemoteGateFit?.observe();
   }
 
