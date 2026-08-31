@@ -247,7 +247,7 @@
     if (!familyRoot) return;
     const previous = state.family;
     state.family = chooseFamily();
-    const compactLabel = {ipv4: 'V4', ipv6: 'V6', dual: 'Dual'};
+    const compactLabel = {ipv4: 'IPv4', ipv6: 'IPv6', dual: 'Dual'};
     familyRoot.querySelectorAll('[data-family]').forEach((button) => {
       const family = button.dataset.family;
       if (!['ipv4','ipv6','dual'].includes(family)) return;
