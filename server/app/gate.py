@@ -51,6 +51,22 @@ def public_wan(store: JsonStore, name: str) -> dict[str, Any]:
     return record
 
 
+def egress_wan(store: JsonStore, name: str | None) -> str:
+    selected = str(name or "").strip()
+    if not selected:
+        return ""
+    inventory = normalize_inventory(store)
+    for item in inventory.get("wans", []) if isinstance(inventory, dict) else []:
+        if not isinstance(item, dict) or str(item.get("name") or "") != selected:
+            continue
+        if not item.get("up"):
+            raise GateError("egress_wan_unavailable")
+        if not item.get("default_route_v4"):
+            raise GateError("egress_ipv4_unavailable")
+        return selected
+    raise GateError("egress_wan_unavailable")
+
+
 def wireguard_interface(store: JsonStore, name: str) -> dict[str, Any]:
     status = store.read("agent-status.json", {})
     interfaces = status.get("wireguard") if isinstance(status, dict) else None
@@ -129,6 +145,7 @@ def _activation_command(
     source_confidence: str = "verified",
     wan_name: str | None = None,
     wg_name: str | None = None,
+    egress_name: str | None = None,
     batch_id: str = "",
     batch_index: int = 0,
     batch_count: int = 1,
@@ -139,6 +156,7 @@ def _activation_command(
         raise GateError("invalid_scope")
     if source_confidence not in {"verified", "observed", "candidate"}:
         raise GateError("invalid_source_confidence")
+    selected_egress = egress_wan(store, egress_name)
 
     if endpoint_id:
         endpoint = endpoint_by_id(store, endpoint_id)
@@ -164,13 +182,14 @@ def _activation_command(
             or endpoint.get("reachability") in {"private", "egress_probe"}
             or source_confidence == "candidate"
             or batch_count > 1
+            or bool(selected_egress)
         )
         if advanced and agent_schema < 2:
             raise GateError("agent_upgrade_required")
 
         now = int(time.time())
         command = {
-            "schema": 3 if batch_count > 1 or source_confidence == "candidate" else 2,
+            "schema": 3 if batch_count > 1 or source_confidence == "candidate" or selected_egress else 2,
             "id": secrets.token_hex(16),
             "action": "activate",
             "created_at": now,
@@ -188,6 +207,7 @@ def _activation_command(
             "wg_port": int(endpoint["local_port"]),
             "external_address": str(endpoint.get("external_address", "")),
             "external_port": int(endpoint.get("external_port", endpoint["local_port"])),
+            "egress_wan": selected_egress,
             "ttl": ttl,
             "state": "pending",
         }
@@ -215,6 +235,7 @@ def _activation_command(
         "device": str(wan["device"]),
         "wireguard": wg_name,
         "wg_port": int(wg["listen_port"]),
+        "egress_wan": selected_egress,
         "ttl": ttl,
         "state": "pending",
     }
@@ -231,6 +252,7 @@ def queue_activate(
     source_confidence: str = "verified",
     wan_name: str | None = None,
     wg_name: str | None = None,
+    egress_name: str | None = None,
 ) -> dict[str, Any]:
     command = _activation_command(
         store,
@@ -242,6 +264,7 @@ def queue_activate(
         source_confidence=source_confidence,
         wan_name=wan_name,
         wg_name=wg_name,
+        egress_name=egress_name,
     )
     with QUEUE_LOCK:
         _queue_for_write(store)
@@ -250,7 +273,14 @@ def queue_activate(
     return command
 
 
-def queue_activate_many(store: JsonStore, requests: list[dict[str, Any]], *, ttl: int, scope: str) -> dict[str, Any]:
+def queue_activate_many(
+    store: JsonStore,
+    requests: list[dict[str, Any]],
+    *,
+    ttl: int,
+    scope: str,
+    egress_name: str | None = None,
+) -> dict[str, Any]:
     if not isinstance(requests, list) or not 1 <= len(requests) <= 2:
         raise GateError("invalid_families")
     families = [str(item.get("family") or "") for item in requests if isinstance(item, dict)]
@@ -267,6 +297,7 @@ def queue_activate_many(store: JsonStore, requests: list[dict[str, Any]], *, ttl
             source_confidence=str(item.get("source_confidence") or "verified"),
             scope=scope,
             ttl=ttl,
+            egress_name=egress_name,
             batch_id=batch_id,
             batch_index=index,
             batch_count=len(requests),
@@ -294,6 +325,7 @@ def _append_gate_request(store: JsonStore, command: dict[str, Any]) -> None:
             "family": command["family"],
             "scope": command["scope"],
             "wan": command.get("wan", ""),
+            "egress_wan": command.get("egress_wan", ""),
             "wireguard": command.get("wireguard", ""),
             "endpoint_id": command.get("endpoint_id", ""),
             "batch_id": command.get("batch_id", ""),
