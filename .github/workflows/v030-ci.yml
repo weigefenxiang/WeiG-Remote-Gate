@@ -1,11 +1,9 @@
 name: v0.3.x CI
-# Validation trigger for the empty-IPv6 fw3 verifier fix.
 
 on:
   push:
     branches:
-      - dev/v0.3.0
-      - dev/v0.3.1
+      - 'dev/v0.3.*'
   pull_request:
     branches:
       - main
