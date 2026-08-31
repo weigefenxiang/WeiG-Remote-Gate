@@ -43,6 +43,16 @@ class EgressSelectionTests(unittest.TestCase):
                     "ipv6": [],
                 },
                 {
+                    "name": "V6ONLY",
+                    "device": "eth8",
+                    "logical_interfaces": ["V6ONLY"],
+                    "up": True,
+                    "default_route_v4": False,
+                    "default_route_v6": True,
+                    "ipv4": [],
+                    "ipv6": [{"address": "2001:4860:4860::8844", "kind": "global"}],
+                },
+                {
                     "name": "AUX",
                     "device": "eth9",
                     "logical_interfaces": ["AUX"],
@@ -89,15 +99,24 @@ class EgressSelectionTests(unittest.TestCase):
         self.assertEqual(egress_wan(self.store, "WAN2", "dual"), "WAN2")
         with self.assertRaisesRegex(GateError, "egress_ipv6_unavailable"):
             egress_wan(self.store, "WAN", "dual")
+        with self.assertRaisesRegex(GateError, "egress_ipv4_unavailable"):
+            egress_wan(self.store, "V6ONLY", "dual")
 
-    def test_ipv6_exit_requires_global_ipv6(self):
+    def test_ipv6_exit_requires_default_route_and_global_ipv6(self):
         self.assertEqual(egress_wan(self.store, "WAN2", "ipv6"), "WAN2")
+        self.assertEqual(egress_wan(self.store, "V6ONLY", "ipv6"), "V6ONLY")
         with self.assertRaisesRegex(GateError, "egress_ipv6_unavailable"):
             egress_wan(self.store, "WAN", "ipv6")
 
-    def test_non_default_or_unknown_ipv4_exit_is_rejected(self):
+    def test_ipv4_exit_rejects_ipv6_only_or_non_default_wan(self):
+        with self.assertRaisesRegex(GateError, "egress_ipv4_unavailable"):
+            egress_wan(self.store, "V6ONLY", "ipv4")
         with self.assertRaisesRegex(GateError, "egress_ipv4_unavailable"):
             self.activate("AUX")
+
+    def test_invalid_or_unknown_exit_is_rejected(self):
+        with self.assertRaisesRegex(GateError, "invalid_egress_mode"):
+            egress_wan(self.store, "WAN2", "invalid")
         with self.assertRaisesRegex(GateError, "egress_wan_unavailable"):
             self.activate("MISSING")
 
