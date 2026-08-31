@@ -16,6 +16,9 @@ COMPONENTS_CSS = ROOT / "server/app/static/css/components.css"
 INSTALL = ROOT / "server/install.sh"
 UPDATE = ROOT / "server/update.sh"
 SERVER = ROOT / "server/remote-gate.py"
+OPENWRT_UPDATE = ROOT / "openwrt/update.sh"
+OPENWRT_AGENT = ROOT / "openwrt/remote-gate-agent.sh"
+OPENWRT_EGRESS = ROOT / "openwrt/remote-gate-wireguard-egress.sh"
 
 
 class UIContractTests(unittest.TestCase):
@@ -147,8 +150,19 @@ class UIContractTests(unittest.TestCase):
         self.assertIn('data-fit-min="7.5"', source)
         self.assertIn("RemoteGateFit?.fit?.(address)", source)
         self.assertIn("trigger.style.gridTemplateColumns = 'minmax(0, 1fr)'", source)
-        self.assertIn("trigger.addEventListener('click', open)", source)
+        self.assertIn("trigger.addEventListener('click', () => open(selectId))", source)
+        self.assertIn("bindSelect('endpoint-select')", source)
         self.assertNotIn("endpoint-trigger-chevron", source)
+
+    def test_internet_exit_reuses_the_existing_endpoint_picker(self):
+        picker = ENDPOINT_PICKER.read_text(encoding="utf-8")
+        gate = GATE.read_text(encoding="utf-8")
+        self.assertIn("const configs = new Map()", picker)
+        self.assertIn("selectId === 'egress-select'", picker)
+        self.assertIn("bindSelect", picker)
+        self.assertIn("egress-select", gate)
+        self.assertIn("INTERNET EXIT", gate)
+        self.assertIn("Internet 出口", gate)
 
     def test_gate_hides_redundant_wireguard_selector_but_keeps_internal_state(self):
         picker = ENDPOINT_PICKER.read_text(encoding="utf-8")
@@ -197,9 +211,18 @@ class UIContractTests(unittest.TestCase):
         app = APP.read_text(encoding="utf-8")
         self.assertIn("Carrier candidate", app)
         self.assertIn("Cloudflare HTTP observed", app)
-        self.assertIn("hints only", app)
+        self.assertIn("without requiring a pre-existing WireGuard handshake", app)
+        self.assertNotIn("hints only", app)
         self.assertIn("remote-gate-client-source-diagnostics", app)
         self.assertIn("remote-gate-client-source-updated", app)
+
+    def test_dashboard_render_does_not_overwrite_gate_endpoint_memory(self):
+        app = APP.read_text(encoding="utf-8")
+        marker = "window.RemoteGateGateControls?.render(data);"
+        self.assertIn(marker, app)
+        tail = app.split(marker, 1)[1].split("window.RemoteGateFit?.observe();", 1)[0]
+        self.assertNotIn("syncEndpointSelect(data)", tail)
+        self.assertNotIn("renderClient(data)", tail)
 
     def test_private_and_egress_paths_remain_available_for_manual_try(self):
         app = APP.read_text(encoding="utf-8")
@@ -208,6 +231,22 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("['direct','mapped','private','egress_probe']", gate)
         self.assertIn("Private/CGNAT · Try", app)
         self.assertIn("NAT egress · Try", app)
+
+    def test_runtime_wireguard_egress_reboots_off_and_upgrade_cleans_legacy_rules(self):
+        egress = OPENWRT_EGRESS.read_text(encoding="utf-8")
+        agent = OPENWRT_AGENT.read_text(encoding="utf-8")
+        update = OPENWRT_UPDATE.read_text(encoding="utf-8")
+        self.assertIn('RUNTIME_DIR="${REMOTE_GATE_RUNTIME_DIR:-/tmp/remote-gate}"', egress)
+        self.assertIn('STATE_FILE="$RUNTIME_DIR/wireguard-egress.conf"', egress)
+        self.assertNotIn("uci set", egress)
+        self.assertIn("schedule_expiry", egress)
+        self.assertIn("status-json", egress)
+        self.assertIn("AllowedIPs = 0.0.0.0/0, ::/0", egress)
+        self.assertIn("cleanup-legacy", update)
+        self.assertIn("runtime only, reboot returns it to OFF", update)
+        self.assertIn('"$EGRESS" enable "$wireguard" "$egress_wan" "$ttl" "$egress_mode"', agent)
+        self.assertIn("apply_egress=0", agent)
+        self.assertIn("web-authorization-active-pending-egress", agent)
 
     def test_scope_defaults_to_wireguard_only(self):
         source = GATE.read_text(encoding="utf-8")
