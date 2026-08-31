@@ -4,9 +4,15 @@
   const RENEW_BEFORE = 120;
   let running = false;
 
-  const endpoint = {
-    ipv4: 'https://api.ipify.org?format=json',
-    ipv6: 'https://api6.ipify.org?format=json'
+  const providers = {
+    ipv4: [
+      {url: 'https://api.ipify.org?format=json', parse: async (response) => String((await response.json())?.ip || '').trim()},
+      {url: 'https://api-ipv4.ip.sb/ip', parse: async (response) => String(await response.text()).trim()}
+    ],
+    ipv6: [
+      {url: 'https://api6.ipify.org?format=json', parse: async (response) => String((await response.json())?.ip || '').trim()},
+      {url: 'https://api-ipv6.ip.sb/ip', parse: async (response) => String(await response.text()).trim()}
+    ]
   };
 
   const diagnostics = {
@@ -33,31 +39,43 @@
     };
   }
 
-  async function fetchIp(family) {
-    setDiagnostic(family, 'probing', 'IP echo request in progress');
+  async function fetchProvider(family, provider, index) {
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), PROBE_TIMEOUT);
     try {
-      const response = await fetch(endpoint[family], {
+      const response = await fetch(provider.url, {
         cache: 'no-store',
         mode: 'cors',
         credentials: 'omit',
         referrerPolicy: 'no-referrer',
         signal: controller.signal
       });
-      if (!response.ok) throw new Error(`IP echo HTTP ${response.status}`);
-      const payload = await response.json();
-      const address = String(payload?.ip || '').trim();
-      if (!address) throw new Error('IP echo returned no address');
-      setDiagnostic(family, 'echo_ok', 'IP echo succeeded', address);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const address = await provider.parse(response);
+      if (!address) throw new Error('returned no address');
+      setDiagnostic(family, 'echo_ok', `${index === 0 ? 'Primary' : 'Fallback'} IP echo succeeded`, address);
       return address;
-    } catch (error) {
-      const detail = error?.name === 'AbortError' ? `IP echo timed out after ${PROBE_TIMEOUT / 1000}s` : String(error?.message || error || 'IP echo failed');
-      setDiagnostic(family, 'echo_error', detail);
-      throw error;
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  async function fetchIp(family) {
+    setDiagnostic(family, 'probing', 'IP echo request in progress');
+    const errors = [];
+    for (let index = 0; index < providers[family].length; index += 1) {
+      try {
+        return await fetchProvider(family, providers[family][index], index);
+      } catch (error) {
+        const detail = error?.name === 'AbortError'
+          ? `timed out after ${PROBE_TIMEOUT / 1000}s`
+          : String(error?.message || error || 'failed');
+        errors.push(`${index === 0 ? 'primary' : 'fallback'}: ${detail}`);
+      }
+    }
+    const detail = `IP echo unavailable (${errors.join('; ')})`;
+    setDiagnostic(family, 'echo_error', detail);
+    throw new Error(detail);
   }
 
   async function saveCandidate(family, address, csrf) {
@@ -83,12 +101,24 @@
 
   function familiesToProbe(data) {
     const now = Math.floor(Date.now() / 1000);
-    return ['ipv4', 'ipv6'].filter((family) => {
+    const result = [];
+    ['ipv4', 'ipv6'].forEach((family) => {
       const source = data?.client_sources?.[family];
-      if (!source?.address) return true;
-      if (source.confidence !== 'candidate') return true;
-      return Number(source.expires_at || 0) - now < RENEW_BEFORE;
+      if (!source?.address) {
+        result.push(family);
+        return;
+      }
+      if (source.confidence === 'candidate' && Number(source.expires_at || 0) - now < RENEW_BEFORE) {
+        result.push(family);
+        return;
+      }
+      if (source.confidence === 'observed') {
+        setDiagnostic(family, 'observed', 'Cloudflare HTTP source already observed; carrier probe skipped', source.address);
+      } else if (source.confidence === 'candidate') {
+        setDiagnostic(family, 'saved', 'Carrier candidate remains fresh', source.address);
+      }
     });
+    return result;
   }
 
   async function probeFamilies() {
@@ -120,7 +150,7 @@
     } finally {
       running = false;
     }
-    if (changed) window.location.reload();
+    if (changed) window.dispatchEvent(new CustomEvent('remote-gate-client-source-updated'));
   }
 
   function bind() {
