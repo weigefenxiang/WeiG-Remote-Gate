@@ -166,6 +166,22 @@ select {
   box-shadow: none !important;
 }
 
+/* Family mode is a three-way choice. It must remain one compact row even
+ * inside the narrow right-hand Gate form on small phones. */
+.family-segment {
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+}
+.family-segment button {
+  min-width: 0;
+  padding-inline: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: clip;
+  font-size: 12px;
+}
+
 .status-dot {
   width: 8px;
   height: 8px;
@@ -373,4 +389,9 @@ html.utility-open { overflow: hidden; }
   }
   .utility-layer.open .utility-sheet { transform: translateY(0) scale(1); }
   .utility-switch button { min-height: 46px; font-size: 14px; }
+  .family-segment button { font-size: 12px; padding-inline: 5px; }
+}
+
+@media (max-width: 379px) {
+  .family-segment button { font-size: 11px; padding-inline: 4px; }
 }
