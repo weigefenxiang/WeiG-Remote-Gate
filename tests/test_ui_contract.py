@@ -6,6 +6,7 @@ TEMPLATE = ROOT / "server/app/templates/dashboard.html"
 LOGIN = ROOT / "server/app/templates/login.html"
 APP = ROOT / "server/app/static/js/app.js"
 GATE = ROOT / "server/app/static/js/gate-controls.js"
+ENDPOINT_PICKER = ROOT / "server/app/static/js/endpoint-picker.js"
 CLIENT_SOURCES = ROOT / "server/app/static/js/client-sources.js"
 FEEDBACK = ROOT / "server/app/static/js/ui-feedback.js"
 FEEDBACK_CSS = ROOT / "server/app/static/css/feedback.css"
@@ -139,6 +140,15 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("grid-template-columns: repeat(3, minmax(0, 1fr)) !important", css)
         self.assertIn("white-space: nowrap", css)
         self.assertIn(".family-segment button", css)
+
+    def test_mobile_endpoint_picker_fits_long_addresses_without_chevron(self):
+        source = ENDPOINT_PICKER.read_text(encoding="utf-8")
+        self.assertIn('endpoint-trigger-address fit-single-line', source)
+        self.assertIn('data-fit-min="7.5"', source)
+        self.assertIn("RemoteGateFit?.fit?.(address)", source)
+        self.assertIn("trigger.style.gridTemplateColumns = 'minmax(0, 1fr)'", source)
+        self.assertIn("trigger.addEventListener('click', open)", source)
+        self.assertNotIn("endpoint-trigger-chevron", source)
 
     def test_gate_transaction_lock_is_real_and_server_terminal_owned(self):
         gate = GATE.read_text(encoding="utf-8")

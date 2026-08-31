@@ -54,13 +54,14 @@
     trigger.setAttribute('aria-haspopup', 'dialog');
     trigger.setAttribute('aria-controls', 'endpoint-picker-layer');
     trigger.setAttribute('aria-expanded', 'false');
+    trigger.style.gridTemplateColumns = 'minmax(0, 1fr)';
+    trigger.style.gap = '0';
     trigger.innerHTML = `
       <span class="endpoint-trigger-copy">
         <strong data-endpoint-wan>—</strong>
         <span data-endpoint-kind></span>
-        <span class="endpoint-trigger-address" data-endpoint-address></span>
-      </span>
-      <span class="endpoint-trigger-chevron" aria-hidden="true">⌄</span>`;
+        <span class="endpoint-trigger-address fit-single-line" data-fit-max="12" data-fit-min="7.5" data-endpoint-address></span>
+      </span>`;
     select.insertAdjacentElement('afterend', trigger);
     return trigger;
   }
@@ -178,7 +179,7 @@
             <span class="endpoint-option-badge">${escapeHtml(badgeText(parsed, index))}</span>
           </span>
           <span class="endpoint-option-kind">${escapeHtml([parsed.family, parsed.provider].filter(Boolean).join(' · '))}</span>
-          <span class="endpoint-option-address">${escapeHtml(parsed.address)}</span>
+          <span class="endpoint-option-address fit-single-line" data-fit-max="13" data-fit-min="7.5">${escapeHtml(parsed.address)}</span>
         </span>
         <span class="endpoint-option-check" aria-hidden="true">${selected ? '●' : '○'}</span>`;
       button.addEventListener('click', () => choose(option.value));
@@ -191,6 +192,7 @@
       empty.textContent = zh() ? '当前没有可用访问路径。' : 'No access endpoint is currently available.';
       list.append(empty);
     }
+    window.RemoteGateFit?.observe?.(list);
   }
 
   function syncTrigger() {
@@ -203,7 +205,9 @@
     trigger.setAttribute('aria-disabled', trigger.disabled ? 'true' : 'false');
     trigger.querySelector('[data-endpoint-wan]')?.replaceChildren(document.createTextNode(option?.value ? parsed.wan : (zh() ? '不可用' : 'Unavailable')));
     trigger.querySelector('[data-endpoint-kind]')?.replaceChildren(document.createTextNode(option?.value ? [parsed.family, parsed.provider].filter(Boolean).join(' · ') : ''));
-    trigger.querySelector('[data-endpoint-address]')?.replaceChildren(document.createTextNode(option?.value ? parsed.address : ''));
+    const address = trigger.querySelector('[data-endpoint-address]');
+    address?.replaceChildren(document.createTextNode(option?.value ? parsed.address : ''));
+    window.RemoteGateFit?.fit?.(address);
   }
 
   function sync() {
