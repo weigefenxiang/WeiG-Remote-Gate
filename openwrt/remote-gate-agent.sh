@@ -35,6 +35,7 @@ chmod 700 "$STATE_DIR" 2>/dev/null || true
 trap 'rm -rf "$INV_DIR"; rm -f "$BODY" "${TMP_BASE}".*' EXIT INT TERM
 
 valid_device() { case "$1" in ''|*[!A-Za-z0-9_.:@+-]*) return 1 ;; *) return 0 ;; esac; }
+valid_uint() { case "$1" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
 
 is_public_ipv4() {
     printf '%s\n' "$1" | awk -F. '
@@ -454,23 +455,40 @@ pull_once() {
             device="$(jsonfilter -i "$BODY" -e '@.device' 2>/dev/null | sed -n '1p')"
             wireguard="$(jsonfilter -i "$BODY" -e '@.wireguard' 2>/dev/null | sed -n '1p')"
             egress_wan="$(jsonfilter -i "$BODY" -e '@.egress_wan' 2>/dev/null | sed -n '1p')"
+            egress_mode="$(jsonfilter -i "$BODY" -e '@.egress_mode' 2>/dev/null | sed -n '1p')"
+            batch_index="$(jsonfilter -i "$BODY" -e '@.batch_index' 2>/dev/null | sed -n '1p')"
+            batch_count="$(jsonfilter -i "$BODY" -e '@.batch_count' 2>/dev/null | sed -n '1p')"
             port="$(jsonfilter -i "$BODY" -e '@.wg_port' 2>/dev/null | sed -n '1p')"
             ttl="$(jsonfilter -i "$BODY" -e '@.ttl' 2>/dev/null | sed -n '1p')"
             [ -n "$family" ] || family=ipv4
             [ -n "$scope" ] || scope=wg_ping
+            valid_uint "$batch_index" || batch_index=0
+            valid_uint "$batch_count" || batch_count=1
+            [ "$batch_count" -ge 1 ] || batch_count=1
+            if [ -z "$egress_mode" ]; then
+                if [ "$batch_count" -gt 1 ]; then egress_mode=dual; else egress_mode="$family"; fi
+            fi
+            case "$egress_mode" in ipv4|ipv6|dual) ;; *) ack "$id" false "invalid-egress-mode"; return 1 ;; esac
             case "$source_confidence" in
                 verified) source_kind=web_verified ;;
                 observed) source_kind=web_observed ;;
                 candidate) source_kind=web_candidate ;;
                 *) source_kind=web_verified ;;
             esac
+
+            # A new Gate transaction owns the single WG egress profile. Clear
+            # any older profile before the first family is authorized.
+            if [ "$batch_index" -eq 0 ] && [ -x "$EGRESS" ]; then "$EGRESS" disable >/dev/null 2>&1 || true; fi
+
             sync_firewall_policy || true
             error_file="${TMP_BASE}.firewall-error"
             rm -f "$error_file"
             if "$FIREWALL" activate "$source_ip" "$family" "$scope" "$device" "$port" "$ttl" "$source_kind" 2>"$error_file"; then
-                if [ -n "$egress_wan" ]; then
-                    if [ -x "$EGRESS" ] && "$EGRESS" enable "$wireguard" "$egress_wan" "$ttl" >/dev/null 2>"${TMP_BASE}.egress-error"; then
-                        ack "$id" true "web-authorization-and-egress-active"
+                apply_egress=1
+                if [ "$batch_count" -gt 1 ] && [ "$((batch_index + 1))" -lt "$batch_count" ]; then apply_egress=0; fi
+                if [ -n "$egress_wan" ] && [ "$apply_egress" -eq 1 ]; then
+                    if [ -x "$EGRESS" ] && "$EGRESS" enable "$wireguard" "$egress_wan" "$ttl" "$egress_mode" >/dev/null 2>"${TMP_BASE}.egress-error"; then
+                        ack "$id" true "web-authorization-and-${egress_mode}-egress-active"
                     else
                         [ -x "$EGRESS" ] && "$EGRESS" disable >/dev/null 2>&1 || true
                         detail="$(sed -n 's/^ERROR: //p' "${TMP_BASE}.egress-error" 2>/dev/null | tail -n 1)"
@@ -478,6 +496,8 @@ pull_once() {
                         logger -t "$TAG" "egress activation failed: $detail" 2>/dev/null || true
                         ack "$id" false "$detail"
                     fi
+                elif [ -n "$egress_wan" ]; then
+                    ack "$id" true "web-authorization-active-pending-egress"
                 else
                     [ -x "$EGRESS" ] && "$EGRESS" disable >/dev/null 2>&1 || true
                     ack "$id" true "web-authorization-active"
