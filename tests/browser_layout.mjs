@@ -50,11 +50,13 @@ try {
       customMax: document.querySelector('#duration-slider')?.max,
       customStep: document.querySelector('#duration-slider')?.step,
       dualPresent: Boolean(document.querySelector('[data-family="dual"]')),
+      feedbackReady: Boolean(window.RemoteGateFeedback?.notify),
     }));
     assert(v032.brandSrc === '/static/Wei.G.ico', `${width}x${height}: header is not using Wei.G.ico`);
     assert(v032.brandChassis, `${width}x${height}: brand icon 3D chassis missing`);
     assert(v032.nativeHidden, `${width}x${height}: native endpoint select is still visual`);
     assert(v032.dualPresent, `${width}x${height}: dual-stack family control missing`);
+    assert(v032.feedbackReady, `${width}x${height}: standard feedback module not loaded`);
     assert(JSON.stringify(v032.presetLabels) === JSON.stringify(['1m', '5m', '15m', '30m', 'Custom']), `${width}x${height}: wrong TTL presets ${v032.presetLabels}`);
     assert(!v032.presetLabels.includes('1h'), `${width}x${height}: forbidden 1h preset present`);
     assert(v032.customMin === '1800' && v032.customMax === '43200' && v032.customStep === '1800', `${width}x${height}: custom duration bounds/step incorrect`);
@@ -185,6 +187,14 @@ try {
     assert(body.ttl === 7200, `${width}x${height}: custom TTL not submitted (${body.ttl})`);
     assert(!('source_ip' in body) && !('address' in body), `${width}x${height}: authorization request included a browser address`);
 
+    await page.waitForFunction(() => window.RemoteGateGateControls?.transactionLocked?.());
+    const lockedFamily = await page.locator('#family-segment .active').getAttribute('data-family');
+    await page.evaluate(() => document.querySelector('[data-family="ipv6"]')?.click());
+    await page.waitForSelector('.feedback-card.feedback-info');
+    const afterLockedClick = await page.locator('#family-segment .active').getAttribute('data-family');
+    assert(afterLockedClick === lockedFamily, `${width}x${height}: transaction lock allowed family change`);
+    assert(await page.locator('.gate-form').evaluate((node) => node.classList.contains('transaction-locked')), `${width}x${height}: transaction lock visual state missing`);
+
     await page.reload({waitUntil: 'networkidle'});
     await page.waitForSelector('#wan-list .wan-row');
     await page.waitForFunction(() => document.querySelector('[data-family="ipv6"]') && !document.querySelector('[data-family="ipv6"]').disabled);
@@ -222,17 +232,18 @@ try {
   assert(!('source_ip' in dualBody) && !('address' in dualBody), 'dual-stack authorization request included a browser address');
   await dualPage.close();
 
-  // IPv6-first request with no IPv4 source: the browser may submit only an untrusted candidate.
-  // The Gate authorization request still carries no IP address; OpenWrt/WireGuard performs final verification.
+  // IPv6-first request with no IPv4 source: primary echo may fail, fallback may save an untrusted candidate.
+  // Candidate success must update the current page in-place; it must never navigate/reload the document.
   const sourcePage = await browser.newPage({viewport: {width: 390, height: 844}});
   let candidateSaved = false;
-  let echoRequests = 0;
+  let primaryRequests = 0;
+  let fallbackRequests = 0;
   let candidatePosts = 0;
   let candidateBody = null;
-  let releaseEcho;
-  let markEchoStarted;
-  const echoGate = new Promise((resolve) => { releaseEcho = resolve; });
-  const echoStarted = new Promise((resolve) => { markEchoStarted = resolve; });
+  let releaseFallback;
+  let markFallbackStarted;
+  const fallbackGate = new Promise((resolve) => { releaseFallback = resolve; });
+  const fallbackStarted = new Promise((resolve) => { markFallbackStarted = resolve; });
 
   await sourcePage.route('**/api/v1/dashboard', async (route) => {
     const response = await route.fetch();
@@ -244,7 +255,7 @@ try {
         address: '112.96.156.107',
         observed_at: now,
         expires_at: now + 300,
-        source: 'browser_candidate',
+        source: 'carrier_probe',
         confidence: 'candidate',
       };
     } else {
@@ -254,14 +265,18 @@ try {
   });
 
   await sourcePage.route('https://api.ipify.org/**', async (route) => {
-    echoRequests += 1;
-    markEchoStarted();
-    await echoGate;
+    primaryRequests += 1;
+    await route.abort('failed');
+  });
+  await sourcePage.route('https://api-ipv4.ip.sb/**', async (route) => {
+    fallbackRequests += 1;
+    markFallbackStarted();
+    await fallbackGate;
     await route.fulfill({
       status: 200,
-      contentType: 'application/json',
+      contentType: 'text/plain',
       headers: {'Access-Control-Allow-Origin': '*'},
-      body: JSON.stringify({ip: '112.96.156.107'}),
+      body: '112.96.156.107\n',
     });
   });
 
@@ -282,20 +297,24 @@ try {
         address: '112.96.156.107',
         observed_at: now,
         expires_at: now + 300,
-        source: 'browser_candidate',
+        source: 'carrier_probe',
         confidence: 'candidate',
       }),
     });
   });
 
   await sourcePage.goto('http://127.0.0.1:8765/', {waitUntil: 'domcontentloaded'});
-  await echoStarted;
+  await fallbackStarted;
   await sourcePage.waitForSelector('#endpoint-picker-trigger');
   await sourcePage.waitForFunction(() =>
     document.querySelector('#family-segment .active')?.dataset.family === 'ipv4' &&
     document.querySelector('#endpoint-select')?.value === 'ep-wan2-v4'
   );
 
+  const marker = await sourcePage.evaluate(() => {
+    window.__remoteGateNoReloadMarker = `marker-${Math.random()}`;
+    return window.__remoteGateNoReloadMarker;
+  });
   const beforeCandidate = await sourcePage.evaluate(() => ({
     family: document.querySelector('#family-segment .active')?.dataset.family,
     endpoint: document.querySelector('#endpoint-select')?.value,
@@ -309,18 +328,17 @@ try {
   assert(beforeCandidate.ipv6Disabled, 'disabled IPv6 Gate remained selectable');
   assert(beforeCandidate.ipv4Source !== '112.96.156.107', 'fixture unexpectedly started with an IPv4 source');
 
-  const reloadPromise = sourcePage.waitForNavigation({waitUntil: 'domcontentloaded'});
-  releaseEcho();
-  await reloadPromise;
-  await sourcePage.waitForSelector('#endpoint-picker-trigger');
+  releaseFallback();
   await sourcePage.waitForFunction(() =>
     document.querySelector('#client-ipv4')?.textContent === '112.96.156.107' &&
     !document.querySelector('#activate-button')?.disabled
   );
 
-  assert(echoRequests === 1, `IPv4 echo should be requested exactly once (${echoRequests})`);
+  assert(primaryRequests === 1, `primary IPv4 echo should be requested exactly once (${primaryRequests})`);
+  assert(fallbackRequests === 1, `fallback IPv4 echo should be requested exactly once (${fallbackRequests})`);
   assert(candidatePosts === 1, `IPv4 candidate should be submitted exactly once (${candidatePosts})`);
   assert(candidateBody?.address === '112.96.156.107', 'candidate body was not preserved');
+  assert(await sourcePage.evaluate((expected) => window.__remoteGateNoReloadMarker === expected, marker), 'candidate success reloaded/navigated the page');
 
   const candidateActivatePromise = sourcePage.waitForRequest((request) => request.url().endsWith('/api/v1/gate/activate') && request.method() === 'POST');
   await sourcePage.locator('#activate-button').click();
@@ -331,7 +349,32 @@ try {
   await sourcePage.unrouteAll({behavior: 'ignoreErrors'});
   await sourcePage.close();
 
-  console.log(`Browser layout regression passed for ${viewports.length} viewports plus dual-stack and candidate-source recovery.`);
+  // When Cloudflare already observed IPv4, the browser must not call an IPv4 carrier probe at all.
+  const observedPage = await browser.newPage({viewport: {width: 390, height: 844}});
+  let observedIpv4Probe = 0;
+  await observedPage.route('https://api.ipify.org/**', async (route) => { observedIpv4Probe += 1; await route.abort('failed'); });
+  await observedPage.route('https://api-ipv4.ip.sb/**', async (route) => { observedIpv4Probe += 1; await route.abort('failed'); });
+  await observedPage.route('**/api/v1/dashboard', async (route) => {
+    const response = await route.fetch();
+    const payload = await response.json();
+    const now = Math.floor(Date.now() / 1000);
+    payload.client_sources.ipv4 = {
+      address: '112.96.150.36',
+      observed_at: now,
+      expires_at: now + 600,
+      source: 'cloudflare',
+      confidence: 'observed',
+    };
+    await route.fulfill({response, contentType: 'application/json', body: JSON.stringify(payload)});
+  });
+  await observedPage.goto('http://127.0.0.1:8765/', {waitUntil: 'networkidle'});
+  await observedPage.waitForFunction(() => document.querySelector('#client-ipv4')?.textContent === '112.96.150.36');
+  await observedPage.waitForTimeout(250);
+  assert(observedIpv4Probe === 0, `Cloudflare-observed IPv4 unexpectedly triggered carrier probe (${observedIpv4Probe})`);
+  await observedPage.unrouteAll({behavior: 'ignoreErrors'});
+  await observedPage.close();
+
+  console.log(`Browser layout regression passed for ${viewports.length} viewports plus dual-stack, transaction lock, fallback candidate recovery, and observed-source probe suppression.`);
 } finally {
   await browser.close();
 }
