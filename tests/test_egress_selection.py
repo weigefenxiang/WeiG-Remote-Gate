@@ -62,6 +62,9 @@ class EgressSelectionTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def reset_queue(self):
+        self.store.write("commands.json", {"pending": None, "next": [], "last": None})
+
     def activate(self, egress_name=""):
         return queue_activate(
             self.store,
@@ -77,6 +80,7 @@ class EgressSelectionTests(unittest.TestCase):
 
     def test_public_or_cgnat_default_wan_can_be_selected_as_exit(self):
         self.assertEqual(self.activate("WAN2")["egress_wan"], "WAN2")
+        self.reset_queue()
         command = self.activate("WAN")
         self.assertEqual(command["egress_wan"], "WAN")
 
