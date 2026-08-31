@@ -9,6 +9,16 @@ case "$RAW_BASE" in
         RAW_BASE="${RAW_PREFIX}refs/heads/${RAW_BASE#${RAW_PREFIX}}"
         ;;
 esac
+RAW_REF=""
+case "$RAW_BASE" in
+    "${RAW_PREFIX}"refs/heads/*)
+        RAW_REF="${RAW_BASE#${RAW_PREFIX}refs/heads/}"
+        ;;
+    "${RAW_PREFIX}"*)
+        RAW_REF="${RAW_BASE#${RAW_PREFIX}}"
+        ;;
+esac
+GITHUB_API_BASE="https://api.github.com/repos/weigefenxiang/WeiG-Remote-Gate/contents"
 LIB_DIR="/usr/lib/remote-gate"
 CONFIG_FILE="/etc/remote-gate.conf"
 STATE_DIR="/etc/remote-gate-state"
@@ -45,20 +55,40 @@ trap 'rc=$?; if [ "$SUCCESS" -ne 1 ] && [ -n "$BACKUP" ] && [ -d "$BACKUP" ]; th
 fi
 rm -rf "$TMP_DIR"; exit "$rc"' EXIT INT TERM
 
-fetch() {
-    rel="$1"; out="$2"; url="${RAW_BASE}/openwrt/${rel}"
-    if ! curl -fsSL -H 'Cache-Control: no-cache' "$url" -o "$out"; then
-        fail "Download failed: $url"
+fetch_api_raw() {
+    repo_rel="$1"; out="$2"
+    [ -n "$RAW_REF" ] || return 1
+    api_url="${GITHUB_API_BASE}/${repo_rel}?ref=${RAW_REF}"
+    curl -fsSL \
+        -H 'Accept: application/vnd.github.raw+json' \
+        -H 'X-GitHub-Api-Version: 2022-11-28' \
+        -H 'User-Agent: WeiG-Remote-Gate-Updater' \
+        "$api_url" -o "$out"
+}
+
+fetch_repo_path() {
+    repo_rel="$1"; out="$2"; raw_url="${RAW_BASE}/${repo_rel}"
+    if curl -fsSL -H 'Cache-Control: no-cache' "$raw_url" -o "$out" 2>/dev/null; then
+        return 0
     fi
+    rm -f "$out"
+    printf 'WARN: Raw download failed; trying GitHub API: %s\n' "$repo_rel" >&2
+    if fetch_api_raw "$repo_rel" "$out"; then
+        return 0
+    fi
+    rm -f "$out"
+    fail "Download failed from Raw and GitHub API: $repo_rel"
+}
+
+fetch() {
+    rel="$1"; out="$2"
+    fetch_repo_path "openwrt/${rel}" "$out"
 }
 
 FILES="remote-gate-report.sh remote-gate-agent.sh remote-gate-egress-probe.sh remote-gate-firewall.sh remote-gate-firewall-backends.sh remote-gate-wireguard-verify.sh remote-gate-firewall-include.sh remote-gate-audit.sh remote-gate-agent.init remote-gate-hotplug.sh uninstall.sh update.sh"
 info "Downloading OpenWrt update."
 for rel in $FILES; do fetch "$rel" "$TMP_DIR/$rel"; done
-VERSION_URL="${RAW_BASE}/VERSION"
-if ! curl -fsSL -H 'Cache-Control: no-cache' "$VERSION_URL" -o "$TMP_DIR/VERSION"; then
-    fail "Download failed: $VERSION_URL"
-fi
+fetch_repo_path "VERSION" "$TMP_DIR/VERSION"
 for rel in $FILES; do sh -n "$TMP_DIR/$rel" || fail "Shell syntax check failed: $rel"; done
 
 remote_version="$(sed -n '1p' "$TMP_DIR/VERSION")"
