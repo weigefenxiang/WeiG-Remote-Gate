@@ -1,93 +1,45 @@
-# Security model
+# Security Model
 
-## Default state
+## Trust levels
 
-The WAN hosts no WeiG-Remote-Gate HTTP/HTTPS service.
+Remote Gate distinguishes an observed source from an authorized source.
 
-On every active public WAN, the firewall guard protects:
+- **Cloudflare verified**: the source family observed by the VPS through the authenticated control request.
+- **Candidate**: an address returned to the browser by a public IPv4/IPv6 echo service. It may be useful for CGNAT discovery but is never sufficient for firewall authorization.
+- **WireGuard verified**: the address obtained from fresh authenticated WireGuard peer activity on the selected WAN and dynamically discovered WireGuard listen port. This is the final authorization source.
 
-- ICMP echo-request;
-- every locally discovered WireGuard UDP listen port.
+The browser cannot submit an `authorized source_ip`.
 
-Unauthorized matching traffic is dropped before the normal firewall established/related shortcut.
+## Candidate verification
 
-All other traffic falls through to the original firewall unchanged.
+For an Activate request, OpenWrt snapshots the selected WireGuard listener and opens an exact-source WireGuard UDP verification window for a few seconds. A successful fresh peer handshake or receive counter change must identify the same source.
 
-## qBittorrent / BT isolation
+If the candidate is not the actual UDP egress (for example, carrier CGNAT maps HTTP and UDP differently), the exact-source window closes and a second short **WireGuard-only discovery** window is opened on the selected WAN and WireGuard UDP port. Only authenticated WireGuard peer activity can produce the final source. Multiple peers becoming active during discovery is ambiguous and fails closed.
 
-Remote Gate never installs rules in `FORWARD`. A typical qBittorrent inbound connection follows:
+Verification windows never open Ping and never touch `FORWARD`.
 
-```text
-WAN -> PREROUTING/DNAT or UPnP -> FORWARD -> LAN host
-```
+## IPv4 and IPv6
 
-Remote Gate follows:
+IPv4 and IPv6 authorizations are independent records with independent source address, WAN device, WireGuard port, scope and expiry. The UI may activate IPv4 only, IPv6 only, or queue both families in one dual-stack request. Each family must pass its own WireGuard verification.
 
-```text
-WAN -> INPUT -> router-local ICMP/WireGuard
-```
+Return routing is also maintained per family so IPv4 and IPv6 can use different WAN policy tables without overwriting each other.
 
-The two paths are intentionally separate.
+## Public-address filtering
 
-## Gate activation
+Addresses exposed as public IPv6 inventory/endpoint candidates must be globally reachable unicast. The VPS filters inventory at its authoritative storage boundary and cleans previously stored inventory when the dashboard is read.
 
-The browser submits only control intent:
+The policy excludes link-local (`fe80::/10`), unique-local (`fc00::/7`), loopback, unspecified, multicast, documentation and other IANA special-purpose non-globally-reachable ranges. IPv6 must also be inside Internet Global Unicast `2000::/3`.
 
-- selected reported endpoint / WAN;
-- selected agent-reported WireGuard interface;
-- selected IPv4 or IPv6 family;
-- access scope;
-- TTL.
+## Firewall ownership
 
-The browser never submits the authorization `source_ip`.
+Remote Gate owns only router-local `INPUT` policy for:
 
-The request family observed directly by Cloudflare is recorded from `CF-Connecting-IP`. When the browser has a usable second family, Remote Gate uses a family-specific Cloudflare observer hostname (`v4.<public-host>` or `v6.<public-host>`) plus a signed one-time token. The observer request contains no address value; the VPS records only the `CF-Connecting-IP` that Cloudflare actually saw on that request.
+- ICMP/ICMPv6 echo request when the selected scope includes Ping;
+- dynamically discovered WireGuard UDP listen ports;
+- short WireGuard UDP-only verification windows.
 
-Legacy browser-reported address probes are disabled and fail closed.
+Remote Gate must not own or rewrite `FORWARD`, DNAT, SNAT/MASQUERADE, UPnP, NAT-PMP, qBittorrent forwarding, or unrelated firewall rules.
 
-Observer tokens are:
-- HMAC-signed with the VPS session secret;
-- bound to the authenticated session hash and one address family;
-- short-lived;
-- one-time-use;
-- valid only on the matching family-specific observer hostname;
-- rejected after logout/session expiry.
+## Multi-WAN return path
 
-The OpenWrt agent accepts an activation only when the selected WAN device is in the locally synchronized protection set and the selected UDP port is a locally discovered WireGuard listen port.
-
-## Multi-WAN WireGuard return path
-
-An authorized WireGuard initiation can arrive on a non-default WAN while the router's normal local-output route points elsewhere. During an active authorization, Remote Gate pins only router-local return traffic to the authorized client host address through the selected WAN policy table.
-
-The pin is dynamic:
-- no WAN name or WireGuard listen port is hard-coded;
-- an existing per-WAN policy table is reused when available;
-- otherwise a Remote Gate-owned destination-only table is used;
-- Close, expiry, authorization replacement and service stop remove the managed rule;
-- WAN interface updates resynchronize it.
-
-This does not alter `FORWARD` or the router-wide default route.
-
-## Backend parity
-
-### fw3
-
-- root `INPUT` jumps to `WEIG_REMOTE_GATE` at position 1;
-- ipset contains the authorized source with timeout;
-- tuple-specific ACCEPT rules precede generic protected ICMP/WireGuard DROP rules;
-- final RETURN hands unrelated INPUT traffic back to fw3.
-
-### fw4
-
-- automatic nft includes define protected/auth sets;
-- `chain-pre/input` rules run before inbound conntrack state acceptance;
-- auth source uses a timeout element;
-- unrelated traffic continues through normal fw4 rules.
-
-## Firewall reload and reboot
-
-Protected devices/ports and the authorization expiry timestamp are kept in local state. A firewall include restores the guard after a firewall rebuild. Expired authorization state is discarded instead of being reopened.
-
-## Uninstall
-
-Uninstall removes only Remote Gate's chain/set/include/managed-return-route objects. It does not delete the user's Allow-Ping, qBittorrent, UPnP, DNAT or other UCI firewall configuration.
+When a verified WireGuard source arrives on a non-default WAN, Remote Gate installs only a destination-specific router-local policy route so the locally generated WireGuard response leaves through the same WAN. IPv4 and IPv6 route state are independent and removed with authorization expiry/close.

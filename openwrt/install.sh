@@ -56,6 +56,8 @@ fetch_file "remote-gate-report.sh" "$LIB_DIR/remote-gate-report.sh"
 fetch_file "remote-gate-agent.sh" "$LIB_DIR/remote-gate-agent.sh"
 fetch_file "remote-gate-egress-probe.sh" "$LIB_DIR/remote-gate-egress-probe.sh"
 fetch_file "remote-gate-firewall.sh" "$LIB_DIR/remote-gate-firewall.sh"
+fetch_file "remote-gate-firewall-backends.sh" "$LIB_DIR/remote-gate-firewall-backends.sh"
+fetch_file "remote-gate-wireguard-verify.sh" "$LIB_DIR/remote-gate-wireguard-verify.sh"
 fetch_file "remote-gate-firewall-include.sh" "$LIB_DIR/remote-gate-firewall-include.sh"
 fetch_file "remote-gate-audit.sh" "$LIB_DIR/remote-gate-audit.sh"
 fetch_file "uninstall.sh" "$LIB_DIR/uninstall.sh"
@@ -75,8 +77,7 @@ for file in "$LIB_DIR"/*.sh "$INIT_FILE" "$HOTPLUG_FILE"; do
     sh -n "$file" || fail "Shell syntax check failed: $file"
 done
 
-BACKEND="$("$LIB_DIR/remote-gate-firewall.sh" detect 2>/dev/null)" || \
-    fail "Unsupported firewall. Need fw4+nftables or fw3+iptables+ipset."
+BACKEND="$("$LIB_DIR/remote-gate-firewall.sh" detect 2>/dev/null)" || fail "Unsupported firewall. Need fw4+nftables or fw3+iptables+ipset."
 case "$BACKEND" in
     fw4-nftables) printf 'Detected firewall backend: firewall4 / nftables\n' ;;
     fw3-iptables) printf 'Detected firewall backend: firewall3 / iptables + ipset\n' ;;
@@ -84,9 +85,7 @@ case "$BACKEND" in
 esac
 
 IPV6_CAPABLE=no
-if "$LIB_DIR/remote-gate-firewall.sh" ipv6-capable >/dev/null 2>&1; then
-    IPV6_CAPABLE=yes
-fi
+if "$LIB_DIR/remote-gate-firewall.sh" ipv6-capable >/dev/null 2>&1; then IPV6_CAPABLE=yes; fi
 printf 'IPv6 Gate firewall capability: %s\n' "$IPV6_CAPABLE"
 printf 'Remote Gate controls only router INPUT for WireGuard UDP and optional Ping Echo on protected WAN endpoints.\n'
 printf 'FORWARD, DNAT, UPnP, NAT-PMP, qBittorrent and unrelated ports are not filtered by Remote Gate.\n\n'
@@ -112,34 +111,22 @@ MANIFEST
 chmod 0600 "$STATE_DIR/install-manifest"
 
 "$LIB_DIR/remote-gate-firewall.sh" install >/dev/null
-"$LIB_DIR/remote-gate-agent.sh" sync-firewall || \
-    fail "Initial Multi-WAN/WireGuard firewall policy sync failed."
+"$LIB_DIR/remote-gate-agent.sh" sync-firewall || fail "Initial Multi-WAN/WireGuard firewall policy sync failed."
 
 if [ "$BACKEND" = "fw3-iptables" ]; then
-    printf '\nIPv4 INPUT head:\n'
-    iptables -S INPUT | sed -n '1,4p'
-    if command -v ip6tables >/dev/null 2>&1; then
-        printf '\nIPv6 INPUT head:\n'
-        ip6tables -S INPUT | sed -n '1,4p'
-    fi
+    printf '\nIPv4 INPUT head:\n'; iptables -S INPUT | sed -n '1,4p'
+    if command -v ip6tables >/dev/null 2>&1; then printf '\nIPv6 INPUT head:\n'; ip6tables -S INPUT | sed -n '1,4p'; fi
 else
     fw4 -q check
 fi
 
-grep -Fqx "$CRON_LINE" /etc/crontabs/root 2>/dev/null || \
-    printf '%s\n' "$CRON_LINE" >> /etc/crontabs/root
-if [ -x /etc/init.d/cron ]; then
-    /etc/init.d/cron restart >/dev/null 2>&1 || true
-fi
+grep -Fqx "$CRON_LINE" /etc/crontabs/root 2>/dev/null || printf '%s\n' "$CRON_LINE" >> /etc/crontabs/root
+if [ -x /etc/init.d/cron ]; then /etc/init.d/cron restart >/dev/null 2>&1 || true; fi
 
 "$INIT_FILE" enable
 "$INIT_FILE" stop >/dev/null 2>&1 || true
 "$INIT_FILE" start || fail "Remote Gate agent failed to start."
-
-# Probe private/CGNAT WAN IPv4 egress once; failure is non-fatal.
 "$LIB_DIR/remote-gate-egress-probe.sh" >/dev/null 2>&1 || true
-# The procd service begins its own run loop immediately. Keep the post-install
-# report-only so a second process cannot pull the same pending command.
 "$LIB_DIR/remote-gate-agent.sh" report || true
 
 printf '\nWeiG Remote Gate OpenWrt components installed.\n'

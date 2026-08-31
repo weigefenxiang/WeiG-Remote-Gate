@@ -1,16 +1,13 @@
-import hashlib
 import tempfile
 import unittest
 from pathlib import Path
 
 from server.app.client_sources import (
-    issue_observer_token,
+    observe_candidate,
     observe_network_probe,
     observe_source,
-    observer_hostnames,
-    observer_url,
-    redeem_observer_token,
     source_for_family,
+    source_record_for_family,
     trusted_sources,
 )
 from server.app.store import JsonStore
@@ -21,102 +18,52 @@ class TrustedSourceTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.store = JsonStore(Path(self.tmp.name))
         self.token = "session-token"
-        self.secret = b"s" * 32
-        self.session_id = hashlib.sha256(self.token.encode("ascii")).hexdigest()
-        self.store.write("sessions.json", {self.session_id: {"expires_at": 1000, "created_at": 1}})
 
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_ipv4_and_ipv6_can_be_observed_for_same_session(self):
-        observe_source(self.store, self.token, "198.51.100.10", now=100)
-        observe_source(self.store, self.token, "2001:4860:4860::8888", now=120)
-        sources = trusted_sources(self.store, self.token, now=130)
+    def test_verified_ipv4_and_ipv6_coexist(self):
+        observe_source(self.store, self.token, "8.8.8.8", now=100)
+        observe_source(self.store, self.token, "2001:4860:4860::8888", now=110)
+        sources = trusted_sources(self.store, self.token, now=120)
         self.assertEqual(set(sources), {"ipv4", "ipv6"})
-
-    def test_latest_cloudflare_observation_replaces_old_ipv4(self):
-        observe_source(self.store, self.token, "198.51.100.10", now=100)
-        observe_source(self.store, self.token, "203.0.113.20", now=110)
-        self.assertEqual(source_for_family(self.store, self.token, "ipv4", now=111), "203.0.113.20")
-
-    def test_observer_supplies_verified_ipv4_for_ipv6_first_session(self):
-        observe_source(self.store, self.token, "2001:4860:4860::8888", now=100)
-        token = issue_observer_token(self.token, "ipv4", self.secret, now=110)
-        record = redeem_observer_token(
-            self.store,
-            token,
-            "8.8.8.8",
-            "v4.remote.example.com",
-            "remote.example.com",
-            self.secret,
-            now=111,
-        )
-        sources = trusted_sources(self.store, self.token, now=112)
-        self.assertEqual(record["family"], "ipv4")
-        self.assertEqual(set(sources), {"ipv4", "ipv6"})
-        self.assertEqual(sources["ipv4"]["address"], "8.8.8.8")
-        self.assertEqual(sources["ipv4"]["source"], "cloudflare_observer")
         self.assertEqual(sources["ipv4"]["confidence"], "verified")
+        self.assertEqual(sources["ipv6"]["confidence"], "verified")
 
-    def test_legacy_browser_reported_probe_is_disabled(self):
-        with self.assertRaisesRegex(ValueError, "untrusted_source_probe_disabled"):
-            observe_network_probe(self.store, self.token, "8.8.8.8", family="ipv4", now=100)
+    def test_candidate_fills_missing_family(self):
+        observe_source(self.store, self.token, "2001:4860:4860::8888", now=100)
+        record = observe_candidate(self.store, self.token, "1.1.1.1", "ipv4", now=110)
+        self.assertEqual(record["confidence"], "candidate")
+        self.assertEqual(record["source"], "carrier_probe")
+        self.assertEqual(source_for_family(self.store, self.token, "ipv4", now=111), "1.1.1.1")
 
-    def test_observer_hostnames_are_family_specific(self):
-        self.assertEqual(
-            observer_hostnames("Remote.Example.com."),
-            {"ipv4": "v4.remote.example.com", "ipv6": "v6.remote.example.com"},
-        )
-        token = issue_observer_token(self.token, "ipv6", self.secret, now=100)
-        self.assertTrue(observer_url("remote.example.com", "ipv6", token).startswith(
-            "https://v6.remote.example.com/api/v1/client-source/observe?token="
-        ))
+    def test_candidate_does_not_replace_live_verified_source(self):
+        observe_source(self.store, self.token, "8.8.8.8", now=100)
+        record = observe_candidate(self.store, self.token, "1.1.1.1", "ipv4", now=110)
+        self.assertEqual(record["address"], "8.8.8.8")
+        self.assertEqual(source_record_for_family(self.store, self.token, "ipv4", now=111)["confidence"], "verified")
 
-    def test_observer_rejects_wrong_host(self):
-        token = issue_observer_token(self.token, "ipv4", self.secret, now=100)
-        with self.assertRaisesRegex(ValueError, "observer_host_mismatch"):
-            redeem_observer_token(
-                self.store, token, "8.8.8.8", "v6.remote.example.com",
-                "remote.example.com", self.secret, now=101,
-            )
+    def test_non_public_or_special_addresses_are_rejected(self):
+        for family, address in (
+            ("ipv4", "10.0.0.1"),
+            ("ipv4", "192.168.1.1"),
+            ("ipv4", "127.0.0.1"),
+            ("ipv6", "fe80::1"),
+            ("ipv6", "fd00::1"),
+            ("ipv6", "::1"),
+            ("ipv6", "2001:db8::1"),
+            ("ipv6", "ff02::1"),
+        ):
+            with self.subTest(address=address):
+                with self.assertRaises(ValueError):
+                    observe_candidate(self.store, self.token, address, family, now=100)
 
-    def test_observer_rejects_wrong_network_family(self):
-        token = issue_observer_token(self.token, "ipv4", self.secret, now=100)
-        with self.assertRaisesRegex(ValueError, "observer_family_mismatch"):
-            redeem_observer_token(
-                self.store, token, "2001:4860:4860::8888", "v4.remote.example.com",
-                "remote.example.com", self.secret, now=101,
-            )
+    def test_legacy_browser_probe_remains_fail_closed(self):
+        with self.assertRaisesRegex(ValueError, "legacy_source_probe_disabled"):
+            observe_network_probe(self.store, self.token, "8.8.8.8", family="ipv4")
 
-    def test_observer_token_is_one_time(self):
-        token = issue_observer_token(self.token, "ipv4", self.secret, now=100)
-        args = (
-            self.store, token, "8.8.8.8", "v4.remote.example.com",
-            "remote.example.com", self.secret,
-        )
-        redeem_observer_token(*args, now=101)
-        with self.assertRaisesRegex(ValueError, "observer_token_replayed"):
-            redeem_observer_token(*args, now=102)
-
-    def test_observer_token_expires(self):
-        token = issue_observer_token(self.token, "ipv4", self.secret, now=100, ttl=30)
-        with self.assertRaisesRegex(ValueError, "observer_token_expired"):
-            redeem_observer_token(
-                self.store, token, "8.8.8.8", "v4.remote.example.com",
-                "remote.example.com", self.secret, now=131,
-            )
-
-    def test_observer_requires_live_login_session(self):
-        token = issue_observer_token(self.token, "ipv4", self.secret, now=100)
-        self.store.write("sessions.json", {})
-        with self.assertRaisesRegex(ValueError, "observer_session_expired"):
-            redeem_observer_token(
-                self.store, token, "8.8.8.8", "v4.remote.example.com",
-                "remote.example.com", self.secret, now=101,
-            )
-
-    def test_expired_family_cannot_be_selected(self):
-        observe_source(self.store, self.token, "198.51.100.10", now=100)
+    def test_expired_candidate_is_not_selectable(self):
+        observe_candidate(self.store, self.token, "1.1.1.1", "ipv4", now=100)
         with self.assertRaisesRegex(ValueError, "client_source_not_observed"):
             source_for_family(self.store, self.token, "ipv4", now=1000)
 
