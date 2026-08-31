@@ -3,6 +3,12 @@ set -euo pipefail
 umask 077
 
 RAW_BASE="${REMOTE_GATE_RAW_BASE:-https://raw.githubusercontent.com/weigefenxiang/WeiG-Remote-Gate/main}"
+RAW_PREFIX="https://raw.githubusercontent.com/weigefenxiang/WeiG-Remote-Gate/"
+case "$RAW_BASE" in
+  "${RAW_PREFIX}"dev/*)
+    RAW_BASE="${RAW_PREFIX}refs/heads/${RAW_BASE#${RAW_PREFIX}}"
+    ;;
+esac
 ETC_DIR="/etc/remote-gate"
 LIB_DIR="/usr/local/lib/remote-gate"
 SERVICE_FILE="/etc/systemd/system/remote-gate.service"
