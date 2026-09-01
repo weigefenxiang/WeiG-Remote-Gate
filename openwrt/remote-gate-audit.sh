@@ -1,6 +1,8 @@
 #!/bin/sh
 set -u
 
+PLATFORM="${REMOTE_GATE_PLATFORM_HELPER:-/usr/lib/remote-gate/remote-gate-platform.sh}"
+
 section() {
     printf '\n===== %s =====\n' "$1"
 }
@@ -42,29 +44,49 @@ safe_ubus_status() {
 }
 
 section 'SYSTEM'
-if [ -r /etc/openwrt_release ]; then
-    grep -E '^(DISTRIB_ID|DISTRIB_RELEASE|DISTRIB_REVISION|DISTRIB_TARGET|DISTRIB_ARCH)=' /etc/openwrt_release 2>/dev/null || true
+if [ -x "$PLATFORM" ]; then
+    "$PLATFORM" summary 2>/dev/null || true
+else
+    if [ -r /etc/openwrt_release ]; then
+        grep -E '^(DISTRIB_ID|DISTRIB_RELEASE|DISTRIB_REVISION|DISTRIB_TARGET|DISTRIB_ARCH)=' /etc/openwrt_release 2>/dev/null || true
+    fi
+    uname -a 2>/dev/null || true
 fi
-uname -a 2>/dev/null || true
 
 section 'NATIVE MAPPER ABI'
 kernel_arch="$(uname -m 2>/dev/null || true)"
-printf 'Kernel machine: %s\n' "${kernel_arch:-unknown}"
-if has opkg; then
-    package_arch="$(opkg print-architecture 2>/dev/null | awk '
-        $1 == "arch" && $2 != "all" && $2 != "noarch" {
-            priority = $3 + 0
-            if (!found || priority >= best) { value = $2; best = priority; found = 1 }
-        }
-        END { if (found) print value }
-    ')"
-    printf 'OpenWrt package ABI: %s\n' "${package_arch:-unknown}"
-    printf '%s\n' 'opkg architectures:'
-    opkg print-architecture 2>/dev/null | sed 's/^/  /' || true
-else
-    printf 'OpenWrt package ABI: unknown (opkg unavailable)\n'
+package_arch=""
+package_manager=none
+if [ -x "$PLATFORM" ]; then
+    package_manager="$("$PLATFORM" package-manager 2>/dev/null || printf none)"
+    package_arch="$("$PLATFORM" package-arch 2>/dev/null || true)"
 fi
-printf '%s\n' 'Mapper binaries must match the reported package ABI; Remote Gate does not guess an ABI.'
+[ -n "$package_arch" ] || {
+    if has apk; then
+        package_manager=apk
+        package_arch="$(apk --print-arch 2>/dev/null | sed -n '1p')"
+    elif has opkg; then
+        package_manager=opkg
+        package_arch="$(opkg print-architecture 2>/dev/null | awk '$1 == "arch" && $2 != "all" && $2 != "noarch" { p=$3+0; if (!f || p>=b) {a=$2;b=p;f=1} } END{if(f)print a}')"
+    fi
+}
+printf 'Package manager: %s\n' "$package_manager"
+printf 'OpenWrt package ABI: %s\n' "${package_arch:-unknown}"
+printf 'Kernel machine: %s\n' "${kernel_arch:-unknown}"
+if [ -x "$PLATFORM" ]; then
+    printf 'libc family: %s\n' "$("$PLATFORM" libc 2>/dev/null || printf unknown)"
+fi
+case "$package_manager" in
+    apk)
+        printf 'apk architecture: '
+        apk --print-arch 2>/dev/null || printf 'unknown\n'
+        ;;
+    opkg)
+        printf '%s\n' 'opkg architectures:'
+        opkg print-architecture 2>/dev/null | sed 's/^/  /' || true
+        ;;
+esac
+printf '%s\n' 'Mapper binaries must match the package ABI; kernel machine alone is not binary-selection authority.'
 
 section 'FIREWALL CAPABILITIES'
 for cmd in fw3 fw4 iptables ip6tables ipset nft; do
@@ -87,10 +109,12 @@ if has ipset; then
 fi
 
 section 'RELEVANT PACKAGES'
-if has opkg; then
+if has apk; then
+    apk list -I 2>/dev/null | grep -E '^(firewall|firewall4|iptables|ip6tables|ipset|kmod-ipt-ipset|kmod-ip6tables|kmod-nft|nftables|wireguard|kmod-wireguard)([-[:space:]]|$)' || true
+elif has opkg; then
     opkg list-installed 2>/dev/null | grep -E '^(firewall|firewall4|iptables|ip6tables|ipset|kmod-ipt-ipset|kmod-ip6tables|kmod-nft|nftables|wireguard|kmod-wireguard)( |-|$)' || true
 else
-    printf 'opkg not found\n'
+    printf 'No supported package manager detected; runtime capability checks still apply.\n'
 fi
 
 section 'NETWORK INTERFACES (SAFE SUMMARY)'
