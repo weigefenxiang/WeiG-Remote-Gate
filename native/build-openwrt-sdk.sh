@@ -92,10 +92,11 @@ fi
 
 (
     cd "$SDK_ROOT"
-    make package/weig-remote-gate-mapper/clean >/dev/null 2>&1 || true
     if [ "$SDK_FORCE_PREREQ" = 1 ]; then
+        make FORCE=1 package/weig-remote-gate-mapper/clean >/dev/null 2>&1 || true
         make FORCE=1 package/weig-remote-gate-mapper/compile V=s -j1
     else
+        make package/weig-remote-gate-mapper/clean >/dev/null 2>&1 || true
         make package/weig-remote-gate-mapper/compile V=s -j1
     fi
 )
