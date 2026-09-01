@@ -41,6 +41,7 @@ mkdir -p "$TMP_DIR"
 trap 'rc=$?; if [ "$SUCCESS" -ne 1 ] && [ -n "$BACKUP" ] && [ -d "$BACKUP" ]; then
     printf "\nUpdate failed; restoring previous OpenWrt Remote Gate files...\n" >&2
     [ -x "$INIT_FILE" ] && "$INIT_FILE" stop >/dev/null 2>&1 || true
+    [ -x "$LIB_DIR/remote-gate-mapping.sh" ] && "$LIB_DIR/remote-gate-mapping.sh" stop-all >/dev/null 2>&1 || true
     if [ "$NEW_FILES_INSTALLED" -eq 1 ] && [ -x "$LIB_DIR/remote-gate-firewall.sh" ]; then "$LIB_DIR/remote-gate-firewall.sh" uninstall >/dev/null 2>&1 || true; fi
     rm -rf "$LIB_DIR"; [ -d "$BACKUP/remote-gate-lib" ] && cp -a "$BACKUP/remote-gate-lib" "$LIB_DIR"
     [ -f "$BACKUP/remote-gate.conf" ] && cp -a "$BACKUP/remote-gate.conf" "$CONFIG_FILE"
@@ -48,6 +49,7 @@ trap 'rc=$?; if [ "$SUCCESS" -ne 1 ] && [ -n "$BACKUP" ] && [ -d "$BACKUP" ]; th
     [ -f "$BACKUP/remote-gate-agent.init" ] && cp -a "$BACKUP/remote-gate-agent.init" "$INIT_FILE"
     [ -f "$BACKUP/remote-gate-hotplug.sh" ] && { mkdir -p "$(dirname "$HOTPLUG_FILE")"; cp -a "$BACKUP/remote-gate-hotplug.sh" "$HOTPLUG_FILE"; }
     chmod 0755 "$LIB_DIR"/*.sh "$INIT_FILE" "$HOTPLUG_FILE" 2>/dev/null || true
+    [ -f "$LIB_DIR/remote-gate-mapper" ] && chmod 0755 "$LIB_DIR/remote-gate-mapper" 2>/dev/null || true
     [ -x "$LIB_DIR/remote-gate-firewall.sh" ] && "$LIB_DIR/remote-gate-firewall.sh" install >/dev/null 2>&1 || true
     [ -x "$LIB_DIR/remote-gate-agent.sh" ] && "$LIB_DIR/remote-gate-agent.sh" sync-firewall >/dev/null 2>&1 || true
     [ -x "$INIT_FILE" ] && { "$INIT_FILE" enable >/dev/null 2>&1 || true; "$INIT_FILE" start >/dev/null 2>&1 || true; }
@@ -85,7 +87,7 @@ fetch() {
     fetch_repo_path "openwrt/${rel}" "$out"
 }
 
-FILES="remote-gate-report.sh remote-gate-agent.sh remote-gate-egress-probe.sh remote-gate-wireguard-egress.sh remote-gate-firewall.sh remote-gate-firewall-backends.sh remote-gate-wireguard-verify.sh remote-gate-firewall-include.sh remote-gate-audit.sh remote-gate-agent.init remote-gate-hotplug.sh uninstall.sh update.sh"
+FILES="remote-gate-report.sh remote-gate-agent.sh remote-gate-egress-probe.sh remote-gate-wireguard-egress.sh remote-gate-service-registry.sh remote-gate-mapping.sh remote-gate-firewall.sh remote-gate-firewall-backends.sh remote-gate-wireguard-verify.sh remote-gate-firewall-include.sh remote-gate-audit.sh remote-gate-agent.init remote-gate-hotplug.sh uninstall.sh update.sh"
 info "Downloading OpenWrt update."
 for rel in $FILES; do fetch "$rel" "$TMP_DIR/$rel"; done
 fetch_repo_path "VERSION" "$TMP_DIR/VERSION"
@@ -111,22 +113,36 @@ if command -v uci >/dev/null 2>&1; then uci export firewall > "$BACKUP/firewall.
 chmod -R go-rwx "$BACKUP"; info "Backup created: $BACKUP"
 
 [ -x "$INIT_FILE" ] && "$INIT_FILE" stop >/dev/null 2>&1 || true
+[ -x "$LIB_DIR/remote-gate-mapping.sh" ] && "$LIB_DIR/remote-gate-mapping.sh" stop-all >/dev/null 2>&1 || true
 mkdir -p "$LIB_DIR" "$(dirname "$HOTPLUG_FILE")" "$STATE_DIR"
-for rel in remote-gate-report.sh remote-gate-agent.sh remote-gate-egress-probe.sh remote-gate-wireguard-egress.sh remote-gate-firewall.sh remote-gate-firewall-backends.sh remote-gate-wireguard-verify.sh remote-gate-firewall-include.sh remote-gate-audit.sh uninstall.sh update.sh; do cp "$TMP_DIR/$rel" "$LIB_DIR/$rel"; done
+for rel in remote-gate-report.sh remote-gate-agent.sh remote-gate-egress-probe.sh remote-gate-wireguard-egress.sh remote-gate-service-registry.sh remote-gate-mapping.sh remote-gate-firewall.sh remote-gate-firewall-backends.sh remote-gate-wireguard-verify.sh remote-gate-firewall-include.sh remote-gate-audit.sh uninstall.sh update.sh; do cp "$TMP_DIR/$rel" "$LIB_DIR/$rel"; done
 cp "$TMP_DIR/remote-gate-agent.init" "$INIT_FILE"
 cp "$TMP_DIR/remote-gate-hotplug.sh" "$HOTPLUG_FILE"
 cp "$TMP_DIR/VERSION" "$LIB_DIR/VERSION"
 chmod 0755 "$LIB_DIR"/*.sh "$INIT_FILE" "$HOTPLUG_FILE"; chmod 0644 "$LIB_DIR/VERSION"; NEW_FILES_INSTALLED=1
 
+# Preserve an already installed compatible mapper binary. A locally supplied
+# replacement is accepted explicitly; the updater never requires a compiler.
+MAPPER_SOURCE="${REMOTE_GATE_MAPPER_SOURCE:-}"
+if [ -n "$MAPPER_SOURCE" ] && [ -f "$MAPPER_SOURCE" ] && [ -x "$MAPPER_SOURCE" ]; then
+    cp "$MAPPER_SOURCE" "$LIB_DIR/remote-gate-mapper"
+    chmod 0755 "$LIB_DIR/remote-gate-mapper"
+fi
+
 append_default() { key="$1" value="$2"; grep -Eq "^${key}=" "$CONFIG_FILE" 2>/dev/null || printf "%s='%s'\n" "$key" "$value" >> "$CONFIG_FILE"; }
 append_default GATE_IPV6 disabled
 append_default CONTROL_TRANSPORT auto
-append_default NATMAP_DISCOVERY auto
+append_default MAPPED_ACCESS auto
+# 0.3.17 no longer uses NATMap as an architectural or runtime dependency.
+grep -Ev '^NATMAP_DISCOVERY=' "$CONFIG_FILE" > "$TMP_DIR/remote-gate.conf.migrated" || true
+mv "$TMP_DIR/remote-gate.conf.migrated" "$CONFIG_FILE"
 chmod 0600 "$CONFIG_FILE"
 
 mkdir -p "$STATE_DIR"
 if [ ! -f "$STATE_DIR/install-manifest" ]; then
-    { printf 'schema=1\n'; printf 'wireguard_owned=0\n'; printf 'firewall_include_owned=1\n'; printf 'agent_owned=1\n'; } > "$STATE_DIR/install-manifest"; chmod 0600 "$STATE_DIR/install-manifest"
+    { printf 'schema=2\n'; printf 'wireguard_owned=0\n'; printf 'firewall_include_owned=1\n'; printf 'agent_owned=1\n'; printf 'mapper_owned=1\n'; } > "$STATE_DIR/install-manifest"; chmod 0600 "$STATE_DIR/install-manifest"
+else
+    grep -Eq '^mapper_owned=' "$STATE_DIR/install-manifest" 2>/dev/null || printf 'mapper_owned=1\n' >> "$STATE_DIR/install-manifest"
 fi
 
 "$LIB_DIR/remote-gate-wireguard-egress.sh" cleanup-legacy >/dev/null || fail "Legacy WireGuard egress cleanup failed."
@@ -144,6 +160,11 @@ SUCCESS=1; trap - EXIT INT TERM; rm -rf "$TMP_DIR"
 printf 'WeiG Remote Gate OpenWrt updated: %s -> %s\n' "$local_version" "$remote_version"
 printf 'Backup: %s\n' "$BACKUP"
 printf 'IPv6 Gate mode: %s\n' "$(sed -n "s/^GATE_IPV6='\([^']*\)'/\1/p" "$CONFIG_FILE" | sed -n '1p')"
+if [ -x "$LIB_DIR/remote-gate-mapper" ]; then
+    printf 'Mapped Access: mapper binary available; activation still depends on compatible NAT behavior\n'
+else
+    printf 'Mapped Access: mapper binary unavailable; Direct/IPv6/Gate features remain enabled\n'
+fi
 printf 'Private/CGNAT WAN IPv4 egress probe: enabled\n'
 printf 'Optional WG home Internet egress: runtime only, reboot returns it to OFF\n'
 printf 'Read-only audit: %s/remote-gate-audit.sh\n' "$LIB_DIR"
