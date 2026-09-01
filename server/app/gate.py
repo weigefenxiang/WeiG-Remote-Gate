@@ -192,10 +192,28 @@ def _activation_command(
         if endpoint_family == "ipv6" and isinstance(caps, dict) and not bool(caps.get("gate_ipv6", False)):
             raise GateError("ipv6_gate_unavailable")
 
+        access_method = str(endpoint.get("access_method") or "direct")
+        if access_method not in {"direct", "mapped"}:
+            raise GateError("unsupported_access_method")
+        transport = str(endpoint.get("transport") or "udp")
+        if transport != "udp":
+            raise GateError("unsupported_transport")
+        service_type = str(endpoint.get("service_type") or "wireguard")
+        if service_type != "wireguard":
+            raise GateError("unsupported_service")
+        try:
+            ingress_port = int(endpoint.get("ingress_port", endpoint.get("local_port", 0)) or 0)
+            service_port = int(endpoint.get("service_port", endpoint.get("local_port", 0)) or 0)
+        except (TypeError, ValueError) as exc:
+            raise GateError("invalid_endpoint_port") from exc
+        if not 1 <= ingress_port <= 65535 or not 1 <= service_port <= 65535:
+            raise GateError("invalid_endpoint_port")
+
         agent_schema = _agent_schema(store)
         advanced = (
             endpoint_family == "ipv6"
             or scope != "wg_ping"
+            or access_method == "mapped"
             or endpoint.get("provider") != "native"
             or endpoint.get("reachability") in {"private", "egress_probe"}
             or source_confidence == "candidate"
@@ -204,10 +222,12 @@ def _activation_command(
         )
         if advanced and agent_schema < 2:
             raise GateError("agent_upgrade_required")
+        if access_method == "mapped" and agent_schema < 3:
+            raise GateError("agent_upgrade_required")
 
         now = int(time.time())
         command = {
-            "schema": 3 if batch_count > 1 or source_confidence == "candidate" or selected_egress else 2,
+            "schema": 3 if advanced else 2,
             "id": secrets.token_hex(16),
             "action": "activate",
             "created_at": now,
@@ -217,14 +237,21 @@ def _activation_command(
             "family": endpoint_family,
             "scope": scope,
             "endpoint_id": str(endpoint["id"]),
+            "access_method": access_method,
             "provider": str(endpoint.get("provider", "native")),
             "reachability": str(endpoint.get("reachability", "")),
+            "transport": transport,
             "wan": str(endpoint.get("wan", "")),
             "device": str(endpoint["device"]),
+            "service_id": str(endpoint.get("service_id", "")),
+            "service_type": service_type,
             "wireguard": str(endpoint["wireguard"]),
-            "wg_port": int(endpoint["local_port"]),
+            "ingress_port": ingress_port,
+            "service_port": service_port,
+            # wg_port remains for rolling compatibility and Internet Exit.
+            "wg_port": service_port,
             "external_address": str(endpoint.get("external_address", "")),
-            "external_port": int(endpoint.get("external_port", endpoint["local_port"])),
+            "external_port": int(endpoint.get("external_port", ingress_port)),
             "egress_wan": selected_egress,
             "egress_mode": command_egress_mode,
             "ttl": ttl,
@@ -239,6 +266,7 @@ def _activation_command(
         raise GateError("endpoint_required")
     wan = public_wan(store, wan_name)
     wg = wireguard_interface(store, wg_name)
+    port = int(wg["listen_port"])
     now = int(time.time())
     return {
         "schema": 1,
@@ -250,10 +278,16 @@ def _activation_command(
         "source_confidence": "verified",
         "family": "ipv4",
         "scope": "wg_ping",
+        "access_method": "direct",
+        "transport": "udp",
         "wan": wan_name,
         "device": str(wan["device"]),
+        "service_id": f"wg.{wg_name}",
+        "service_type": "wireguard",
         "wireguard": wg_name,
-        "wg_port": int(wg["listen_port"]),
+        "ingress_port": port,
+        "service_port": port,
+        "wg_port": port,
         "egress_wan": selected_egress,
         "egress_mode": command_egress_mode,
         "ttl": ttl,
@@ -328,7 +362,10 @@ def queue_activate_many(
         )
         for index, item in enumerate(requests)
     ]
-    listeners = {(command.get("wireguard"), int(command.get("wg_port", 0) or 0)) for command in commands}
+    listeners = {
+        (command.get("service_id"), int(command.get("service_port", command.get("wg_port", 0)) or 0))
+        for command in commands
+    }
     if len(listeners) != 1:
         raise GateError("wireguard_mismatch")
 
@@ -348,9 +385,11 @@ def _append_gate_request(store: JsonStore, command: dict[str, Any]) -> None:
             "source_confidence": command.get("source_confidence", "verified"),
             "family": command["family"],
             "scope": command["scope"],
+            "access_method": command.get("access_method", "direct"),
             "wan": command.get("wan", ""),
             "egress_wan": command.get("egress_wan", ""),
             "egress_mode": command.get("egress_mode", ""),
+            "service_id": command.get("service_id", ""),
             "wireguard": command.get("wireguard", ""),
             "endpoint_id": command.get("endpoint_id", ""),
             "batch_id": command.get("batch_id", ""),
