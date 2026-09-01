@@ -37,7 +37,8 @@ define Build/Compile
 		-std=c11 \
 		-o $(PKG_BUILD_DIR)/remote-gate-mapper \
 		$(PKG_BUILD_DIR)/remote-gate-mapper-entry.c \
-		$(TARGET_LDFLAGS)
+		$(TARGET_LDFLAGS) \
+		$(REMOTE_GATE_SDK_LINK_FLAGS)
 endef
 
 define Package/remote-gate-mapper/install
