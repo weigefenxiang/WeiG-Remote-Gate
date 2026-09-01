@@ -19,6 +19,9 @@ on:
           - openwrt-24.10.5-x86_64
           - openwrt-25.12.5-x86_64
           - immortalwrt-24.10.5-x86_64
+  push:
+    branches:
+      - dev
 
 permissions:
   contents: read
@@ -28,7 +31,54 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  sdk-1907-x86-series-once:
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[sdk-1907-x86-series]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SDK inspection tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xz-utils zstd file binutils
+
+      - name: Build and smoke OpenWrt 19.07.9 x86_64
+        shell: bash
+        run: |
+          set -euo pipefail
+          matrix="$RUNNER_TEMP/sdk-compat-19079-x86.tsv"
+          cp native/sdk-compat-matrix.tsv "$matrix"
+          printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+            'openwrt-19.07.9-x86_64' \
+            'openwrt' \
+            '19.07.9' \
+            'x86/64' \
+            'x86_64' \
+            'xz' \
+            '1e466277a72ac491cc3c1ba3ccf34f2fd9f8edd1fe5439462ac2e89cb43cd7dc' \
+            'https://downloads.openwrt.org/releases/19.07.9/targets/x86/64/openwrt-sdk-19.07.9-x86-64_gcc-7.5.0_musl.Linux-x86_64.tar.xz' >> "$matrix"
+          REMOTE_GATE_SDK_COMPAT_MATRIX="$matrix" \
+            sh native/run-sdk-compat.sh openwrt-19.07.9-x86_64 "$PWD/native/dist-sdk-19079-x86"
+          binary="$PWD/native/dist-sdk-19079-x86/remote-gate-mapper-x86_64"
+          file "$binary"
+          readelf -h "$binary"
+          readelf -lW "$binary"
+          readelf -n "$binary" || true
+          sha256sum "$binary"
+
+      - name: Upload OpenWrt 19.07.9 x86_64 candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-gate-mapper-openwrt-19.07.9-x86_64-${{ github.sha }}
+          path: native/dist-sdk-19079-x86/remote-gate-mapper-x86_64
+          if-no-files-found: error
+          retention-days: 14
+
   sdk-build:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
