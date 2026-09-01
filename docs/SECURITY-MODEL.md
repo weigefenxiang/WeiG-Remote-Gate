@@ -7,7 +7,7 @@ Remote Gate separates four decisions:
 1. **Access Method** decides how the Internet reaches a locally registered service: Direct, Mapped, or a future Relay path.
 2. **Access Gate authorization** decides which external source address may use the selected router-local ingress for a limited TTL.
 3. **Service authentication** remains owned by the service itself. For WireGuard, public-key authentication still decides which peer may establish the encrypted tunnel.
-4. **Internet Exit** optionally decides whether traffic from an authenticated WireGuard client subnet may be forwarded through a selected WAN for a limited runtime TTL.
+4. **Internet Exit** optionally decides whether traffic from an authenticated WireGuard client subnet may be forwarded through explicitly selected WAN policy for a limited runtime TTL. IPv4 and IPv6 may use the same WAN or different WANs.
 
 A temporary Gate authorization does not replace WireGuard authentication and does not make a mapped endpoint permanently open.
 
@@ -21,6 +21,20 @@ IPv4 and IPv6 are independent source records in the authenticated browser sessio
 - **Candidate**: a short-lived address reported by the browser after a family-specific public IP echo probe. It is useful when the dashboard request itself used the other family.
 
 The Activate body never carries an arbitrary `source_ip`. The VPS resolves the selected family from the session source store and validates the selected endpoint server-side. Candidate records are therefore session-bound and CSRF-protected, but they are not equivalent to a WireGuard peer proof; possession of a valid WireGuard peer key remains required to establish the data-plane tunnel.
+
+A router-owned public address must not become authorization evidence for the remote browser merely because the browser later reaches the VPS through WireGuard Internet Exit. Known Direct WAN public addresses, current Mapped external addresses and known router egress addresses are suppressed as client-source replacements. While a Gate authorization is active for a session/family, the authorized remote source remains pinned rather than drifting to the router's own egress address.
+
+This prevents the feedback loop:
+
+```text
+remote client source
+-> Activate
+-> WireGuard Internet Exit
+-> browser request returns through home WAN
+-> VPS observes home WAN public address
+```
+
+The final observation is router egress, not a new remote-client authorization source.
 
 ## Service Registry authority
 
@@ -150,13 +164,15 @@ The shared firewall profile for a family remains exact: active records must use 
 
 ## IPv4 and IPv6
 
-IPv4 and IPv6 authorization sets are independent. The UI may activate IPv4 only, IPv6 only, or queue both in one Dual transaction. A failed family stops the Dual batch instead of allowing a later family to hide the failure.
+IPv4 and IPv6 authorization sets are independent. The UI may activate IPv4 only, IPv6 only, or queue both in one Dual transaction. A failed family stops the Dual batch instead of allowing a later family to hide the failure. Any partial authorization from that failed batch is cleared.
 
 Mapped Access in 0.3.17 is IPv4/UDP only. IPv6 remains Direct when a global IPv6 endpoint and IPv6 Gate capability are available.
 
+A Dual transaction contains one validated endpoint per family. The endpoints must resolve to the same registered WireGuard service, but they may belong to different WANs. The UI prefers a same-WAN public dual pair when one exists; otherwise a split-WAN pair is allowed.
+
 Return routing is maintained per authorized source and per family, so multiple `/32` IPv4 or `/128` IPv6 client destinations can coexist on Multi-WAN systems.
 
-For Internet Exit, IPv4, IPv6 and Dual are explicit modes. Dual egress is transactional: both families must validate and install successfully or the helper rolls back the partial runtime state.
+For Internet Exit, IPv4, IPv6 and Dual are explicit modes. Dual egress is transactional: both families must validate and install successfully or the helper rolls back the partial runtime state. Same-WAN Dual may share one egress WAN; split Dual carries independent `egress_wan_ipv4` and `egress_wan_ipv6` authority.
 
 ## Public-address filtering
 
@@ -188,24 +204,29 @@ The Mapping Engine may relay authorized UDP datagrams from its registered ingres
 
 ### Internet Exit
 
-Internet Exit is a separate, opt-in runtime capability. When explicitly enabled, Remote Gate may temporarily own only the path from the selected WireGuard client subnet to the selected WAN:
+Internet Exit is a separate, opt-in runtime capability. When explicitly enabled, Remote Gate may temporarily own only the path from the selected WireGuard client subnet to the explicitly selected WAN for each active family:
 
-- source/interface-scoped policy routing;
-- source/interface-scoped FORWARD acceptance required for that WireGuard egress path;
+- source/interface-scoped IPv4 policy routing toward the selected IPv4 WAN;
+- source/interface-scoped IPv6 policy routing toward the selected IPv6 WAN;
+- source/interface-scoped FORWARD acceptance required for those WireGuard egress paths;
 - NAT44 MASQUERADE for the selected IPv4 WireGuard subnet when IPv4 egress is enabled;
 - NAT66 MASQUERADE for the selected IPv6 WireGuard ULA subnet when IPv6 egress is enabled.
 
 The helper does not persist these egress rules in UCI. Disable, Close, TTL expiry, failed transactional activation or reboot removes the temporary egress state.
 
+The selected WAN route is itself part of the authority. During reconciliation, the logical WAN must still be up, its current L3 device must match the saved runtime plan, the ordinary default route must still exist on that device, and the Remote Gate policy table must still contain its own default route through that device. If any of these checks fail, the temporary Internet Exit state is cleared rather than allowing policy lookup to fall through to a different main-table WAN.
+
 This ownership does **not** extend to ordinary LAN forwarding, qBittorrent/DHT/PeX, UPnP/NAT-PMP, DNAT/manual forwards, NAS/PC forwarding or other router traffic.
 
 ## Multi-WAN identity and return path
 
-Every endpoint must resolve to one validated logical WAN and one l3 device. Ambiguous association is rejected rather than guessed.
+Every individual endpoint must resolve to one validated logical WAN and one l3 device. A Dual access plan may contain two such independently validated endpoints, one per family. Ambiguous endpoint-to-WAN association is rejected rather than guessed.
 
 When an authorized external source reaches a non-default WAN, Remote Gate installs only a destination-specific router-local policy route so locally generated replies leave through the same WAN. Each source is tracked independently and its route disappears when that source expires or all access is closed.
 
-This Gate return path is distinct from Internet Exit PBR. The former routes locally generated Direct or mapper-related replies toward the authorized external source; the latter routes packets received from the WireGuard interface toward the explicitly selected Internet Exit WAN.
+This Gate return path is distinct from Internet Exit PBR. The former routes locally generated Direct or mapper-related replies toward the authorized external source; the latter routes packets received from the WireGuard interface toward the explicitly selected Internet Exit WAN for that IP family.
+
+Interface and PPPoE churn does not grant authority to migrate access or egress to a different WAN/session automatically. Old mapped ingress authority is revoked when the current mapping/profile changes. If Internet Exit loses its selected WAN/policy route identity, it is cleared and requires a later explicit Activate to create a new runtime plan.
 
 ## OpenWrt-family compatibility boundary
 
