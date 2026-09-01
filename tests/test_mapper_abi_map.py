@@ -101,17 +101,24 @@ class MapperAbiMapTests(unittest.TestCase):
             with self.subTest(build_class=build_class):
                 if validation == "cross-build":
                     self.assertIn("-linux.", target)
-                    self.assertTrue(target.endswith("-musl") or target.endswith("-musleabi"))
+                    self.assertTrue(
+                        target.endswith("-musl")
+                        or target.endswith("-musleabi")
+                        or target.endswith("-muslabi64")
+                    )
                     self.assertNotEqual(cflags, "-")
                 else:
                     self.assertEqual(validation, "openwrt-sdk-required")
                     self.assertEqual(target, "-")
 
-    def test_rare_abis_fail_safe_to_sdk_instead_of_guessing(self):
+    def test_rare_and_pre_armv6_abis_fail_safe_to_sdk_instead_of_guessing(self):
         mapping = {row[0]: row[1:] for row in rows(ABI_MAP)}
         self.assertEqual(mapping["arc_arc700"], ["sdk_arc", "sdk-required"])
         self.assertEqual(mapping["arc_archs"], ["sdk_arc", "sdk-required"])
         self.assertEqual(mapping["arm_fa526"], ["sdk_armv4", "sdk-required"])
+        self.assertEqual(mapping["arm_arm926ej-s"], ["sdk_armv5_le", "sdk-required"])
+        self.assertEqual(mapping["arm_xscale"], ["sdk_armv5_le", "sdk-required"])
+        self.assertEqual(mapping["armeb_xscale"], ["sdk_armv5_be", "sdk-required"])
 
     def test_exact_resolver_rejects_unknown_abi(self):
         result = subprocess.run(
@@ -133,7 +140,7 @@ class MapperAbiMapTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(result.stdout.startswith("mips32_le\tcross-candidate\tmipsel-linux.4.4-musl\t"))
+        self.assertTrue(result.stdout.startswith("mips32_le\tcross-candidate\tmipsel-linux.4.4-musleabi\t"))
 
 
 if __name__ == "__main__":
