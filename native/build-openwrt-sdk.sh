@@ -79,7 +79,7 @@ prepare_legacy_prereq_stamp() {
     set +e
     (
         cd "$SDK_ROOT"
-        make -r -s -f "$prereq_mk" prereq
+        make TOPDIR="$SDK_ROOT/" -r -s -f "$prereq_mk" prereq
     ) >"$LEGACY_PREREQ_LOG" 2>&1
     prereq_status=$?
     set -e

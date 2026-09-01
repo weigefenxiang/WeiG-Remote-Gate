@@ -93,7 +93,7 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
         self.assertIn('SDK_FORCE_PREREQ="${REMOTE_GATE_SDK_FORCE_PREREQ:-0}"', BUILDER)
         self.assertIn('case "$SDK_FORCE_PREREQ" in 0|1)', BUILDER)
         self.assertIn('prepare_legacy_prereq_stamp', BUILDER)
-        self.assertIn('make -r -s -f "$prereq_mk" prereq', BUILDER)
+        self.assertIn('make TOPDIR="$SDK_ROOT/" -r -s -f "$prereq_mk" prereq', BUILDER)
         self.assertIn('failed_checks', BUILDER)
         self.assertIn('failure_messages', BUILDER)
         self.assertIn('Please install Python 2.x', BUILDER)

@@ -48,6 +48,9 @@ class NativeSdkContractTests(unittest.TestCase):
             "#!/bin/sh\n"
             "case \" $* \" in\n"
             "  *' prereq '*)\n"
+            "    if [ \"${REQUIRE_TOPDIR_ARG:-0}\" = 1 ]; then\n"
+            "      case \" $* \" in *\" TOPDIR=$PWD/ \"*) ;; *) echo 'missing TOPDIR make argument' >&2; exit 10 ;; esac\n"
+            "    fi\n"
             "    case \"${FAKE_PREREQ_FAILURE:-none}\" in\n"
             "      python2)\n"
             "        echo \"Checking 'python'... failed.\"\n"
@@ -150,6 +153,7 @@ class NativeSdkContractTests(unittest.TestCase):
             env["REMOTE_GATE_SDK_FORCE_PREREQ"] = "1"
             env["FAKE_PREREQ_FAILURE"] = "python2"
             env["REQUIRE_PREREQ_STAMP"] = "1"
+            env["REQUIRE_TOPDIR_ARG"] = "1"
             result = subprocess.run(
                 ["sh", str(BUILD_SDK), str(sdk), "powerpc64_e5500", str(out)],
                 cwd=ROOT,
@@ -184,10 +188,10 @@ class NativeSdkContractTests(unittest.TestCase):
             self.assertIn("prerequisite bypass refused", result.stderr)
             self.assertFalse((sdk / "build_dir").exists())
 
-    def test_legacy_path_no_longer_relies_on_broken_force_make_argument(self):
+    def test_legacy_path_binds_sdk_topdir_and_no_longer_relies_on_force(self):
         source = BUILD_SDK.read_text(encoding="utf-8")
         self.assertIn("prepare_legacy_prereq_stamp", source)
-        self.assertIn('make -r -s -f "$prereq_mk" prereq', source)
+        self.assertIn('make TOPDIR="$SDK_ROOT/" -r -s -f "$prereq_mk" prereq', source)
         self.assertIn('touch "$prereq_stamp"', source)
         self.assertNotIn("make FORCE=1", source)
         self.assertNotIn("FORCE=1 make", source)
