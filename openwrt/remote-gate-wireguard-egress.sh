@@ -276,6 +276,16 @@ install_route_table() {
     ip "$flag" route replace table "$table" default $args
 }
 
+egress_policy_route_current() {
+    flag="$1"; wan="$2"; saved_dev="$3"; table="$4"
+    valid_name "$wan" && valid_uint "$table" || return 1
+    interface_up "$wan" || return 1
+    current_dev="$(l3_device "$wan")"
+    [ -n "$current_dev" ] && [ -n "$saved_dev" ] && [ "$current_dev" = "$saved_dev" ] || return 1
+    ip "$flag" route show default dev "$current_dev" 2>/dev/null | grep -q '^default' || return 1
+    ip "$flag" route show table "$table" default dev "$current_dev" 2>/dev/null | grep -q '^default'
+}
+
 install_rules4() {
     wg_dev="$1"; subnet="$2"; table="$3"; base="$4"
     ip -4 rule add priority "$((base + 0))" iif "$wg_dev" to 10.0.0.0/8 lookup main || return 1
@@ -542,6 +552,21 @@ sync_egress() {
     valid_mode "$mode" && [ -n "$wg" ] || { runtime_cleanup "${FIREWALL_BACKEND:-}"; return 1; }
     if mode_has_v4 "$mode"; then valid_name "$wan4" || { runtime_cleanup "${FIREWALL_BACKEND:-}"; return 1; }; fi
     if mode_has_v6 "$mode"; then valid_name "$wan6" || { runtime_cleanup "${FIREWALL_BACKEND:-}"; return 1; }; fi
+
+    route_ok=1
+    if mode_has_v4 "$mode"; then
+        saved_dev4="${WAN_DEVICE4:-${WAN_DEVICE:-}}"
+        egress_policy_route_current -4 "$wan4" "$saved_dev4" "${ROUTE_TABLE4:-}" || route_ok=0
+    fi
+    if mode_has_v6 "$mode"; then
+        saved_dev6="${WAN_DEVICE6:-${WAN_DEVICE:-}}"
+        egress_policy_route_current -6 "$wan6" "$saved_dev6" "${ROUTE_TABLE6:-}" || route_ok=0
+    fi
+    if [ "$route_ok" -ne 1 ]; then
+        runtime_cleanup "${FIREWALL_BACKEND:-}"
+        logger -t remote-gate "WireGuard egress WAN or policy route changed and was cleared" 2>/dev/null || true
+        return 0
+    fi
 
     rule_ok=1
     if mode_has_v4 "$mode"; then
