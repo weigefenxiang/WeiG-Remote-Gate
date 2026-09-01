@@ -8,16 +8,18 @@ BUILDER = (ROOT / "native" / "build-openwrt-sdk.sh").read_text(encoding="utf-8")
 
 
 class OpenWrt1907ScopeTests(unittest.TestCase):
-    def test_compiler_prerequisite_compatibility_is_1907_only(self):
+    def test_compiler_prerequisite_compatibility_is_1907_metadata_only(self):
         self.assertIn("sdk_allow_compiler_prereq=0", RUNNER)
-        self.assertIn("openwrt-19.07.*-*)", RUNNER)
+        self.assertIn('if [ "$family" = openwrt ]; then', RUNNER)
+        self.assertIn("19.07.*)", RUNNER)
         self.assertEqual(RUNNER.count("sdk_allow_compiler_prereq=1"), 1)
+        self.assertEqual(RUNNER.count("sdk_force_prereq=1"), 1)
         self.assertIn(
             'REMOTE_GATE_SDK_ALLOW_COMPILER_PREREQ="$sdk_allow_compiler_prereq"',
             RUNNER,
         )
-        self.assertNotIn("openwrt-21.*-*) sdk_allow_compiler_prereq=1", RUNNER)
-        self.assertNotIn("immortalwrt-*) sdk_allow_compiler_prereq=1", RUNNER)
+        self.assertNotIn("openwrt-19.07.*-*) sdk_force_prereq=1", RUNNER)
+        self.assertNotIn("openwrt-19.07.*-*) sdk_allow_compiler_prereq=1", RUNNER)
 
     def test_builder_keeps_compiler_false_negative_path_fail_closed(self):
         self.assertIn(
@@ -31,12 +33,13 @@ class OpenWrt1907ScopeTests(unittest.TestCase):
         self.assertIn("g++ prerequisite failed outside validated compiler compatibility mode", BUILDER)
         self.assertIn("prerequisite failures exceed validated legacy host exceptions", BUILDER)
 
-    def test_x86_64_build_id_scope_remains_separate_from_compiler_compatibility(self):
+    def test_x86_64_build_id_scope_uses_release_and_abi_metadata(self):
         self.assertIn(
-            "openwrt-19.07.*-x86_64) sdk_link_flags='-Wl,--build-id=sha1'",
+            '[ "$abi" != x86_64 ] || sdk_link_flags=\'-Wl,--build-id=sha1\'',
             RUNNER,
         )
         self.assertEqual(RUNNER.count("sdk_link_flags='-Wl,--build-id=sha1'"), 1)
+        self.assertNotIn("openwrt-19.07.*-x86_64) sdk_link_flags=", RUNNER)
         self.assertIn("openwrt-19.07.10-x86-geode) sdk_emulator='qemu-i386'", RUNNER)
         self.assertIn("openwrt-19.07.9-armvirt-64) sdk_emulator='qemu-aarch64'", RUNNER)
 
