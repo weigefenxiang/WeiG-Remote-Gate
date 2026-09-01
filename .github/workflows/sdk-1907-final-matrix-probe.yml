@@ -1,0 +1,45 @@
+name: SDK 19.07 final matrix probe
+
+on:
+  push:
+    branches:
+      - dev
+
+permissions:
+  contents: read
+
+jobs:
+  sdk-1907-final-matrix:
+    if: contains(github.event.head_commit.message, '[sdk-1907-final-matrix-once]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        sample:
+          - openwrt-19.07.0-x86_64
+          - openwrt-19.07.9-armvirt-64
+          - openwrt-19.07.9-x86_64
+          - openwrt-19.07.10-x86_64
+          - openwrt-19.07.10-x86-geode
+          - openwrt-19.07.10-ramips-mt76x8
+          - openwrt-19.07.10-ar71xx-generic
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SDK runtime tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xz-utils file qemu-user binutils
+
+      - name: Build and smoke OpenWrt 19.07 sample
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$PWD/native/dist-sdk-${{ matrix.sample }}"
+          sh native/run-sdk-compat.sh "${{ matrix.sample }}" "$out"
+          file "$out"/remote-gate-mapper-*
+          sha256sum "$out"/remote-gate-mapper-*
