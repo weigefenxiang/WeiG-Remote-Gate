@@ -14,8 +14,7 @@ case "$class" in
     x86_64) runner="" ;;
     x86_i486) runner=qemu-i386 ;;
     aarch64) runner=qemu-aarch64 ;;
-    armv5_le) runner=qemu-arm ;;
-    armv5_be) runner=qemu-armeb ;;
+    armv6_le|armv7_le) runner=qemu-arm ;;
     mips32_be) runner=qemu-mips ;;
     mips32_le) runner=qemu-mipsel ;;
     mips64_be) runner=qemu-mips64 ;;
