@@ -52,8 +52,6 @@ is_public_ipv4() {
     '
 }
 
-# OpenWrt first-stage filter: Internet Global Unicast lives in 2000::/3.
-# The VPS performs the authoritative IANA/ipaddress second-stage filter.
 is_global_ipv6() {
     value="$(printf '%s' "$1" | tr 'A-F' 'a-f')"
     case "$value" in
@@ -206,9 +204,7 @@ json_string_array_file() {
     printf ']'
 }
 
-natmap_json() {
-    printf '[]'
-}
+natmap_json() { printf '[]'; }
 
 build_inventory_json() {
     collect_wans
@@ -383,9 +379,7 @@ maybe_post_inventory() {
     last="$(cat "$INVENTORY_POSTED_FILE" 2>/dev/null || echo 0)"
     case "$last" in ''|*[!0-9]*) last=0 ;; esac
     now="$(date +%s)"
-    if [ "$fingerprint" = "$old" ] && [ "$((now - last))" -lt 300 ]; then
-        return 0
-    fi
+    if [ "$fingerprint" = "$old" ] && [ "$((now - last))" -lt 300 ]; then return 0; fi
     if control_request POST "/api/v1/inventory" "$BODY" "$payload" && [ "$CONTROL_CODE" = "204" ]; then
         printf '%s\n' "$fingerprint" > "$INVENTORY_STATE_FILE"
         printf '%s\n' "$now" > "$INVENTORY_POSTED_FILE"
@@ -409,17 +403,25 @@ wireguard_json() {
         rx="${transfer%% *}"; tx="${transfer##* }"
         [ "$first" -eq 1 ] || printf ','
         first=0
-        printf '{"name":"%s","listen_port":%s,"latest_handshake":%s,"rx":%s,"tx":%s}' \
-            "$name" "$port" "${latest:-0}" "${rx:-0}" "${tx:-0}"
+        printf '{"name":"%s","listen_port":%s,"latest_handshake":%s,"rx":%s,"tx":%s}' "$name" "$port" "${latest:-0}" "${rx:-0}" "${tx:-0}"
     done
     printf ']'
+}
+
+egress_json() {
+    if [ -x "$EGRESS" ]; then
+        "$EGRESS" status-json 2>/dev/null || printf '{"active":false,"state":"inactive","mode":"","wan":"","device":"","wg":"","ipv4_subnet":"","ipv6_subnet":"","detail":"","expires_in":0}'
+    else
+        printf '{"active":false,"state":"inactive","mode":"","wan":"","device":"","wg":"","ipv4_subnet":"","ipv6_subnet":"","detail":"","expires_in":0}'
+    fi
 }
 
 post_status() {
     fw="$("$FIREWALL" status-json 2>/dev/null || printf '{"backend":"unsupported","ready":false,"active":false,"source_ip":"","device":"","wg_port":0,"expires_in":0,"protected_devices_v4":0,"protected_devices_v6":0,"protected_ports":0}')"
     wg_json="$(wireguard_json)"
+    egress="$(egress_json)"
     transport="$(transport_json)"
-    payload="{\"schema\":3,\"wireguard\":${wg_json},\"firewall\":${fw},\"transport\":${transport}}"
+    payload="{\"schema\":3,\"wireguard\":${wg_json},\"firewall\":${fw},\"egress\":${egress},\"transport\":${transport}}"
     control_request POST "/api/v1/agent/status" "$BODY" "$payload" >/dev/null 2>&1 || true
 }
 
@@ -476,8 +478,6 @@ pull_once() {
                 *) source_kind=web_verified ;;
             esac
 
-            # A new Gate transaction owns the single WG egress profile. Clear
-            # any older profile before the first family is authorized.
             if [ "$batch_index" -eq 0 ] && [ -x "$EGRESS" ]; then "$EGRESS" disable >/dev/null 2>&1 || true; fi
 
             sync_firewall_policy || true
@@ -490,7 +490,8 @@ pull_once() {
                     if [ -x "$EGRESS" ] && "$EGRESS" enable "$wireguard" "$egress_wan" "$ttl" "$egress_mode" >/dev/null 2>"${TMP_BASE}.egress-error"; then
                         ack "$id" true "web-authorization-and-${egress_mode}-egress-active"
                     else
-                        [ -x "$EGRESS" ] && "$EGRESS" disable >/dev/null 2>&1 || true
+                        # The helper owns rollback and keeps a short-lived failed
+                        # status under /tmp so dashboard refreshes cannot hide it.
                         detail="$(sed -n 's/^ERROR: //p' "${TMP_BASE}.egress-error" 2>/dev/null | tail -n 1)"
                         [ -n "$detail" ] || detail="wireguard-egress-activation-failed"
                         logger -t "$TAG" "egress activation failed: $detail" 2>/dev/null || true
