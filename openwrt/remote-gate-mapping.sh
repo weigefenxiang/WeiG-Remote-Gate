@@ -87,6 +87,14 @@ owned_pid() {
     printf '%s\n' "$cmd" | grep -Fq "$status" || return 1
 }
 
+status_process_current() {
+    status="$1"
+    key="$(basename "$status" .status.json)"
+    pfile="$(pid_path "$key")"
+    pid="$(sed -n '1p' "$pfile" 2>/dev/null || true)"
+    owned_pid "$pid" "$status"
+}
+
 stop_key() {
     key="$1"
     pfile="$(pid_path "$key")"; sfile="$(status_path "$key")"
@@ -209,6 +217,7 @@ status_meta() {
 
 status_control_tuple() {
     status="$1"
+    status_process_current "$status" || return 1
     status_meta "$status" || return 1
     state="$(status_value "$status" '@.state')"
     case "$state" in prepared|active) ;; *) return 1 ;; esac
@@ -223,6 +232,7 @@ ingress_pairs() {
     mapper_available || return 0
     for status in "$STATE_DIR"/*.status.json; do
         [ -f "$status" ] || continue
+        status_process_current "$status" || continue
         state="$(status_value "$status" '@.state')"
         case "$state" in prepared|active) ;; *) continue ;; esac
         status_meta "$status" || continue
@@ -263,6 +273,7 @@ activate_prepared() {
 
 mapping_record() {
     status="$1"
+    status_process_current "$status" || return 1
     status_meta "$status" || return 1
     state="$(status_value "$status" '@.state')"
     [ "$state" = "active" ] || return 1
@@ -345,8 +356,8 @@ status_json() {
         [ -f "$status" ] || continue
         state="$(status_value "$status" '@.state')"
         case "$state" in
-            active) active=$((active + 1)) ;;
-            prepared) prepared=$((prepared + 1)) ;;
+            active) status_process_current "$status" || continue; active=$((active + 1)) ;;
+            prepared) status_process_current "$status" || continue; prepared=$((prepared + 1)) ;;
             failed) failed=$((failed + 1)) ;;
         esac
     done
