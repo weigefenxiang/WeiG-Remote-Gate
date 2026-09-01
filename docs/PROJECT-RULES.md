@@ -145,6 +145,8 @@ Mapping/endpoint creation must be rejected or ignored when any required identity
 
 An unavailable optional mapping capability is not a dashboard error. Direct, IPv6 and existing Remote Gate features must continue to work.
 
+Internet Exit WAN identity is also runtime authority. For every enabled family, the selected logical WAN must remain up, its current l3 device must match the saved plan, and both the ordinary default route and the Remote Gate policy-table default route must remain valid through that device. If this identity changes or disappears, Internet Exit must be cleared rather than falling through to a different main-table WAN or automatically migrating to a new PPPoE/WAN session.
+
 ## OpenWrt-family compatibility contract
 
 Remote Gate targets the **OpenWrt family**, including OpenWrt, LEDE, ImmortalWrt and compatible derivatives. Runtime support must be determined by capability detection, not by a hardcoded distribution name or release-number allowlist.
@@ -187,7 +189,7 @@ Older fw3 systems, including 21.02-class systems and compatible older LEDE/OpenW
 
 Access Gate owns only Remote Gate registered router-local ingress plus optional Echo Request scope. It must not become a generic firewall manager.
 
-Internet Exit may own only its existing temporary WireGuard-subnet PBR/FORWARD/NAT44/NAT66 path.
+Internet Exit may own only its temporary WireGuard-subnet PBR/FORWARD/NAT44/NAT66 path. IPv4 and IPv6 ownership is family-scoped: same-WAN Dual may use one WAN for both families, while split Dual may bind IPv4 and IPv6 to different independently validated WANs.
 
 Do not take ownership of unrelated:
 
@@ -227,8 +229,8 @@ Do not break already validated behavior while adding Mapped Access:
 - NAT44/NAT66;
 - fw3 xtables wait handling;
 - fw4 nftables behavior;
-- endpoint manual-selection memory;
+- capability-based automatic endpoint preference plus per-family manual-selection memory;
 - stale UI Error handling;
-- Internet Exit default following the Access Endpoint WAN until manually overridden.
+- Internet Exit default following the corresponding Access Endpoint WAN for each family until manually overridden, including split Dual where IPv4 and IPv6 use different WANs.
 
 Every new 0.3.17 change must add focused automated coverage and preserve the existing CI contract.
