@@ -27,7 +27,7 @@ def rows(path: Path, columns: int):
 class SdkCompatibilityMatrixTests(unittest.TestCase):
     def test_matrix_is_exact_and_trusted(self):
         entries = rows(MATRIX, 8)
-        self.assertGreaterEqual(len(entries), 9)
+        self.assertGreaterEqual(len(entries), 10)
         ids = [entry[0] for entry in entries]
         self.assertEqual(len(ids), len(set(ids)))
         known_abis = {entry[0] for entry in rows(ABI_MAP, 3)}
@@ -50,6 +50,7 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
         samples = {entry[0] for entry in rows(MATRIX, 8)}
         expected = {
             "lede-17.01.7-x86_64",
+            "openwrt-19.07.9-armvirt-64",
             "openwrt-19.07.10-x86_64",
             "openwrt-19.07.10-x86-geode",
             "openwrt-19.07.10-ramips-mt76x8",
@@ -69,6 +70,7 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
 
     def test_sdk_workflow_is_manual_and_keeps_samples_for_later(self):
         for sample in (
+            "openwrt-19.07.9-armvirt-64",
             "openwrt-19.07.10-x86_64",
             "openwrt-19.07.10-x86-geode",
             "openwrt-19.07.10-ramips-mt76x8",
@@ -127,10 +129,10 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
 
     def test_legacy_non_native_samples_require_real_emulator_smoke(self):
         expected = {
+            "openwrt-19.07.9-armvirt-64": "qemu-aarch64",
             "openwrt-19.07.10-x86-geode": "qemu-i386",
             "openwrt-19.07.10-ramips-mt76x8": "qemu-mipsel",
             "openwrt-19.07.10-ar71xx-generic": "qemu-mips",
-            "openwrt-19.07.9-armvirt-64": "qemu-aarch64",
         }
         for sample, emulator in expected.items():
             self.assertIn(f"{sample}) sdk_emulator='{emulator}'", RUNNER)
