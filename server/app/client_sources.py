@@ -7,13 +7,27 @@ from typing import Any
 
 from .store import JsonStore
 
-
 SOURCE_TTL = 10 * 60
-PROBE_TTL = 3 * 60
+CANDIDATE_TTL = 5 * 60
+IPV6_GLOBAL_UNICAST = ipaddress.ip_network("2000::/3")
 
 
 def _session_key(token: str) -> str:
     return hashlib.sha256(token.encode("ascii")).hexdigest()
+
+
+def _globally_reachable_unicast(value: object, version: int | None = None) -> bool:
+    try:
+        address = ipaddress.ip_address(str(value or "").strip())
+    except ValueError:
+        return False
+    if version is not None and address.version != version:
+        return False
+    if not address.is_global or address.is_multicast:
+        return False
+    if address.version == 6 and address not in IPV6_GLOBAL_UNICAST:
+        return False
+    return True
 
 
 def _state(store: JsonStore, current: int) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -24,21 +38,73 @@ def _state(store: JsonStore, current: int) -> tuple[dict[str, Any], dict[str, An
     if not isinstance(sessions, dict):
         sessions = {}
         state["sessions"] = sessions
-
-    for session_id, record in list(sessions.items()):
+    for sid, record in list(sessions.items()):
         if not isinstance(record, dict):
-            sessions.pop(session_id, None)
+            sessions.pop(sid, None)
             continue
         families = record.get("families")
         if not isinstance(families, dict):
-            sessions.pop(session_id, None)
+            sessions.pop(sid, None)
             continue
-        for fam, item in list(families.items()):
+        for family, item in list(families.items()):
             if not isinstance(item, dict) or int(item.get("expires_at", 0) or 0) <= current:
-                families.pop(fam, None)
+                families.pop(family, None)
         if not families:
-            sessions.pop(session_id, None)
+            sessions.pop(sid, None)
     return state, sessions
+
+
+def _global_address(value: str, family: str | None = None):
+    address = ipaddress.ip_address(str(value or "").strip())
+    expected = family or ("ipv4" if address.version == 4 else "ipv6")
+    if expected not in {"ipv4", "ipv6"}:
+        raise ValueError("invalid_family")
+    if (expected == "ipv4" and address.version != 4) or (expected == "ipv6" and address.version != 6):
+        raise ValueError("source_family_mismatch")
+    if not _globally_reachable_unicast(address, address.version):
+        raise ValueError("public_source_required")
+    return address
+
+
+def _record(
+    store: JsonStore,
+    session_token: str,
+    source_ip: str,
+    *,
+    source: str,
+    confidence: str,
+    now: int | None = None,
+    ttl: int = SOURCE_TTL,
+    preserve_candidate: bool = False,
+) -> dict[str, Any]:
+    address = _global_address(source_ip)
+    current = int(time.time()) if now is None else int(now)
+    family = "ipv4" if address.version == 4 else "ipv6"
+    state, sessions = _state(store, current)
+    record = sessions.setdefault(_session_key(session_token), {"families": {}})
+    families = record.setdefault("families", {})
+    existing = families.get(family)
+
+    # Candidate probes fill a family that the authenticated dashboard request
+    # did not directly expose. A fresh Cloudflare observation is stronger and
+    # replaces a candidate for the same family before direct Gate authorization.
+    if (
+        preserve_candidate
+        and isinstance(existing, dict)
+        and existing.get("confidence") == "candidate"
+        and int(existing.get("expires_at", 0) or 0) > current
+    ):
+        return {"family": family, **existing}
+
+    families[family] = {
+        "address": str(address),
+        "observed_at": current,
+        "expires_at": current + max(30, min(int(ttl), SOURCE_TTL)),
+        "source": source,
+        "confidence": confidence,
+    }
+    store.write("client-sources.json", state)
+    return {"family": family, **families[family]}
 
 
 def observe_source(
@@ -49,74 +115,39 @@ def observe_source(
     now: int | None = None,
     ttl: int = SOURCE_TTL,
 ) -> dict[str, Any]:
-    address = ipaddress.ip_address(source_ip)
-    current = int(time.time()) if now is None else int(now)
-    family = "ipv4" if address.version == 4 else "ipv6"
-    key = _session_key(session_token)
-    state, sessions = _state(store, current)
-
-    record = sessions.setdefault(key, {"families": {}})
-    families = record.setdefault("families", {})
-    families[family] = {
-        "address": str(address),
-        "observed_at": current,
-        "expires_at": current + max(30, min(int(ttl), SOURCE_TTL)),
-        "source": "cloudflare",
-        "confidence": "verified",
-    }
-    store.write("client-sources.json", state)
-    return {"family": family, **families[family]}
+    return _record(
+        store,
+        session_token,
+        source_ip,
+        source="cloudflare",
+        confidence="observed",
+        now=now,
+        ttl=ttl,
+        preserve_candidate=False,
+    )
 
 
-def observe_ipv4_probe(
+def observe_candidate(
     store: JsonStore,
     session_token: str,
     source_ip: str,
+    family: str,
     *,
     now: int | None = None,
-    ttl: int = PROBE_TTL,
 ) -> dict[str, Any]:
-    """Remember a browser-reported IPv4-only probe result for a short window.
-
-    This is intentionally marked heuristic. It exists for IPv6-first/mobile
-    carrier networks where the dashboard request itself never exposes the
-    carrier NAT IPv4 egress address.
-    """
-    address = ipaddress.ip_address(source_ip)
-    if address.version != 4 or not address.is_global:
-        raise ValueError("public_ipv4_required")
-
-    current = int(time.time()) if now is None else int(now)
-    key = _session_key(session_token)
-    state, sessions = _state(store, current)
-    record = sessions.setdefault(key, {"families": {}})
-    families = record.setdefault("families", {})
-
-    existing = families.get("ipv4")
-    if (
-        isinstance(existing, dict)
-        and existing.get("source") == "cloudflare"
-        and int(existing.get("expires_at", 0) or 0) > current
-    ):
-        return {"family": "ipv4", **existing}
-
-    families["ipv4"] = {
-        "address": str(address),
-        "observed_at": current,
-        "expires_at": current + max(30, min(int(ttl), PROBE_TTL)),
-        "source": "carrier_probe",
-        "confidence": "heuristic",
-    }
-    store.write("client-sources.json", state)
-    return {"family": "ipv4", **families["ipv4"]}
+    address = _global_address(source_ip, family)
+    return _record(
+        store,
+        session_token,
+        str(address),
+        source="carrier_probe",
+        confidence="candidate",
+        now=now,
+        ttl=CANDIDATE_TTL,
+    )
 
 
-def trusted_sources(
-    store: JsonStore,
-    session_token: str,
-    *,
-    now: int | None = None,
-) -> dict[str, dict[str, Any]]:
+def trusted_sources(store: JsonStore, session_token: str, *, now: int | None = None) -> dict[str, dict[str, Any]]:
     current = int(time.time()) if now is None else int(now)
     state = store.read("client-sources.json", {})
     sessions = state.get("sessions") if isinstance(state, dict) else None
@@ -130,28 +161,43 @@ def trusted_sources(
         if not isinstance(item, dict) or int(item.get("expires_at", 0) or 0) <= current:
             continue
         try:
-            address = ipaddress.ip_address(str(item.get("address") or ""))
+            address = _global_address(str(item.get("address") or ""), family)
         except ValueError:
             continue
-        if (family == "ipv4" and address.version != 4) or (family == "ipv6" and address.version != 6):
+        confidence = str(item.get("confidence") or "")
+        # Rolling-upgrade compatibility: old HTTP observations were labelled
+        # "verified". Normalize them to the current "observed" source kind.
+        if confidence == "verified":
+            confidence = "observed"
+        if confidence not in {"observed", "candidate"}:
             continue
         result[family] = {
             "address": str(address),
             "observed_at": int(item.get("observed_at", 0) or 0),
             "expires_at": int(item.get("expires_at", 0) or 0),
-            "source": str(item.get("source") or "cloudflare"),
-            "confidence": str(item.get("confidence") or "verified"),
+            "source": str(item.get("source") or "unknown"),
+            "confidence": confidence,
         }
     return result
 
 
-def source_for_family(store: JsonStore, session_token: str, family: str, *, now: int | None = None) -> str:
+def source_record_for_family(
+    store: JsonStore,
+    session_token: str,
+    family: str,
+    *,
+    now: int | None = None,
+) -> dict[str, Any]:
     if family not in {"ipv4", "ipv6"}:
         raise ValueError("invalid_family")
     item = trusted_sources(store, session_token, now=now).get(family)
     if not item:
         raise ValueError("client_source_not_observed")
-    return str(item["address"])
+    return item
+
+
+def source_for_family(store: JsonStore, session_token: str, family: str, *, now: int | None = None) -> str:
+    return str(source_record_for_family(store, session_token, family, now=now)["address"])
 
 
 def delete_sources(store: JsonStore, session_token: str) -> None:
@@ -162,3 +208,11 @@ def delete_sources(store: JsonStore, session_token: str) -> None:
     sessions.pop(_session_key(session_token), None)
     state["sessions"] = sessions
     store.write("client-sources.json", state)
+
+
+def observe_network_probe(*args, **kwargs) -> dict[str, Any]:
+    raise ValueError("legacy_source_probe_disabled")
+
+
+def observe_ipv4_probe(*args, **kwargs) -> dict[str, Any]:
+    raise ValueError("legacy_source_probe_disabled")

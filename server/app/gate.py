@@ -10,13 +10,23 @@ from .endpoints import endpoint_by_id, normalize_inventory
 from .store import JsonStore
 
 
-ALLOWED_TTLS = {60, 300, 900, 1800}
+PRESET_TTLS = {60, 300, 900, 1800}
+CUSTOM_TTL_MIN = 1800
+CUSTOM_TTL_MAX = 12 * 60 * 60
+CUSTOM_TTL_STEP = 1800
 ALLOWED_SCOPES = {"wg", "wg_ping"}
+ALLOWED_EGRESS_MODES = {"ipv4", "ipv6", "dual"}
 QUEUE_LOCK = threading.RLock()
 
 
 class GateError(ValueError):
     pass
+
+
+def valid_ttl(ttl: int) -> bool:
+    if ttl in PRESET_TTLS:
+        return True
+    return CUSTOM_TTL_MIN <= ttl <= CUSTOM_TTL_MAX and ttl % CUSTOM_TTL_STEP == 0
 
 
 def normalize_current(store: JsonStore) -> dict[str, Any]:
@@ -40,6 +50,36 @@ def public_wan(store: JsonStore, name: str) -> dict[str, Any]:
     if not record.get("ip") or not record.get("device"):
         raise GateError("wan_incomplete")
     return record
+
+
+def _wan_has_global_ipv6(item: dict[str, Any]) -> bool:
+    values = item.get("ipv6")
+    return isinstance(values, list) and any(
+        isinstance(entry, dict) and entry.get("kind") == "global" and entry.get("address")
+        for entry in values
+    )
+
+
+def egress_wan(store: JsonStore, name: str | None, mode: str = "ipv4") -> str:
+    selected = str(name or "").strip()
+    if not selected:
+        return ""
+    selected_mode = str(mode or "").strip()
+    if selected_mode not in ALLOWED_EGRESS_MODES:
+        raise GateError("invalid_egress_mode")
+    inventory = normalize_inventory(store)
+    for item in inventory.get("wans", []) if isinstance(inventory, dict) else []:
+        if not isinstance(item, dict) or str(item.get("name") or "") != selected:
+            continue
+        if not item.get("up"):
+            raise GateError("egress_wan_unavailable")
+        if selected_mode in {"ipv4", "dual"} and not item.get("default_route_v4"):
+            raise GateError("egress_ipv4_unavailable")
+        if selected_mode in {"ipv6", "dual"}:
+            if not item.get("default_route_v6") or not _wan_has_global_ipv6(item):
+                raise GateError("egress_ipv6_unavailable")
+        return selected
+    raise GateError("egress_wan_unavailable")
 
 
 def wireguard_interface(store: JsonStore, name: str) -> dict[str, Any]:
@@ -81,12 +121,19 @@ def _source_address(source_ip: str, family: str | None = None):
     return address
 
 
+def _empty_queue() -> dict[str, Any]:
+    return {"pending": None, "next": [], "last": None}
+
+
 def _queue_for_write(store: JsonStore) -> dict[str, Any]:
-    queue = store.read("commands.json", {"pending": None, "last": None})
+    queue = store.read("commands.json", _empty_queue())
     if not isinstance(queue, dict):
-        queue = {"pending": None, "last": None}
+        queue = _empty_queue()
+    if not isinstance(queue.get("next"), list):
+        queue["next"] = []
     command = queue.get("pending")
     if not isinstance(command, dict) or command.get("state") != "pending":
+        queue["pending"] = None
         return queue
 
     now = int(time.time())
@@ -96,12 +143,13 @@ def _queue_for_write(store: JsonStore) -> dict[str, Any]:
     command["state"] = "expired"
     queue["last"] = command
     queue["pending"] = None
+    queue["next"] = []
     store.write("commands.json", queue)
     store.append_activity({"type": "command_expired", "command_id": command.get("id", "")})
     return queue
 
 
-def queue_activate(
+def _activation_command(
     store: JsonStore,
     *,
     source_ip: str,
@@ -109,18 +157,24 @@ def queue_activate(
     endpoint_id: str | None = None,
     family: str | None = None,
     scope: str = "wg_ping",
+    source_confidence: str = "verified",
     wan_name: str | None = None,
     wg_name: str | None = None,
+    egress_name: str | None = None,
+    egress_mode: str = "ipv4",
+    batch_id: str = "",
+    batch_index: int = 0,
+    batch_count: int = 1,
 ) -> dict[str, Any]:
-    """Queue one temporary authorization.
-
-    New schema-2 callers provide endpoint_id/family/scope. Schema-1 callers may
-    continue to provide wan_name/wg_name while the VPS is upgraded first.
-    """
-    if ttl not in ALLOWED_TTLS:
+    if not valid_ttl(ttl):
         raise GateError("invalid_ttl")
     if scope not in ALLOWED_SCOPES:
         raise GateError("invalid_scope")
+    if source_confidence not in {"verified", "observed", "candidate"}:
+        raise GateError("invalid_source_confidence")
+    selected_mode = str(egress_mode or "ipv4")
+    selected_egress = egress_wan(store, egress_name, selected_mode)
+    command_egress_mode = selected_mode if selected_egress else ""
 
     if endpoint_id:
         endpoint = endpoint_by_id(store, endpoint_id)
@@ -144,18 +198,22 @@ def queue_activate(
             or scope != "wg_ping"
             or endpoint.get("provider") != "native"
             or endpoint.get("reachability") in {"private", "egress_probe"}
+            or source_confidence == "candidate"
+            or batch_count > 1
+            or bool(selected_egress)
         )
         if advanced and agent_schema < 2:
             raise GateError("agent_upgrade_required")
 
         now = int(time.time())
         command = {
-            "schema": 2,
+            "schema": 3 if batch_count > 1 or source_confidence == "candidate" or selected_egress else 2,
             "id": secrets.token_hex(16),
             "action": "activate",
             "created_at": now,
             "expires_at": now + 60,
             "source_ip": str(address),
+            "source_confidence": source_confidence,
             "family": endpoint_family,
             "scope": scope,
             "endpoint_id": str(endpoint["id"]),
@@ -167,50 +225,138 @@ def queue_activate(
             "wg_port": int(endpoint["local_port"]),
             "external_address": str(endpoint.get("external_address", "")),
             "external_port": int(endpoint.get("external_port", endpoint["local_port"])),
+            "egress_wan": selected_egress,
+            "egress_mode": command_egress_mode,
             "ttl": ttl,
             "state": "pending",
         }
-    else:
-        # Compatibility with the current v0.2.x server/browser contract.
-        address = _source_address(source_ip, "ipv4")
-        if not wan_name or not wg_name:
-            raise GateError("endpoint_required")
-        wan = public_wan(store, wan_name)
-        wg = wireguard_interface(store, wg_name)
-        now = int(time.time())
-        command = {
-            "schema": 1,
-            "id": secrets.token_hex(16),
-            "action": "activate",
-            "created_at": now,
-            "expires_at": now + 60,
-            "source_ip": str(address),
-            "family": "ipv4",
-            "scope": "wg_ping",
-            "wan": wan_name,
-            "device": str(wan["device"]),
-            "wireguard": wg_name,
-            "wg_port": int(wg["listen_port"]),
-            "ttl": ttl,
-            "state": "pending",
-        }
+        if batch_id:
+            command.update({"batch_id": batch_id, "batch_index": batch_index, "batch_count": batch_count})
+        return command
+
+    address = _source_address(source_ip, "ipv4")
+    if not wan_name or not wg_name:
+        raise GateError("endpoint_required")
+    wan = public_wan(store, wan_name)
+    wg = wireguard_interface(store, wg_name)
+    now = int(time.time())
+    return {
+        "schema": 1,
+        "id": secrets.token_hex(16),
+        "action": "activate",
+        "created_at": now,
+        "expires_at": now + 60,
+        "source_ip": str(address),
+        "source_confidence": "verified",
+        "family": "ipv4",
+        "scope": "wg_ping",
+        "wan": wan_name,
+        "device": str(wan["device"]),
+        "wireguard": wg_name,
+        "wg_port": int(wg["listen_port"]),
+        "egress_wan": selected_egress,
+        "egress_mode": command_egress_mode,
+        "ttl": ttl,
+        "state": "pending",
+    }
+
+
+def queue_activate(
+    store: JsonStore,
+    *,
+    source_ip: str,
+    ttl: int,
+    endpoint_id: str | None = None,
+    family: str | None = None,
+    scope: str = "wg_ping",
+    source_confidence: str = "verified",
+    wan_name: str | None = None,
+    wg_name: str | None = None,
+    egress_name: str | None = None,
+) -> dict[str, Any]:
+    egress_mode = family if family in {"ipv4", "ipv6"} else "ipv4"
+    command = _activation_command(
+        store,
+        source_ip=source_ip,
+        ttl=ttl,
+        endpoint_id=endpoint_id,
+        family=family,
+        scope=scope,
+        source_confidence=source_confidence,
+        wan_name=wan_name,
+        wg_name=wg_name,
+        egress_name=egress_name,
+        egress_mode=egress_mode,
+    )
+    with QUEUE_LOCK:
+        _queue_for_write(store)
+        store.write("commands.json", {"pending": command, "next": [], "last": None})
+        _append_gate_request(store, command)
+    return command
+
+
+def queue_activate_many(
+    store: JsonStore,
+    requests: list[dict[str, Any]],
+    *,
+    ttl: int,
+    scope: str,
+    egress_name: str | None = None,
+) -> dict[str, Any]:
+    if not isinstance(requests, list) or not 1 <= len(requests) <= 2:
+        raise GateError("invalid_families")
+    families = [str(item.get("family") or "") for item in requests if isinstance(item, dict)]
+    if len(families) != len(requests) or any(f not in {"ipv4", "ipv6"} for f in families) or len(set(families)) != len(families):
+        raise GateError("invalid_families")
+
+    egress_mode = "dual" if set(families) == {"ipv4", "ipv6"} else families[0]
+    batch_id = secrets.token_hex(12)
+    commands = [
+        _activation_command(
+            store,
+            source_ip=str(item.get("source_ip") or ""),
+            endpoint_id=str(item.get("endpoint_id") or ""),
+            family=str(item.get("family") or ""),
+            source_confidence=str(item.get("source_confidence") or "verified"),
+            scope=scope,
+            ttl=ttl,
+            egress_name=egress_name,
+            egress_mode=egress_mode,
+            batch_id=batch_id,
+            batch_index=index,
+            batch_count=len(requests),
+        )
+        for index, item in enumerate(requests)
+    ]
+    listeners = {(command.get("wireguard"), int(command.get("wg_port", 0) or 0)) for command in commands}
+    if len(listeners) != 1:
+        raise GateError("wireguard_mismatch")
 
     with QUEUE_LOCK:
         _queue_for_write(store)
-        store.write("commands.json", {"pending": command, "last": None})
-        store.append_activity(
-            {
-                "type": "gate_requested",
-                "source_ip": command["source_ip"],
-                "family": command["family"],
-                "scope": command["scope"],
-                "wan": command.get("wan", ""),
-                "wireguard": command.get("wireguard", ""),
-                "endpoint_id": command.get("endpoint_id", ""),
-                "ttl": ttl,
-            }
-        )
-    return command
+        store.write("commands.json", {"pending": commands[0], "next": commands[1:], "last": None})
+        for command in commands:
+            _append_gate_request(store, command)
+    return {"batch_id": batch_id, "commands": commands, "pending": commands[0]}
+
+
+def _append_gate_request(store: JsonStore, command: dict[str, Any]) -> None:
+    store.append_activity(
+        {
+            "type": "gate_requested",
+            "source_ip": command["source_ip"],
+            "source_confidence": command.get("source_confidence", "verified"),
+            "family": command["family"],
+            "scope": command["scope"],
+            "wan": command.get("wan", ""),
+            "egress_wan": command.get("egress_wan", ""),
+            "egress_mode": command.get("egress_mode", ""),
+            "wireguard": command.get("wireguard", ""),
+            "endpoint_id": command.get("endpoint_id", ""),
+            "batch_id": command.get("batch_id", ""),
+            "ttl": command["ttl"],
+        }
+    )
 
 
 def queue_close(store: JsonStore, *, source_ip: str) -> dict[str, Any]:
@@ -228,25 +374,24 @@ def queue_close(store: JsonStore, *, source_ip: str) -> dict[str, Any]:
     }
     with QUEUE_LOCK:
         _queue_for_write(store)
-        store.write("commands.json", {"pending": command, "last": None})
+        store.write("commands.json", {"pending": command, "next": [], "last": None})
         store.append_activity({"type": "gate_close_requested", "source_ip": str(address)})
     return command
 
 
 def pull_command(store: JsonStore) -> dict[str, Any] | None:
     with QUEUE_LOCK:
-        queue = store.read("commands.json", {"pending": None, "last": None})
+        queue = store.read("commands.json", _empty_queue())
         if not isinstance(queue, dict):
             return None
         command = queue.get("pending")
-        if not isinstance(command, dict):
-            return None
-        if command.get("state") != "pending":
+        if not isinstance(command, dict) or command.get("state") != "pending":
             return None
         if int(command.get("expires_at", 0)) <= int(time.time()):
             command["state"] = "expired"
             queue["last"] = command
             queue["pending"] = None
+            queue["next"] = []
             store.write("commands.json", queue)
             store.append_activity({"type": "command_expired", "command_id": command.get("id", "")})
             return None
@@ -255,7 +400,7 @@ def pull_command(store: JsonStore) -> dict[str, Any] | None:
 
 def ack_command(store: JsonStore, command_id: str, ok: bool, detail: str = "") -> bool:
     with QUEUE_LOCK:
-        queue = store.read("commands.json", {"pending": None, "last": None})
+        queue = store.read("commands.json", _empty_queue())
         if not isinstance(queue, dict):
             return False
         command = queue.get("pending")
@@ -265,13 +410,31 @@ def ack_command(store: JsonStore, command_id: str, ok: bool, detail: str = "") -
         command["acked_at"] = int(time.time())
         command["detail"] = detail[:240]
         queue["last"] = command
-        queue["pending"] = None
+
+        next_commands = queue.get("next") if isinstance(queue.get("next"), list) else []
+        if ok and next_commands:
+            next_command = next_commands.pop(0)
+            if isinstance(next_command, dict):
+                now = int(time.time())
+                next_command["created_at"] = now
+                next_command["expires_at"] = now + 60
+                next_command["state"] = "pending"
+                queue["pending"] = next_command
+            else:
+                queue["pending"] = None
+            queue["next"] = next_commands
+        else:
+            queue["pending"] = None
+            queue["next"] = []
+
         store.write("commands.json", queue)
         store.append_activity(
             {
                 "type": "command_done" if ok else "command_failed",
                 "command_id": command_id,
                 "action": command.get("action"),
+                "family": command.get("family", ""),
+                "batch_id": command.get("batch_id", ""),
                 "detail": detail[:120],
             }
         )
@@ -279,9 +442,20 @@ def ack_command(store: JsonStore, command_id: str, ok: bool, detail: str = "") -
 
 
 def gate_view(store: JsonStore) -> dict[str, Any]:
-    queue = store.read("commands.json", {"pending": None, "last": None})
+    with QUEUE_LOCK:
+        queue = store.read("commands.json", _empty_queue())
+        if not isinstance(queue, dict):
+            queue = _empty_queue()
+        pending = queue.get("pending")
+        if isinstance(pending, dict) and pending.get("state") == "pending" and int(pending.get("expires_at", 0) or 0) <= int(time.time()):
+            pending["state"] = "expired"
+            queue["last"] = pending
+            queue["pending"] = None
+            queue["next"] = []
+            store.write("commands.json", queue)
+            store.append_activity({"type": "command_expired", "command_id": pending.get("id", "")})
     agent = store.read("agent-status.json", {})
     return {
-        "queue": queue if isinstance(queue, dict) else {"pending": None, "last": None},
+        "queue": queue,
         "agent": agent if isinstance(agent, dict) else {},
     }

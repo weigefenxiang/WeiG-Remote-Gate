@@ -1,119 +1,272 @@
-import re
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "server/app/templates/dashboard.html"
+LOGIN = ROOT / "server/app/templates/login.html"
 APP = ROOT / "server/app/static/js/app.js"
 GATE = ROOT / "server/app/static/js/gate-controls.js"
+ENDPOINT_PICKER = ROOT / "server/app/static/js/endpoint-picker.js"
+CLIENT_SOURCES = ROOT / "server/app/static/js/client-sources.js"
+FEEDBACK = ROOT / "server/app/static/js/ui-feedback.js"
+FEEDBACK_CSS = ROOT / "server/app/static/css/feedback.css"
 BOOTSTRAP = ROOT / "server/app/static/js/theme-bootstrap.js"
-FAVICON = ROOT / "server/app/static/Wei.G.ico"
-LAYOUT = ROOT / "server/app/static/css/layout.css"
-SPATIAL = ROOT / "server/app/static/css/spatial.css"
-I18N = ROOT / "server/app/static/js/i18n.js"
+DASHBOARD_CSS = ROOT / "server/app/static/css/dashboard.css"
+COMPONENTS_CSS = ROOT / "server/app/static/css/components.css"
 INSTALL = ROOT / "server/install.sh"
 UPDATE = ROOT / "server/update.sh"
+SERVER = ROOT / "server/remote-gate.py"
+OPENWRT_UPDATE = ROOT / "openwrt/update.sh"
+OPENWRT_AGENT = ROOT / "openwrt/remote-gate-agent.sh"
+OPENWRT_EGRESS = ROOT / "openwrt/remote-gate-wireguard-egress.sh"
 
 
 class UIContractTests(unittest.TestCase):
-    def test_mobile_layout_never_uses_display_contents(self):
-        source = LAYOUT.read_text(encoding="utf-8")
-        self.assertNotRegex(source, r"display\s*:\s*contents")
-        self.assertIn(".workspace-flow", source)
-        self.assertIn("grid-template-columns: minmax(0, 1fr)", source)
+    def test_browser_candidate_uses_cors_fetch_not_third_party_script(self):
+        source = CLIENT_SOURCES.read_text(encoding="utf-8")
+        self.assertIn("https://api.ipify.org?format=json", source)
+        self.assertIn("https://api6.ipify.org?format=json", source)
+        self.assertIn("https://api-ipv4.ip.sb/ip", source)
+        self.assertIn("https://api-ipv6.ip.sb/ip", source)
+        self.assertIn("mode: 'cors'", source)
+        self.assertIn("credentials: 'omit'", source)
+        self.assertIn("/api/v1/client-source/candidate", source)
+        self.assertIn("X-CSRF-Token", source)
+        self.assertIn("remote-gate-client-source-diagnostics", source)
+        self.assertIn("Candidate rejected:", source)
+        self.assertIn("timed out after", source)
+        self.assertNotIn("createElement('script')", source)
+        self.assertNotIn("/api/v1/client-source/challenge", source)
 
-    def test_template_has_v03_gate_controls(self):
-        source = TEMPLATE.read_text(encoding="utf-8")
-        self.assertIn('id="endpoint-select"', source)
-        self.assertIn('id="scope-segment"', source)
-        self.assertIn('data-scope="wg"', source)
-        self.assertIn('data-scope="wg_ping"', source)
-        self.assertIn('data-family="ipv4"', source)
-        self.assertIn('data-family="ipv6"', source)
-        self.assertNotIn('data-family="dual"', source)
-        self.assertIn('/static/css/spatial.css', source)
+    def test_observed_family_skips_carrier_probe_and_candidate_update_never_reloads_page(self):
+        source = CLIENT_SOURCES.read_text(encoding="utf-8")
+        self.assertIn("source.confidence === 'observed'", source)
+        self.assertIn("carrier probe skipped", source)
+        self.assertIn("remote-gate-client-source-updated", source)
+        self.assertNotIn("window.location.reload", source)
+        self.assertNotIn("location.reload", source)
 
-    def test_browser_never_supplies_authorization_ip_directly(self):
-        app = APP.read_text(encoding="utf-8")
-        gate = GATE.read_text(encoding="utf-8")
-        self.assertNotIn("CLIENT_MEMORY_KEY", app)
-        self.assertNotRegex(gate, r"source_ip\s*:")
-        self.assertIn("client_sources", app)
-        self.assertIn("endpoint_id", gate)
-        self.assertIn("scope", gate)
+    def test_probe_fallback_hosts_are_allowed_by_production_csp(self):
+        server = SERVER.read_text(encoding="utf-8")
+        self.assertIn("https://api-ipv4.ip.sb", server)
+        self.assertIn("https://api-ipv6.ip.sb", server)
+        self.assertIn("https://api.ipify.org", server)
+        self.assertIn("https://api6.ipify.org", server)
 
-    def test_ipv4_only_carrier_probe_is_automatic_and_short_lived(self):
-        source = BOOTSTRAP.read_text(encoding="utf-8")
-        self.assertIn("https://api.ipify.org?format=jsonp", source)
-        self.assertIn("/api/v1/client-source/probe", source)
-        self.assertIn("PROBE_INTERVAL", source)
-        self.assertIn("PROBE_TIMEOUT", source)
-        self.assertIn("client_sources?.ipv4", source)
-
-    def test_private_and_egress_wan_paths_are_manual_try_options(self):
-        app = APP.read_text(encoding="utf-8")
-        gate = GATE.read_text(encoding="utf-8")
-        expected = "['direct', 'mapped', 'private', 'egress_probe']"
-        self.assertIn(expected, app)
-        self.assertIn(expected, gate)
-        self.assertIn("Private/CGNAT · Try", app)
-        self.assertIn("NAT egress · Try", app)
-        self.assertIn("NAT IPv4", app)
-        self.assertIn("Egress · Try", app)
-
-    def test_manual_family_is_not_locked_to_current_request(self):
-        source = GATE.read_text(encoding="utf-8")
-        self.assertNotIn("state.requestFamily !== 'ipv4'", source)
-        self.assertNotIn("state.requestFamily !== 'ipv6'", source)
-        self.assertIn("button.disabled = !familyAvailable(family)", source)
-        self.assertIn("familyAvailable('ipv4')", source)
-        self.assertIn("familyAvailable('ipv6')", source)
-
-    def test_cgnat_safe_scope_defaults_to_wireguard_only(self):
-        source = GATE.read_text(encoding="utf-8")
-        self.assertIn("state.scope = 'wg'", source)
-        self.assertIn("wg_ping", source)
-        app = APP.read_text(encoding="utf-8")
-        self.assertIn("fw.scope === 'wg_ping'", app)
-
-    def test_spatial_layer_has_touch_and_depth_tokens(self):
-        source = SPATIAL.read_text(encoding="utf-8")
-        self.assertIn("var(--touch-min)", source)
-        self.assertIn("var(--depth-z3)", source)
-        self.assertIn(".activity-row", source)
-        self.assertIn(".system-row span", source)
-
-    def test_old_ipv4_only_copy_is_gone(self):
-        source = I18N.read_text(encoding="utf-8")
-        self.assertNotIn("IPv6 is displayed but data-plane authorization is not enabled", source)
-        self.assertNotIn("Open this control page over IPv4 before activating", source)
-        self.assertIn("Observed by VPS", source)
-        self.assertIn("仅 WireGuard", source)
-
-    def test_deploy_scripts_include_spatial_module(self):
-        for path in (INSTALL, UPDATE):
-            source = path.read_text(encoding="utf-8")
-            self.assertIn("server/app/static/css/spatial.css", source, path.name)
-
-    def test_canonical_favicon_is_bootstrapped_and_deployed(self):
-        self.assertTrue(FAVICON.is_file())
-        self.assertEqual(FAVICON.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
+    def test_production_dashboard_loads_candidate_probe_exactly_once(self):
+        template = TEMPLATE.read_text(encoding="utf-8")
         bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
-        self.assertIn("/static/Wei.G.ico", bootstrap)
-        self.assertIn("favicon.type = 'image/png'", bootstrap)
-        for path in (INSTALL, UPDATE):
-            source = path.read_text(encoding="utf-8")
-            self.assertIn("server/app/static/Wei.G.ico", source, path.name)
+        marker = '<script src="/static/js/client-sources.js?v={{ASSET_VERSION}}"></script>'
+        self.assertEqual(template.count(marker), 1)
+        self.assertIn('/static/js/theme-bootstrap.js?v={{ASSET_VERSION}}', template)
+        self.assertLess(template.index(marker), template.index('<script src="/static/js/gate-controls.js?v={{ASSET_VERSION}}"></script>'))
+        self.assertLess(template.index(marker), template.index('<script src="/static/js/app.js?v={{ASSET_VERSION}}"></script>'))
+        self.assertNotIn("'/static/js/client-sources.js'", bootstrap)
+        self.assertNotIn('"/static/js/client-sources.js"', bootstrap)
 
-    def test_vps_updater_is_installed_and_preserved(self):
+    def test_standard_feedback_assets_are_versioned_and_loaded_before_gate_controls(self):
+        template = TEMPLATE.read_text(encoding="utf-8")
+        feedback = FEEDBACK.read_text(encoding="utf-8")
+        css = FEEDBACK_CSS.read_text(encoding="utf-8")
+        self.assertIn('/static/css/feedback.css?v={{ASSET_VERSION}}', template)
+        marker = '<script src="/static/js/ui-feedback.js?v={{ASSET_VERSION}}"></script>'
+        self.assertIn(marker, template)
+        self.assertLess(template.index(marker), template.index('<script src="/static/js/gate-controls.js?v={{ASSET_VERSION}}"></script>'))
+        self.assertIn("RemoteGateFeedback", feedback)
+        self.assertIn("feedback-card", css)
+        self.assertIn("feedback-error", css)
+        self.assertIn("feedback-progress", css)
+        self.assertIn("prefers-reduced-motion", css)
+
+    def test_all_production_assets_are_build_sha_versioned(self):
+        dashboard = TEMPLATE.read_text(encoding="utf-8")
+        login = LOGIN.read_text(encoding="utf-8")
+        bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
+        self.assertNotIn("032-r2", dashboard)
+        self.assertNotIn("032-r2", login)
+        self.assertIn("?v={{ASSET_VERSION}}", dashboard)
+        self.assertIn("?v={{ASSET_VERSION}}", login)
+        for asset in (
+            "theme-bootstrap.js", "i18n.js", "tokens.css", "base.css", "components.css",
+            "feedback.css", "ui-feedback.js", "client-sources.js", "gate-controls.js", "app.js",
+        ):
+            self.assertIn(asset, dashboard)
+        self.assertIn("document.currentScript", bootstrap)
+        self.assertIn("searchParams.get('v')", bootstrap)
+        self.assertIn("assetUrl(src)", bootstrap)
+        self.assertIn("assetUrl('/static/css/interaction.css')", bootstrap)
+        self.assertIn('id="system-version">{{VERSION}}</strong>', dashboard)
+        self.assertIn('id="system-build" title="{{BUILD_SHA}}">{{BUILD_SHORT}}</strong>', dashboard)
+
+    def test_vps_install_and_update_freeze_to_one_commit_build(self):
         install = INSTALL.read_text(encoding="utf-8")
         update = UPDATE.read_text(encoding="utf-8")
         for source in (install, update):
-            self.assertIn('"server/update.sh"', source)
-            self.assertIn('bash -n "$TMP_DIR/server/update.sh"', source)
-            self.assertIn('"$LIB_DIR/update.sh"', source)
-        self.assertIn('install -o root -g root -m 0755 "$TMP_DIR/server/update.sh" "$LIB_DIR/update.sh"', install)
-        self.assertIn('install -o root -g root -m 0755 "$TMP_DIR/server/update.sh" "$LIB_DIR/update.sh"', update)
+            self.assertIn("resolve_build_sha", source)
+            self.assertIn("REMOTE_GATE_BUILD_SHA", source)
+            self.assertIn('RAW_BASE="${RAW_PREFIX}${BUILD_SHA}"', source)
+            self.assertIn('"{{ASSET_VERSION}}": build', source)
+            self.assertIn('"{{BUILD_SHA}}": build', source)
+            self.assertIn('"{{BUILD_SHORT}}": build[:12]', source)
+            self.assertIn('install -o root -g root -m 0644 "$TMP_DIR/BUILD" "$LIB_DIR/BUILD"', source)
+            self.assertIn("application/vnd.github.raw+json", source)
+            self.assertIn("server/app/static/css/feedback.css", source)
+            self.assertIn("server/app/static/js/ui-feedback.js", source)
+        self.assertIn('LOCAL_BUILD="$(cat "$LIB_DIR/BUILD"', update)
+        self.assertIn('[ "$LOCAL_BUILD" = "$BUILD_SHA" ]', update)
+
+    def test_browser_never_submits_authorized_source_ip(self):
+        gate = GATE.read_text(encoding="utf-8")
+        probe = CLIENT_SOURCES.read_text(encoding="utf-8")
+        self.assertNotIn("source_ip:", gate)
+        self.assertNotIn('"source_ip"', probe)
+        self.assertIn("body: JSON.stringify({family, address})", probe)
+
+    def test_ipv4_ipv6_and_dual_activate_are_supported_in_one_compact_row(self):
+        gate = GATE.read_text(encoding="utf-8")
+        template = TEMPLATE.read_text(encoding="utf-8")
+        css = COMPONENTS_CSS.read_text(encoding="utf-8")
+        self.assertIn("families:['ipv4','ipv6']", gate)
+        self.assertIn("endpoint_ids:{ipv4:pair.ipv4.id,ipv6:pair.ipv6.id}", gate)
+        self.assertIn("dualEndpointPairs", gate)
+        self.assertIn("Dual requires IPv4 and IPv6 endpoints on the same WAN", gate)
+        self.assertIn("双栈就绪 · IPv4 + IPv6 已识别", gate)
+        self.assertIn("Dual stack ready · IPv4 + IPv6 detected", gate)
+        self.assertIn("option.dataset.ipv4EndpointId", gate)
+        self.assertIn("option.dataset.ipv6EndpointId", gate)
+        self.assertIn("queueMicrotask(syncDualEndpointSelect)", gate)
+        self.assertIn("family === 'dual'", gate)
+        self.assertIn("{ipv4: 'IPv4', ipv6: 'IPv6', dual: 'Dual'}", gate)
+        self.assertIn('data-family="ipv4"', template)
+        self.assertIn('data-family="ipv6"', template)
+        self.assertIn('data-family="dual"', template)
+        self.assertIn("grid-template-columns: repeat(3, minmax(0, 1fr)) !important", css)
+        self.assertIn("white-space: nowrap", css)
+        self.assertIn(".family-segment button", css)
+
+    def test_mobile_endpoint_picker_fits_long_addresses_without_chevron(self):
+        source = ENDPOINT_PICKER.read_text(encoding="utf-8")
+        self.assertIn('endpoint-trigger-address fit-single-line', source)
+        self.assertIn('data-fit-min="7.5"', source)
+        self.assertIn("RemoteGateFit?.fit?.(address)", source)
+        self.assertIn("trigger.style.gridTemplateColumns = 'minmax(0, 1fr)'", source)
+        self.assertIn("trigger.addEventListener('click', () => open(selectId))", source)
+        self.assertIn("bindSelect('endpoint-select')", source)
+        self.assertNotIn("endpoint-trigger-chevron", source)
+
+    def test_internet_exit_reuses_the_existing_endpoint_picker(self):
+        picker = ENDPOINT_PICKER.read_text(encoding="utf-8")
+        gate = GATE.read_text(encoding="utf-8")
+        self.assertIn("const configs = new Map()", picker)
+        self.assertIn("selectId === 'egress-select'", picker)
+        self.assertIn("bindSelect", picker)
+        self.assertIn("egress-select", gate)
+        self.assertIn("INTERNET EXIT", gate)
+        self.assertIn("Internet 出口", gate)
+
+    def test_gate_hides_redundant_wireguard_selector_but_keeps_internal_state(self):
+        picker = ENDPOINT_PICKER.read_text(encoding="utf-8")
+        gate = GATE.read_text(encoding="utf-8")
+        self.assertIn("hideWireGuardSelector", picker)
+        self.assertIn("field.hidden = true", picker)
+        self.assertIn("select.tabIndex = -1", picker)
+        self.assertIn("$('wg-select')?.value", gate)
+
+    def test_gate_transaction_lock_is_real_and_server_terminal_owned(self):
+        gate = GATE.read_text(encoding="utf-8")
+        self.assertIn("transactionLocked", gate)
+        self.assertIn("transactionGuard", gate)
+        self.assertIn("form.inert = Boolean(locked)", gate)
+        self.assertIn("control.disabled = true;", gate)
+        self.assertIn("orb.disabled = !orbEnabled", gate)
+        self.assertIn("['done', 'failed', 'expired']", gate)
+        self.assertNotIn("65000", gate)
+        self.assertIn("setInterval(() => window.RemoteGateApp?.refresh?.(), 1000)", gate)
+        self.assertIn("RemoteGateFeedback", gate)
+        self.assertIn("正在激活远程访问", gate)
+        self.assertIn("正在关闭远程访问", gate)
+        self.assertNotIn("正在验证 WireGuard", gate)
+
+    def test_gate_orb_toggles_activate_and_close(self):
+        gate = GATE.read_text(encoding="utf-8")
+        self.assertIn("function toggleAccess()", gate)
+        self.assertIn("activeFamilyState(fw, context.state.family)", gate)
+        self.assertIn("closeAccess();", gate)
+        self.assertIn("else activate();", gate)
+        self.assertIn("addEventListener('click',toggleAccess)", gate)
+        self.assertIn("const orbLabel = active ? t('gate.close') : t('gate.activate')", gate)
+
+    def test_gate_open_state_is_scoped_to_current_browser_source(self):
+        gate = GATE.read_text(encoding="utf-8")
+        server = SERVER.read_text(encoding="utf-8")
+        self.assertIn("authorized_sources", gate)
+        self.assertIn("authorizations", gate)
+        self.assertIn("authorizationForSource", gate)
+        self.assertIn("sourceExpiresIn", gate)
+        self.assertIn('"authorized_sources"', server)
+        self.assertIn('"authorizations"', server)
+        self.assertIn('"source_count"', server)
+
+    def test_candidate_and_http_observed_sources_remain_visibly_distinct(self):
+        app = APP.read_text(encoding="utf-8")
+        self.assertIn("Carrier candidate", app)
+        self.assertIn("Cloudflare HTTP observed", app)
+        self.assertIn("without requiring a pre-existing WireGuard handshake", app)
+        self.assertNotIn("hints only", app)
+        self.assertIn("remote-gate-client-source-diagnostics", app)
+        self.assertIn("remote-gate-client-source-updated", app)
+
+    def test_dashboard_render_does_not_overwrite_gate_endpoint_memory(self):
+        app = APP.read_text(encoding="utf-8")
+        marker = "window.RemoteGateGateControls?.render(data);"
+        self.assertIn(marker, app)
+        tail = app.split(marker, 1)[1].split("window.RemoteGateFit?.observe();", 1)[0]
+        self.assertNotIn("syncEndpointSelect(data)", tail)
+        self.assertNotIn("renderClient(data)", tail)
+
+    def test_private_and_egress_paths_remain_available_for_manual_try(self):
+        app = APP.read_text(encoding="utf-8")
+        gate = GATE.read_text(encoding="utf-8")
+        self.assertIn("['direct', 'mapped', 'private', 'egress_probe']", app)
+        self.assertIn("['direct','mapped','private','egress_probe']", gate)
+        self.assertIn("Private/CGNAT · Try", app)
+        self.assertIn("NAT egress · Try", app)
+
+    def test_runtime_wireguard_egress_reboots_off_and_upgrade_cleans_legacy_rules(self):
+        egress = OPENWRT_EGRESS.read_text(encoding="utf-8")
+        agent = OPENWRT_AGENT.read_text(encoding="utf-8")
+        update = OPENWRT_UPDATE.read_text(encoding="utf-8")
+        self.assertIn('RUNTIME_DIR="${REMOTE_GATE_RUNTIME_DIR:-/tmp/remote-gate}"', egress)
+        self.assertIn('STATE_FILE="$RUNTIME_DIR/wireguard-egress.conf"', egress)
+        self.assertNotIn("uci set", egress)
+        self.assertIn("schedule_expiry", egress)
+        self.assertIn("status-json", egress)
+        self.assertIn("AllowedIPs = 0.0.0.0/0, ::/0", egress)
+        self.assertIn("cleanup-legacy", update)
+        self.assertIn("runtime only, reboot returns it to OFF", update)
+        self.assertIn('"$EGRESS" enable "$wireguard" "$egress_wan" "$ttl" "$egress_mode"', agent)
+        self.assertIn("apply_egress=0", agent)
+        self.assertIn("web-authorization-active-pending-egress", agent)
+
+    def test_scope_defaults_to_wireguard_only(self):
+        source = GATE.read_text(encoding="utf-8")
+        self.assertIn("state.scope='wg'", source)
+        self.assertIn("wg_ping", source)
+
+    def test_vps_installers_already_deploy_changed_runtime_files(self):
+        required = (
+            "server/remote-gate.py",
+            "server/app/client_sources.py",
+            "server/app/gate.py",
+            "server/app/static/css/feedback.css",
+            "server/app/static/js/ui-feedback.js",
+            "server/app/static/js/client-sources.js",
+            "server/app/static/js/gate-controls.js",
+        )
+        for path in (INSTALL, UPDATE):
+            source = path.read_text(encoding="utf-8")
+            for item in required:
+                self.assertIn(item, source, f"{path.name}: {item}")
 
 
 if __name__ == "__main__":

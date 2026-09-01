@@ -2,7 +2,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from server.app.client_sources import observe_ipv4_probe, observe_source, source_for_family, trusted_sources
+from server.app.client_sources import (
+    observe_candidate,
+    observe_network_probe,
+    observe_source,
+    source_for_family,
+    source_record_for_family,
+    trusted_sources,
+)
 from server.app.store import JsonStore
 
 
@@ -15,40 +22,62 @@ class TrustedSourceTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_ipv4_and_ipv6_can_be_observed_for_same_session(self):
-        observe_source(self.store, self.token, "198.51.100.10", now=100)
-        observe_source(self.store, self.token, "2001:4860:4860::8888", now=120)
-        sources = trusted_sources(self.store, self.token, now=130)
+    def test_http_observed_ipv4_and_ipv6_coexist(self):
+        observe_source(self.store, self.token, "8.8.8.8", now=100)
+        observe_source(self.store, self.token, "2001:4860:4860::8888", now=110)
+        sources = trusted_sources(self.store, self.token, now=120)
         self.assertEqual(set(sources), {"ipv4", "ipv6"})
+        self.assertEqual(sources["ipv4"]["confidence"], "observed")
+        self.assertEqual(sources["ipv6"]["confidence"], "observed")
 
-    def test_latest_cgnat_egress_replaces_old_ipv4(self):
-        observe_source(self.store, self.token, "198.51.100.10", now=100)
-        observe_source(self.store, self.token, "203.0.113.20", now=110)
-        self.assertEqual(source_for_family(self.store, self.token, "ipv4", now=111), "203.0.113.20")
-
-    def test_carrier_probe_supplies_ipv4_for_ipv6_first_session(self):
+    def test_candidate_fills_missing_family(self):
         observe_source(self.store, self.token, "2001:4860:4860::8888", now=100)
-        observe_ipv4_probe(self.store, self.token, "8.8.8.8", now=110)
+        record = observe_candidate(self.store, self.token, "1.1.1.1", "ipv4", now=110)
+        self.assertEqual(record["confidence"], "candidate")
+        self.assertEqual(record["source"], "carrier_probe")
+        self.assertEqual(source_for_family(self.store, self.token, "ipv4", now=111), "1.1.1.1")
+
+    def test_fresh_cloudflare_observation_replaces_same_family_candidate(self):
+        observe_source(self.store, self.token, "8.8.8.8", now=100)
+        record = observe_candidate(self.store, self.token, "1.1.1.1", "ipv4", now=110)
+        self.assertEqual(record["address"], "1.1.1.1")
+        self.assertEqual(record["confidence"], "candidate")
+
+        refreshed = observe_source(self.store, self.token, "8.8.4.4", now=115)
+        self.assertEqual(refreshed["address"], "8.8.4.4")
+        self.assertEqual(refreshed["confidence"], "observed")
+        selected = source_record_for_family(self.store, self.token, "ipv4", now=116)
+        self.assertEqual(selected["address"], "8.8.4.4")
+        self.assertEqual(selected["confidence"], "observed")
+
+    def test_observing_one_family_does_not_delete_other_family_candidate(self):
+        observe_candidate(self.store, self.token, "2001:4860:4860::8888", "ipv6", now=100)
+        observe_source(self.store, self.token, "8.8.8.8", now=110)
         sources = trusted_sources(self.store, self.token, now=111)
-        self.assertEqual(sources["ipv4"]["address"], "8.8.8.8")
-        self.assertEqual(sources["ipv4"]["source"], "carrier_probe")
-        self.assertEqual(sources["ipv4"]["confidence"], "heuristic")
-        self.assertEqual(source_for_family(self.store, self.token, "ipv4", now=111), "8.8.8.8")
+        self.assertEqual(sources["ipv4"]["confidence"], "observed")
+        self.assertEqual(sources["ipv6"]["confidence"], "candidate")
 
-    def test_cloudflare_ipv4_replaces_carrier_probe(self):
-        observe_ipv4_probe(self.store, self.token, "8.8.8.8", now=100)
-        observe_source(self.store, self.token, "1.1.1.1", now=110)
-        source = trusted_sources(self.store, self.token, now=111)["ipv4"]
-        self.assertEqual(source["address"], "1.1.1.1")
-        self.assertEqual(source["source"], "cloudflare")
-        self.assertEqual(source["confidence"], "verified")
+    def test_non_public_or_special_addresses_are_rejected(self):
+        for family, address in (
+            ("ipv4", "10.0.0.1"),
+            ("ipv4", "192.168.1.1"),
+            ("ipv4", "127.0.0.1"),
+            ("ipv6", "fe80::1"),
+            ("ipv6", "fd00::1"),
+            ("ipv6", "::1"),
+            ("ipv6", "2001:db8::1"),
+            ("ipv6", "ff02::1"),
+        ):
+            with self.subTest(address=address):
+                with self.assertRaises(ValueError):
+                    observe_candidate(self.store, self.token, address, family, now=100)
 
-    def test_probe_rejects_private_ipv4(self):
-        with self.assertRaisesRegex(ValueError, "public_ipv4_required"):
-            observe_ipv4_probe(self.store, self.token, "100.64.1.2", now=100)
+    def test_legacy_browser_probe_remains_fail_closed(self):
+        with self.assertRaisesRegex(ValueError, "legacy_source_probe_disabled"):
+            observe_network_probe(self.store, self.token, "8.8.8.8", family="ipv4")
 
-    def test_expired_family_cannot_be_selected(self):
-        observe_source(self.store, self.token, "198.51.100.10", now=100)
+    def test_expired_candidate_is_not_selectable(self):
+        observe_candidate(self.store, self.token, "1.1.1.1", "ipv4", now=100)
         with self.assertRaisesRegex(ValueError, "client_source_not_observed"):
             source_for_family(self.store, self.token, "ipv4", now=1000)
 

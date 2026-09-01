@@ -3,6 +3,7 @@ set -u
 
 CONFIG_FILE="/etc/remote-gate.conf"
 FIREWALL="/usr/lib/remote-gate/remote-gate-firewall.sh"
+EGRESS="/usr/lib/remote-gate/remote-gate-wireguard-egress.sh"
 STATE_DIR="/etc/remote-gate-state"
 TAG="remote-gate"
 TMP_BASE="/tmp/remote-gate-agent.$$"
@@ -22,6 +23,9 @@ INVENTORY_POSTED_FILE="$STATE_DIR/inventory-v2.posted"
 GATE_IPV6="${GATE_IPV6:-auto}"
 CONTROL_TRANSPORT="${CONTROL_TRANSPORT:-auto}"
 NATMAP_DISCOVERY="${NATMAP_DISCOVERY:-auto}"
+REMOTE_GATE_VERIFY_CANDIDATE_SECONDS="${REMOTE_GATE_VERIFY_CANDIDATE_SECONDS:-10}"
+REMOTE_GATE_VERIFY_DISCOVERY_SECONDS="${REMOTE_GATE_VERIFY_DISCOVERY_SECONDS:-30}"
+export REMOTE_GATE_VERIFY_CANDIDATE_SECONDS REMOTE_GATE_VERIFY_DISCOVERY_SECONDS
 case "$GATE_IPV6" in auto|enabled|disabled) ;; *) GATE_IPV6=auto ;; esac
 case "$CONTROL_TRANSPORT" in auto|manual) ;; *) CONTROL_TRANSPORT=auto ;; esac
 case "$NATMAP_DISCOVERY" in auto|disabled) ;; *) NATMAP_DISCOVERY=auto ;; esac
@@ -31,6 +35,7 @@ chmod 700 "$STATE_DIR" 2>/dev/null || true
 trap 'rm -rf "$INV_DIR"; rm -f "$BODY" "${TMP_BASE}".*' EXIT INT TERM
 
 valid_device() { case "$1" in ''|*[!A-Za-z0-9_.:@+-]*) return 1 ;; *) return 0 ;; esac; }
+valid_uint() { case "$1" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
 
 is_public_ipv4() {
     printf '%s\n' "$1" | awk -F. '
@@ -99,12 +104,15 @@ collect_wans() {
         [ "$def6" -eq 1 ] && : > "$base.def6"
 
         printf '%s' "$status" | jsonfilter -e '@["ipv4-address"][*].address' 2>/dev/null >> "$base.v4" || true
-        printf '%s' "$status" | jsonfilter -e '@["ipv6-address"][*].address' 2>/dev/null >> "$base.v6" || true
+        printf '%s' "$status" | jsonfilter -e '@["ipv6-address"][*].address' 2>/dev/null | while IFS= read -r address; do
+            is_global_ipv6 "$address" && printf '%s\n' "$address"
+        done >> "$base.v6" || true
     done
 
     for file in "$INV_DIR"/*.names; do
         [ -f "$file" ] || continue
-        sort -u "$file" -o "$file"
+        sort -u "$file" > "${file}.tmp"
+        mv "${file}.tmp" "$file"
     done
     for file in "$INV_DIR"/*.v4 "$INV_DIR"/*.v6; do
         [ -f "$file" ] || continue
@@ -176,6 +184,11 @@ sync_firewall_policy() {
     }
 }
 
+sync_egress() {
+    [ -x "$EGRESS" ] || return 0
+    "$EGRESS" sync >/dev/null 2>&1 || true
+}
+
 json_string_array_file() {
     file="$1"
     first=1
@@ -191,9 +204,7 @@ json_string_array_file() {
     printf ']'
 }
 
-natmap_json() {
-    printf '[]'
-}
+natmap_json() { printf '[]'; }
 
 build_inventory_json() {
     collect_wans
@@ -368,9 +379,7 @@ maybe_post_inventory() {
     last="$(cat "$INVENTORY_POSTED_FILE" 2>/dev/null || echo 0)"
     case "$last" in ''|*[!0-9]*) last=0 ;; esac
     now="$(date +%s)"
-    if [ "$fingerprint" = "$old" ] && [ "$((now - last))" -lt 300 ]; then
-        return 0
-    fi
+    if [ "$fingerprint" = "$old" ] && [ "$((now - last))" -lt 300 ]; then return 0; fi
     if control_request POST "/api/v1/inventory" "$BODY" "$payload" && [ "$CONTROL_CODE" = "204" ]; then
         printf '%s\n' "$fingerprint" > "$INVENTORY_STATE_FILE"
         printf '%s\n' "$now" > "$INVENTORY_POSTED_FILE"
@@ -394,22 +403,34 @@ wireguard_json() {
         rx="${transfer%% *}"; tx="${transfer##* }"
         [ "$first" -eq 1 ] || printf ','
         first=0
-        printf '{"name":"%s","listen_port":%s,"latest_handshake":%s,"rx":%s,"tx":%s}' \
-            "$name" "$port" "${latest:-0}" "${rx:-0}" "${tx:-0}"
+        printf '{"name":"%s","listen_port":%s,"latest_handshake":%s,"rx":%s,"tx":%s}' "$name" "$port" "${latest:-0}" "${rx:-0}" "${tx:-0}"
     done
     printf ']'
+}
+
+egress_json() {
+    if [ -x "$EGRESS" ]; then
+        "$EGRESS" status-json 2>/dev/null || printf '{"active":false,"state":"inactive","mode":"","wan":"","device":"","wg":"","ipv4_subnet":"","ipv6_subnet":"","detail":"","expires_in":0}'
+    else
+        printf '{"active":false,"state":"inactive","mode":"","wan":"","device":"","wg":"","ipv4_subnet":"","ipv6_subnet":"","detail":"","expires_in":0}'
+    fi
 }
 
 post_status() {
     fw="$("$FIREWALL" status-json 2>/dev/null || printf '{"backend":"unsupported","ready":false,"active":false,"source_ip":"","device":"","wg_port":0,"expires_in":0,"protected_devices_v4":0,"protected_devices_v6":0,"protected_ports":0}')"
     wg_json="$(wireguard_json)"
+    egress="$(egress_json)"
     transport="$(transport_json)"
-    payload="{\"schema\":2,\"wireguard\":${wg_json},\"firewall\":${fw},\"transport\":${transport}}"
+    payload="{\"schema\":3,\"wireguard\":${wg_json},\"firewall\":${fw},\"egress\":${egress},\"transport\":${transport}}"
     control_request POST "/api/v1/agent/status" "$BODY" "$payload" >/dev/null 2>&1 || true
 }
 
+sanitize_detail() {
+    printf '%s' "$1" | tr '\r\n' '  ' | sed 's/[^A-Za-z0-9 ._:/(),+-]/_/g' | cut -c1-200
+}
+
 ack() {
-    id="$1"; ok="$2"; detail="$3"
+    id="$1"; ok="$2"; detail="$(sanitize_detail "$3")"
     payload="{\"id\":\"${id}\",\"ok\":${ok},\"detail\":\"${detail}\"}"
     control_request POST "/api/v1/agent/ack" "$BODY" "$payload" >/dev/null 2>&1 || true
 }
@@ -430,22 +451,73 @@ pull_once() {
     case "$action" in
         activate)
             source_ip="$(jsonfilter -i "$BODY" -e '@.source_ip' 2>/dev/null | sed -n '1p')"
+            source_confidence="$(jsonfilter -i "$BODY" -e '@.source_confidence' 2>/dev/null | sed -n '1p')"
             family="$(jsonfilter -i "$BODY" -e '@.family' 2>/dev/null | sed -n '1p')"
             scope="$(jsonfilter -i "$BODY" -e '@.scope' 2>/dev/null | sed -n '1p')"
             device="$(jsonfilter -i "$BODY" -e '@.device' 2>/dev/null | sed -n '1p')"
+            wireguard="$(jsonfilter -i "$BODY" -e '@.wireguard' 2>/dev/null | sed -n '1p')"
+            egress_wan="$(jsonfilter -i "$BODY" -e '@.egress_wan' 2>/dev/null | sed -n '1p')"
+            egress_mode="$(jsonfilter -i "$BODY" -e '@.egress_mode' 2>/dev/null | sed -n '1p')"
+            batch_index="$(jsonfilter -i "$BODY" -e '@.batch_index' 2>/dev/null | sed -n '1p')"
+            batch_count="$(jsonfilter -i "$BODY" -e '@.batch_count' 2>/dev/null | sed -n '1p')"
             port="$(jsonfilter -i "$BODY" -e '@.wg_port' 2>/dev/null | sed -n '1p')"
             ttl="$(jsonfilter -i "$BODY" -e '@.ttl' 2>/dev/null | sed -n '1p')"
             [ -n "$family" ] || family=ipv4
             [ -n "$scope" ] || scope=wg_ping
-            sync_firewall_policy || true
-            if "$FIREWALL" activate "$source_ip" "$family" "$scope" "$device" "$port" "$ttl"; then
-                ack "$id" true "authorization-active"
-            else
-                ack "$id" false "firewall-activation-failed"
+            valid_uint "$batch_index" || batch_index=0
+            valid_uint "$batch_count" || batch_count=1
+            [ "$batch_count" -ge 1 ] || batch_count=1
+            if [ -z "$egress_mode" ]; then
+                if [ "$batch_count" -gt 1 ]; then egress_mode=dual; else egress_mode="$family"; fi
             fi
+            case "$egress_mode" in ipv4|ipv6|dual) ;; *) ack "$id" false "invalid-egress-mode"; return 1 ;; esac
+            case "$source_confidence" in
+                verified) source_kind=web_verified ;;
+                observed) source_kind=web_observed ;;
+                candidate) source_kind=web_candidate ;;
+                *) source_kind=web_verified ;;
+            esac
+
+            if [ "$batch_index" -eq 0 ] && [ -x "$EGRESS" ]; then "$EGRESS" disable >/dev/null 2>&1 || true; fi
+
+            sync_firewall_policy || true
+            error_file="${TMP_BASE}.firewall-error"
+            rm -f "$error_file"
+            if "$FIREWALL" activate "$source_ip" "$family" "$scope" "$device" "$port" "$ttl" "$source_kind" 2>"$error_file"; then
+                apply_egress=1
+                if [ "$batch_count" -gt 1 ] && [ "$((batch_index + 1))" -lt "$batch_count" ]; then apply_egress=0; fi
+                if [ -n "$egress_wan" ] && [ "$apply_egress" -eq 1 ]; then
+                    if [ -x "$EGRESS" ] && "$EGRESS" enable "$wireguard" "$egress_wan" "$ttl" "$egress_mode" >/dev/null 2>"${TMP_BASE}.egress-error"; then
+                        ack "$id" true "web-authorization-and-${egress_mode}-egress-active"
+                    else
+                        # The helper owns rollback and keeps a short-lived failed
+                        # status under /tmp so dashboard refreshes cannot hide it.
+                        detail="$(sed -n 's/^ERROR: //p' "${TMP_BASE}.egress-error" 2>/dev/null | tail -n 1)"
+                        [ -n "$detail" ] || detail="wireguard-egress-activation-failed"
+                        logger -t "$TAG" "egress activation failed: $detail" 2>/dev/null || true
+                        ack "$id" false "$detail"
+                    fi
+                elif [ -n "$egress_wan" ]; then
+                    ack "$id" true "web-authorization-active-pending-egress"
+                else
+                    [ -x "$EGRESS" ] && "$EGRESS" disable >/dev/null 2>&1 || true
+                    ack "$id" true "web-authorization-active"
+                fi
+            else
+                [ -x "$EGRESS" ] && "$EGRESS" disable >/dev/null 2>&1 || true
+                detail="$(sed -n 's/^ERROR: //p' "$error_file" 2>/dev/null | tail -n 1)"
+                [ -n "$detail" ] || detail="$(tail -n 1 "$error_file" 2>/dev/null || true)"
+                [ -n "$detail" ] || detail="firewall-activation-failed"
+                logger -t "$TAG" "activation failed: $detail" 2>/dev/null || true
+                ack "$id" false "$detail"
+            fi
+            rm -f "$error_file" "${TMP_BASE}.egress-error"
             ;;
         close)
-            if "$FIREWALL" clear; then ack "$id" true "authorization-cleared"; else ack "$id" false "firewall-clear-failed"; fi
+            close_ok=true
+            "$FIREWALL" clear || close_ok=false
+            [ ! -x "$EGRESS" ] || "$EGRESS" disable >/dev/null 2>&1 || close_ok=false
+            if [ "$close_ok" = true ]; then ack "$id" true "all-authorizations-and-egress-cleared"; else ack "$id" false "gate-close-failed"; fi
             ;;
         *) ack "$id" false "unsupported-action" ;;
     esac
@@ -453,16 +525,19 @@ pull_once() {
 
 report_only() {
     sync_firewall_policy || true
+    sync_egress
     maybe_post_inventory || true
     post_status
 }
 
 run_once() {
     sync_firewall_policy || true
+    sync_egress
     maybe_post_inventory || true
     post_status
     pull_rc=0
     pull_once || pull_rc=$?
+    sync_egress
     post_status
     return "$pull_rc"
 }

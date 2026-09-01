@@ -20,8 +20,20 @@ def fixture() -> dict:
         "client_ip": "2408:8256:1970:66ae:1234:5678:90ab:cdef",
         "request_family": "ipv6",
         "client_sources": {
-            "ipv4": {"address": "112.96.156.107", "observed_at": now - 80, "expires_at": now + 520},
-            "ipv6": {"address": "2408:8256:1970:66ae:1234:5678:90ab:cdef", "observed_at": now, "expires_at": now + 600},
+            "ipv4": {
+                "address": "112.96.156.107",
+                "observed_at": now - 80,
+                "expires_at": now + 300,
+                "source": "carrier_probe",
+                "confidence": "candidate",
+            },
+            "ipv6": {
+                "address": "2408:8256:1970:66ae:1234:5678:90ab:cdef",
+                "observed_at": now,
+                "expires_at": now + 300,
+                "source": "carrier_probe",
+                "confidence": "candidate",
+            },
         },
         "csrf": "fixture-csrf",
         "inventory": {

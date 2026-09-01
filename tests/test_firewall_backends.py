@@ -6,10 +6,12 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-FIREWALL = ROOT / "openwrt" / "remote-gate-firewall.sh"
-AGENT = ROOT / "openwrt" / "remote-gate-agent.sh"
-OPENWRT_INSTALL = ROOT / "openwrt" / "install.sh"
-OPENWRT_UPDATE = ROOT / "openwrt" / "update.sh"
+FIREWALL = ROOT / "openwrt/remote-gate-firewall.sh"
+BACKENDS = ROOT / "openwrt/remote-gate-firewall-backends.sh"
+VERIFY = ROOT / "openwrt/remote-gate-wireguard-verify.sh"
+AGENT = ROOT / "openwrt/remote-gate-agent.sh"
+INSTALL = ROOT / "openwrt/install.sh"
+UPDATE = ROOT / "openwrt/update.sh"
 
 
 def fake_cmd(directory: Path, name: str, body: str = "exit 0\n") -> None:
@@ -26,6 +28,7 @@ class FirewallBackendTests(unittest.TestCase):
                 fake_cmd(directory, name)
             env = os.environ.copy()
             env["PATH"] = f"{directory}:/usr/bin:/bin"
+            env["REMOTE_GATE_LIB_DIR"] = str(ROOT / "openwrt")
             proc = subprocess.run(
                 ["/bin/sh", str(FIREWALL), "detect"],
                 text=True,
@@ -35,100 +38,112 @@ class FirewallBackendTests(unittest.TestCase):
             )
             return proc.returncode, proc.stdout.strip()
 
-    def test_detects_fw4_first(self):
+    def test_backend_detection_still_supports_fw4_and_fw3(self):
         self.assertEqual(self.run_detect(["fw4", "nft", "fw3", "iptables", "ipset"]), (0, "fw4-nftables"))
-
-    def test_detects_fw3_ipset(self):
         self.assertEqual(self.run_detect(["fw3", "iptables", "ipset"]), (0, "fw3-iptables"))
+        self.assertNotEqual(self.run_detect([])[0], 0)
 
-    def test_rejects_unsupported_backend(self):
-        rc, out = self.run_detect([])
-        self.assertNotEqual(rc, 0)
-        self.assertEqual(out, "unsupported")
-
-    def test_guard_never_modifies_forward_chain(self):
-        source = FIREWALL.read_text(encoding="utf-8")
-        self.assertNotIn("-I FORWARD", source)
-        self.assertNotIn("-A FORWARD", source)
+    def test_modules_never_touch_forward_or_nat(self):
+        source = "\n".join(path.read_text(encoding="utf-8") for path in (FIREWALL, BACKENDS, VERIFY))
+        self.assertNotIn("FORWARD", source)
         self.assertNotIn("chain-pre/forward", source)
-        self.assertIn('iptables -I INPUT 1 -j "$FW3_CHAIN_V4"', source)
-        self.assertIn('ip6tables -I INPUT 1 -j "$FW3_CHAIN_V6"', source)
-        self.assertIn('chain-pre/input/90-weig-remote-gate.nft', source)
+        self.assertNotIn("DNAT", source)
+        self.assertNotIn("MASQUERADE", source)
+        self.assertIn("INPUT", source)
 
-    def test_ipv6_only_controls_echo_request_and_wireguard_udp(self):
-        source = FIREWALL.read_text(encoding="utf-8")
-        self.assertIn("--icmpv6-type echo-request", source)
-        self.assertIn("-p udp --dport", source)
-        self.assertIn("icmpv6 type echo-request", source)
-        self.assertNotIn("--icmpv6-type neighbour", source.lower())
-        self.assertNotIn("--icmpv6-type router", source.lower())
-        self.assertNotIn("--icmpv6-type packet-too-big", source.lower())
+    def test_wireguard_verification_is_diagnostic_not_activation_gate(self):
+        backends = BACKENDS.read_text(encoding="utf-8")
+        verify = VERIFY.read_text(encoding="utf-8")
+        firewall = FIREWALL.read_text(encoding="utf-8")
+        agent = AGENT.read_text(encoding="utf-8")
+        activate_block = verify.split("activate() {", 1)[1].split("verify_open() {", 1)[0]
 
-    def test_empty_ipv6_policy_removes_idle_fw3_jump(self):
-        source = FIREWALL.read_text(encoding="utf-8")
-        self.assertIn('if [ ! -s "$DEVICES_V6_FILE" ]; then', source)
-        self.assertIn('ip6tables -F "$FW3_CHAIN_V6" >/dev/null 2>&1 || true', source)
-        self.assertIn('ip6tables -X "$FW3_CHAIN_V6" >/dev/null 2>&1 || true', source)
-        self.assertIn('ip6tables -C INPUT -j "$FW3_CHAIN_V6" >/dev/null 2>&1 && return 1', source)
+        self.assertIn("verification window", backends)
+        self.assertIn("verify_wireguard_source", verify)
+        self.assertIn("verify-wireguard", firewall)
+        self.assertNotIn("verify_wireguard_source", activate_block)
+        self.assertIn("auth_record_file", activate_block)
+        self.assertIn("authorization profile conflict", activate_block)
+        self.assertIn('REMOTE_GATE_VERIFY_CANDIDATE_SECONDS="${REMOTE_GATE_VERIFY_CANDIDATE_SECONDS:-10}"', agent)
+        self.assertIn('REMOTE_GATE_VERIFY_DISCOVERY_SECONDS="${REMOTE_GATE_VERIFY_DISCOVERY_SECONDS:-30}"', agent)
 
-    def test_authorization_is_revoked_when_endpoint_policy_changes(self):
-        source = FIREWALL.read_text(encoding="utf-8")
-        self.assertIn("auth_policy_current()", source)
-        self.assertIn('grep -Fqx "$AUTH_DEVICE" "$device_file"', source)
-        self.assertIn('grep -Fqx "$AUTH_PORT" "$PORTS_FILE"', source)
-        self.assertIn("reconcile_auth_policy", source)
-        self.assertIn("temporary authorization revoked because protected WAN/port policy changed", source)
-        self.assertIn("fw3_ensure_sets\n    reconcile_auth_policy", source)
-        self.assertIn("fw4_add_lines weig_remote_gate_protected_udp_port", source)
-        self.assertIn("    reconcile_auth_policy\n    [ -n \"$AUTH_IP\" ] || return 0", source)
+    def test_agent_returns_specific_firewall_failure_detail(self):
+        source = AGENT.read_text(encoding="utf-8")
+        self.assertIn('error_file="${TMP_BASE}.firewall-error"', source)
+        self.assertIn('2>"$error_file"', source)
+        self.assertIn("sed -n 's/^ERROR: //p'", source)
+        self.assertIn('logger -t "$TAG" "activation failed: $detail"', source)
+        self.assertIn('ack "$id" false "$detail"', source)
+        self.assertNotIn('ack "$id" false "firewall-activation-failed"', source)
+        self.assertIn("sanitize_detail", source)
 
-    def test_scope_can_keep_ping_closed(self):
-        source = FIREWALL.read_text(encoding="utf-8")
-        self.assertIn('if [ "$AUTH_SCOPE" = "wg_ping" ]', source)
-        self.assertIn('valid_scope() { case "$1" in wg|wg_ping)', source)
+    def test_web_authorization_preserves_source_confidence(self):
+        source = AGENT.read_text(encoding="utf-8")
+        verify = VERIFY.read_text(encoding="utf-8")
+        self.assertIn("source_confidence", source)
+        self.assertIn("web_verified", source)
+        self.assertIn("web_observed", source)
+        self.assertIn("web_candidate", source)
+        self.assertIn("valid_source_kind", FIREWALL.read_text(encoding="utf-8"))
+        self.assertIn("web authorization active", verify)
 
-    def test_agent_syncs_dual_stack_wans_and_wireguard_ports(self):
+    def test_authorization_state_supports_multiple_sources_per_family(self):
+        firewall = FIREWALL.read_text(encoding="utf-8")
+        backends = BACKENDS.read_text(encoding="utf-8")
+        verify = VERIFY.read_text(encoding="utf-8")
+        self.assertIn("AUTH_DIR_V4", firewall)
+        self.assertIn("AUTH_DIR_V6", firewall)
+        self.assertIn("authorization-ipv4.d", firewall)
+        self.assertIn("authorization-ipv6.d", firewall)
+        self.assertIn("read_auth_records", backends)
+        self.assertIn("authorized_sources", verify)
+        self.assertIn("authorizations", verify)
+        self.assertIn("source_count", verify)
+        self.assertIn('clear_auth "${2:-all}"', firewall)
+
+    def test_concurrent_sources_share_one_safe_family_profile(self):
+        source = VERIFY.read_text(encoding="utf-8")
+        backends = BACKENDS.read_text(encoding="utf-8")
+        self.assertIn("authorization profile conflict", source)
+        self.assertIn("concurrent authorization profile differed", backends)
+        self.assertIn('rg_existing_dev="$2"', source)
+        self.assertIn('rg_existing_port="$3"', source)
+        self.assertIn('rg_existing_scope="${rg_existing_meta%%:*}"', source)
+
+    def test_no_wan2_or_51820_hardcoding_in_new_firewall_modules(self):
+        source = "\n".join(path.read_text(encoding="utf-8") for path in (FIREWALL, BACKENDS, VERIFY))
+        self.assertNotIn("pppoe-WAN2", source)
+        self.assertNotIn("51820", source)
+        self.assertIn("wireguard_for_port", VERIFY.read_text(encoding="utf-8"))
+
+    def test_openwrt_lifecycle_deploys_new_modules(self):
+        for path in (INSTALL, UPDATE):
+            source = path.read_text(encoding="utf-8")
+            self.assertIn("remote-gate-firewall-backends.sh", source)
+            self.assertIn("remote-gate-wireguard-verify.sh", source)
+            self.assertIn("remote-gate-audit.sh", source)
+
+    def test_agent_keeps_dynamic_multiwan_and_wireguard_discovery(self):
         source = AGENT.read_text(encoding="utf-8")
         self.assertIn("v4_protected_devices", source)
         self.assertIn("v6_protected_devices", source)
         self.assertIn("wireguard_ports", source)
         self.assertIn('"$FIREWALL" sync "$v4" "$v6" "$ports"', source)
+        self.assertNotIn("pppoe-WAN2", source)
+        self.assertNotIn("51820", source)
 
-    def test_private_ipv4_wans_are_in_gate_policy(self):
+    def test_agent_drops_non_global_ipv6_before_inventory_upload(self):
         source = AGENT.read_text(encoding="utf-8")
-        block = source.split("v4_protected_devices() {", 1)[1].split("v6_protected_devices() {", 1)[0]
-        self.assertIn('[ -s "$base.v4" ] || continue', block)
-        self.assertIn("printf '%s\\n' \"$dev\"", block)
-        self.assertNotIn("is_public_ipv4", block)
+        collect = source.split("collect_wans() {", 1)[1].split("wireguard_ports() {", 1)[0]
+        self.assertIn("is_global_ipv6()", source)
+        self.assertIn("2*|3*", source)
+        self.assertIn("jsonfilter -e '@[\"ipv6-address\"][*].address'", collect)
+        self.assertIn('is_global_ipv6 "$address" && printf', collect)
+        self.assertNotIn('jsonfilter -e \'@["ipv6-address"][*].address\' 2>/dev/null >> "$base.v6"', collect)
 
-    def test_agent_uses_health_based_transport_candidates(self):
-        source = AGENT.read_text(encoding="utf-8")
-        self.assertIn("control_candidates", source)
-        self.assertIn("remember_control_path", source)
-        self.assertIn('flag="-6"', source)
-        self.assertIn('flag="-4"', source)
-
-    def test_openwrt_lifecycle_deploys_read_only_audit(self):
-        for path in (OPENWRT_INSTALL, OPENWRT_UPDATE):
-            source = path.read_text(encoding="utf-8")
-            self.assertIn("remote-gate-audit.sh", source, path.name)
-        audit = (ROOT / "openwrt" / "remote-gate-audit.sh").read_text(encoding="utf-8")
-        self.assertIn("/var/run/natmap/*.json", audit)
-        self.assertIn("content intentionally not printed", audit)
-        self.assertNotIn("cat /etc/config/natmap", audit)
-        self.assertNotIn("cat /etc/remote-gate.conf", audit)
-
-    def test_openwrt_startup_does_not_launch_duplicate_pull(self):
-        install = OPENWRT_INSTALL.read_text(encoding="utf-8")
-        update = OPENWRT_UPDATE.read_text(encoding="utf-8")
-        self.assertNotIn('"$LIB_DIR/remote-gate-agent.sh" once', install)
-        self.assertNotIn('"$LIB_DIR/remote-gate-agent.sh" once', update)
-        self.assertIn('"$LIB_DIR/remote-gate-agent.sh" report || true', install)
-
-    def test_legacy_upgrade_keeps_new_ipv6_gate_disabled(self):
-        install = OPENWRT_INSTALL.read_text(encoding="utf-8")
-        update = OPENWRT_UPDATE.read_text(encoding="utf-8")
-        self.assertIn("GATE_IPV6='auto'", install)
+    def test_upgrade_keeps_ipv6_disabled_for_legacy_installations(self):
+        self.assertIn("GATE_IPV6='auto'", INSTALL.read_text(encoding="utf-8"))
+        update = UPDATE.read_text(encoding="utf-8")
         self.assertIn("append_default GATE_IPV6 disabled", update)
         self.assertNotIn("append_default GATE_IPV6 auto", update)
 

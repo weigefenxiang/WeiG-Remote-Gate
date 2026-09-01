@@ -1,9 +1,9 @@
-name: v0.3 CI
+name: v0.3.x CI
 
 on:
   push:
     branches:
-      - dev/v0.3.0
+      - 'dev/v0.3.*'
   pull_request:
     branches:
       - main

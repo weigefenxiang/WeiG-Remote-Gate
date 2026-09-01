@@ -8,7 +8,14 @@
     busy: false,
     family: '',
     scope: 'wg',
-    requestFamily: 'unknown'
+    requestFamily: 'unknown',
+    egressSelections: {},
+    get egressWan() {
+      return this.egressSelections[this.family] || '__lan__';
+    },
+    set egressWan(value) {
+      if (['ipv4', 'ipv6', 'dual'].includes(this.family)) this.egressSelections[this.family] = String(value || '__lan__');
+    }
   };
 
   function toast(message, kind = 'info') {
@@ -124,29 +131,55 @@
     syncSelect(select, reachableEndpoints(data), (item) => item.id, endpointLabel);
   }
 
+  function sourceDiagnostic(family) {
+    return window.RemoteGateClientSources?.diagnostics?.()?.[family] || {status: 'idle', detail: '', address: ''};
+  }
+
+  function sourceMeta(record, family) {
+    const zh = document.documentElement.dataset.lang === 'zh';
+    const diagnostic = sourceDiagnostic(family);
+    if (record) {
+      const label = record.confidence === 'candidate'
+        ? (zh ? '运营商 Candidate' : 'Carrier candidate')
+        : (zh ? 'Cloudflare HTTP 观察' : 'Cloudflare HTTP observed');
+      const suffix = ['echo_error', 'candidate_error', 'dashboard_error'].includes(diagnostic.status)
+        ? ` · ${zh ? 'Probe 失败' : 'Probe failed'}: ${diagnostic.detail}`
+        : '';
+      return `${label} · ${age(record.observed_at)}${suffix}`;
+    }
+    const messages = {
+      probing: zh ? '正在探测…' : 'Detecting…',
+      echo_ok: zh ? `IP Echo 成功 · ${diagnostic.address}` : `IP echo OK · ${diagnostic.address}`,
+      saved: zh ? `Candidate 已保存 · ${diagnostic.address}` : `Candidate saved · ${diagnostic.address}`,
+      echo_error: zh ? `IP Echo 失败 · ${diagnostic.detail}` : `IP echo failed · ${diagnostic.detail}`,
+      candidate_error: zh ? `Candidate 失败 · ${diagnostic.detail}` : `Candidate failed · ${diagnostic.detail}`,
+      dashboard_error: zh ? `探测初始化失败 · ${diagnostic.detail}` : `Probe setup failed · ${diagnostic.detail}`
+    };
+    return messages[diagnostic.status] || t('common.notObserved');
+  }
+
   function renderClient(data) {
     state.requestFamily = data?.request_family || ipFamily(data?.client_ip);
     const v4 = sourceRecord(data, 'ipv4');
     const v6 = sourceRecord(data, 'ipv6');
     const zh = document.documentElement.dataset.lang === 'zh';
-    const v4Probe = v4?.source === 'carrier_probe';
 
     if ($('client-ipv4')) $('client-ipv4').textContent = v4?.address || t('common.notObserved');
     if ($('client-ipv6')) $('client-ipv6').textContent = v6?.address || t('common.notObserved');
-    if ($('client-ipv4-meta')) $('client-ipv4-meta').textContent = v4
-      ? `${v4Probe ? (zh ? '运营商 NAT Probe' : 'Carrier NAT probe') : (state.requestFamily === 'ipv4' ? t('client.currentRequest') : t('client.serverObserved'))} · ${age(v4.observed_at)}`
-      : t('common.notObserved');
-    if ($('client-ipv6-meta')) $('client-ipv6-meta').textContent = v6
-      ? `${state.requestFamily === 'ipv6' ? t('client.currentRequest') : t('client.serverObserved')} · ${age(v6.observed_at)}`
-      : t('common.notObserved');
+    if ($('client-ipv4-meta')) {
+      $('client-ipv4-meta').textContent = sourceMeta(v4, 'ipv4');
+      $('client-ipv4-meta').title = sourceDiagnostic('ipv4').detail || '';
+    }
+    if ($('client-ipv6-meta')) {
+      $('client-ipv6-meta').textContent = sourceMeta(v6, 'ipv6');
+      $('client-ipv6-meta').title = sourceDiagnostic('ipv6').detail || '';
+    }
 
     const trustNote = document.querySelector('.trust-note');
     if (trustNote) {
-      trustNote.textContent = v4Probe
-        ? (zh
-          ? 'IPv4 来自 IPv4-only 运营商 NAT Probe，可用于手动尝试 IPv4 Gate；Cloudflare 直接观察到的 Source 仍优先。'
-          : 'IPv4 came from an IPv4-only carrier NAT probe and may be used to try IPv4 Gate; Cloudflare-observed sources remain preferred.')
-        : t('client.trustNote');
+      trustNote.textContent = zh
+        ? 'Cloudflare HTTP 观察和运营商 Candidate 用于识别当前 Session 的客户端来源；点击 Activate 后由 VPS 解析所选协议族，OpenWrt 直接应用临时授权，不要求 WireGuard 预先握手。'
+        : 'Cloudflare HTTP observations and carrier candidates identify the current session source. Activate resolves the selected family on the VPS and OpenWrt applies the temporary authorization without requiring a pre-existing WireGuard handshake.';
     }
 
     const requestLabel = state.requestFamily === 'ipv4' ? 'IPv4' : state.requestFamily === 'ipv6' ? 'IPv6' : '—';
@@ -395,8 +428,6 @@
     renderSystem(data);
     window.RemoteGateActivity?.render($('activity-list'), data?.activity, t);
     window.RemoteGateGateControls?.render(data);
-    syncEndpointSelect(data);
-    renderClient(data);
     window.RemoteGateFit?.observe();
   }
 
@@ -487,8 +518,13 @@
     window.RemoteGateI18n?.apply();
     if (state.data) render(state.data);
   });
+  window.addEventListener('remote-gate-client-source-diagnostics', () => {
+    if (state.data) renderClient(state.data);
+  });
+  window.addEventListener('remote-gate-client-source-updated', () => refresh());
   $('workspace')?.addEventListener('workspacechange', () => requestAnimationFrame(() => window.RemoteGateFit?.observe()));
 
+  window.RemoteGateApp = {refresh};
   refresh();
   setInterval(refresh, 5000);
 })();
