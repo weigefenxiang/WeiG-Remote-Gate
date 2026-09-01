@@ -2,10 +2,11 @@
 
 ## Control plane and data plane
 
-Remote Gate separates two decisions:
+Remote Gate separates three decisions:
 
-1. **Control-plane authorization** decides which external source address may send router-local WireGuard UDP traffic (and optionally Echo Request) for a limited TTL.
+1. **Access Gate authorization** decides which external source address may send router-local WireGuard UDP traffic (and optionally Echo Request) for a limited TTL.
 2. **WireGuard authentication** still decides which peer may establish the encrypted tunnel. A temporary Gate authorization does not replace WireGuard public-key authentication.
+3. **Internet Exit** optionally decides whether traffic from an authenticated WireGuard client subnet may be forwarded through a selected WAN for a limited runtime TTL.
 
 Normal Activate no longer requires a pre-existing WireGuard handshake. This allows a user to open the Gate from the authenticated web console and start WireGuard afterwards.
 
@@ -37,7 +38,7 @@ A family may hold multiple authorized source addresses simultaneously. Each sour
 
 The shared firewall profile for a family remains exact: active records must use the same WAN device, WireGuard UDP port and scope. A request attempting to change that profile while other sources remain active fails closed and asks the user to close existing access first.
 
-`Close access now` clears all temporary IPv4 and IPv6 authorizations.
+`Close access now` clears all temporary IPv4 and IPv6 Gate authorizations and any active runtime Internet Exit state owned by the same control flow.
 
 ## IPv4 and IPv6
 
@@ -45,22 +46,43 @@ IPv4 and IPv6 authorization sets are independent. The UI may activate IPv4 only,
 
 Return routing is maintained per authorized source and per family, so multiple `/32` IPv4 or `/128` IPv6 client destinations can coexist on Multi-WAN systems.
 
+For Internet Exit, IPv4, IPv6 and Dual are also explicit modes. Dual egress is transactional: both families must validate and install successfully or the helper rolls back the partial runtime state.
+
 ## Public-address filtering
 
 Addresses exposed as public IPv6 inventory/endpoint candidates must be globally reachable unicast. The VPS filters inventory at its authoritative storage boundary and cleans previously stored inventory when the dashboard is read.
 
 The policy excludes link-local (`fe80::/10`), unique-local (`fc00::/7`), loopback, unspecified, multicast, documentation and other IANA special-purpose non-globally-reachable ranges. IPv6 must also be inside Internet Global Unicast `2000::/3`.
 
+WireGuard ULA such as `fd00::/8` is intentionally valid as an **internal tunnel subnet** for Internet Exit even though it is not valid as a public WAN endpoint.
+
 ## Firewall ownership
 
-Remote Gate owns only router-local `INPUT` policy for:
+### Access Gate
+
+The Access Gate owns only router-local `INPUT` policy for:
 
 - ICMP/ICMPv6 Echo Request when the selected scope includes Ping;
 - dynamically discovered WireGuard UDP listen ports;
 - optional short WireGuard UDP-only diagnostic verification windows.
 
-Remote Gate must not own or rewrite `FORWARD`, DNAT, SNAT/MASQUERADE, UPnP, NAT-PMP, qBittorrent forwarding, or unrelated firewall rules.
+The Access Gate must not install generic FORWARD rules, rewrite unrelated DNAT/SNAT, or take ownership of qBittorrent, UPnP, NAT-PMP or unrelated application traffic.
+
+### Internet Exit
+
+Internet Exit is a separate, opt-in runtime capability. When explicitly enabled, Remote Gate may temporarily own only the path from the selected WireGuard client subnet to the selected WAN:
+
+- source/interface-scoped policy routing;
+- source/interface-scoped FORWARD acceptance required for that WireGuard egress path;
+- NAT44 MASQUERADE for the selected IPv4 WireGuard subnet when IPv4 egress is enabled;
+- NAT66 MASQUERADE for the selected IPv6 WireGuard ULA subnet when IPv6 egress is enabled.
+
+The helper does not persist these egress rules in UCI. Disable, Close, TTL expiry, failed transactional activation or reboot removes the temporary egress state.
+
+This ownership does **not** extend to ordinary LAN forwarding, qBittorrent/DHT/PeX, UPnP/NAT-PMP, DNAT/manual forwards, NAS/PC forwarding or other router traffic.
 
 ## Multi-WAN return path
 
-When an authorized source reaches a non-default WAN, Remote Gate installs only a destination-specific router-local policy route so locally generated WireGuard responses leave through the same WAN. Each source is tracked independently and its route disappears when that source expires or all access is closed.
+When an authorized external source reaches a non-default WAN, Remote Gate installs only a destination-specific router-local policy route so locally generated WireGuard responses leave through the same WAN. Each source is tracked independently and its route disappears when that source expires or all access is closed.
+
+This Gate return path is distinct from Internet Exit PBR. The former routes locally generated handshake replies toward the authorized external source; the latter routes packets received from the WireGuard interface toward the explicitly selected Internet Exit WAN.
