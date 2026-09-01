@@ -19,8 +19,10 @@ SDK_ROOT="$1"
 EXPECTED_ABI="$2"
 OUT_DIR="${3:-$ROOT/dist-sdk}"
 PACKAGE_DIR="$SDK_ROOT/package/weig-remote-gate-mapper"
+SDK_FORCE_PREREQ="${REMOTE_GATE_SDK_FORCE_PREREQ:-0}"
 
 case "$EXPECTED_ABI" in ''|*[!A-Za-z0-9_.+-]*) usage ;; esac
+case "$SDK_FORCE_PREREQ" in 0|1) ;; *) echo "invalid REMOTE_GATE_SDK_FORCE_PREREQ" >&2; exit 1 ;; esac
 [ -d "$SDK_ROOT" ] || { echo "SDK root not found: $SDK_ROOT" >&2; exit 1; }
 [ -r "$SDK_ROOT/rules.mk" ] || { echo "not an OpenWrt-family SDK root: $SDK_ROOT" >&2; exit 1; }
 [ -r "$PACKAGE_TEMPLATE" ] && [ -r "$SOURCE" ] && [ -r "$ENTRY" ] && [ -r "$VERSION_FILE" ] || exit 1
@@ -61,7 +63,11 @@ trap cleanup EXIT INT TERM
 
 (
     cd "$SDK_ROOT"
-    make defconfig
+    if [ "$SDK_FORCE_PREREQ" = 1 ]; then
+        FORCE=1 make defconfig
+    else
+        make defconfig
+    fi
 )
 
 [ -r "$SDK_ROOT/.config" ] || {
@@ -87,7 +93,11 @@ fi
 (
     cd "$SDK_ROOT"
     make package/weig-remote-gate-mapper/clean >/dev/null 2>&1 || true
-    make package/weig-remote-gate-mapper/compile V=s -j1
+    if [ "$SDK_FORCE_PREREQ" = 1 ]; then
+        FORCE=1 make package/weig-remote-gate-mapper/compile V=s -j1
+    else
+        make package/weig-remote-gate-mapper/compile V=s -j1
+    fi
 )
 
 # OpenWrt's autoremove phase may remove the direct build binary after the IPK
