@@ -52,6 +52,20 @@ class ServerContractTests(unittest.TestCase):
         self.assertIn("source_record_for_family", source)
         self.assertIn("source_confidence", source)
 
+    def test_split_dual_request_is_strict_and_forwarded_per_family(self):
+        source = RUNTIME.read_text(encoding="utf-8")
+        self.assertIn('egress_map = data.get("egress_wans")', source)
+        self.assertIn('key not in {"ipv4", "ipv6"}', source)
+        self.assertIn('raise ValueError("invalid_egress_wans")', source)
+        self.assertIn('egress_names[egress_family] = _safe_name(raw)', source)
+        self.assertIn('egress_names=egress_names', source)
+
+    def test_vps_listener_log_keeps_bind_port_and_public_hostname_distinct(self):
+        source = RUNTIME.read_text(encoding="utf-8")
+        expected = 'WeiG-Remote-Gate listening on {SETTINGS.bind_host}:{SETTINGS.bind_port} for {SETTINGS.public_hostname}'
+        self.assertIn(expected, source)
+        self.assertNotIn('listening on {SETTINGS.bind_host}:{SETTINGS.public_hostname}', source)
+
     def test_inventory_filters_non_global_ipv6_at_authoritative_boundary(self):
         runtime = RUNTIME.read_text(encoding="utf-8")
         policy = ENDPOINTS.read_text(encoding="utf-8")
