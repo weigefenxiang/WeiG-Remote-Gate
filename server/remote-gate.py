@@ -504,7 +504,7 @@ class Handler(BaseHandler):
 
 def run() -> None:
     server = ThreadingHTTPServer((SETTINGS.bind_host, SETTINGS.bind_port), Handler)
-    print(f"WeiG-Remote-Gate listening on {SETTINGS.bind_host}:{SETTINGS.public_hostname}")
+    print(f"WeiG-Remote-Gate listening on {SETTINGS.bind_host}:{SETTINGS.bind_port} for {SETTINGS.public_hostname}")
     server.serve_forever()
 
 
