@@ -260,6 +260,9 @@ class Handler(BaseHandler):
         except (ValueError, TypeError):
             self._json(400, {"error": "invalid_source_candidate"})
             return
+        if record.get("confidence") == "suppressed":
+            self._json(409, {"error": "router_egress_source"})
+            return
         self._json(200, record)
 
     def _activate_post(self) -> None:
