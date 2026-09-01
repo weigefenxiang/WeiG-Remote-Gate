@@ -20,10 +20,24 @@ EXPECTED_ABI="$2"
 OUT_DIR="${3:-$ROOT/dist-sdk}"
 PACKAGE_DIR="$SDK_ROOT/package/weig-remote-gate-mapper"
 SDK_FORCE_PREREQ="${REMOTE_GATE_SDK_FORCE_PREREQ:-0}"
+SDK_LINK_FLAGS="${REMOTE_GATE_SDK_LINK_FLAGS:-}"
 LEGACY_PREREQ_LOG=""
 
 case "$EXPECTED_ABI" in ''|*[!A-Za-z0-9_.+-]*) usage ;; esac
 case "$SDK_FORCE_PREREQ" in 0|1) ;; *) echo "invalid REMOTE_GATE_SDK_FORCE_PREREQ" >&2; exit 1 ;; esac
+case "$SDK_LINK_FLAGS" in
+    '') ;;
+    '-Wl,--build-id=sha1') ;;
+    *) echo "invalid REMOTE_GATE_SDK_LINK_FLAGS" >&2; exit 1 ;;
+esac
+if [ -n "$SDK_LINK_FLAGS" ] && [ "$SDK_FORCE_PREREQ" != 1 ]; then
+    echo "REMOTE_GATE_SDK_LINK_FLAGS is restricted to the legacy SDK path" >&2
+    exit 1
+fi
+# Re-export only the validated value consumed by the injected package Makefile.
+REMOTE_GATE_SDK_LINK_FLAGS="$SDK_LINK_FLAGS"
+export REMOTE_GATE_SDK_LINK_FLAGS
+
 [ -d "$SDK_ROOT" ] || { echo "SDK root not found: $SDK_ROOT" >&2; exit 1; }
 [ -r "$SDK_ROOT/rules.mk" ] || { echo "not an OpenWrt-family SDK root: $SDK_ROOT" >&2; exit 1; }
 [ -r "$PACKAGE_TEMPLATE" ] && [ -r "$SOURCE" ] && [ -r "$ENTRY" ] && [ -r "$VERSION_FILE" ] || exit 1
