@@ -219,12 +219,29 @@ verify_route_set() {
 }
 verify_route_clear() { local rg_family="$1" rg_file; valid_family "$rg_family" || return 1; rg_file="$(family_verify_route_file "$rg_family")"; rm -f "$rg_file"; return_route_sync_family "$rg_family"; }
 
+resync_gate_once() {
+    [ -x /usr/lib/remote-gate/remote-gate-agent.sh ] || return 0
+    /usr/lib/remote-gate/remote-gate-agent.sh sync-firewall >/dev/null 2>&1 || true
+    "$0" return-route-sync >/dev/null 2>&1 || true
+}
+
+resync_gate_after_settle() {
+    resync_gate_once
+    sleep 2
+    resync_gate_once
+    sleep 5
+    resync_gate_once
+    sleep 10
+    resync_gate_once
+}
+
 case "${1:-}" in
     return-route-sync) return_route_sync; exit $? ;;
     return-route-sync-family) valid_family "${2:-}" || exit 2; return_route_sync_family "$2"; exit $? ;;
     return-route-clear) clear_return_routes; exit 0 ;;
     return-route-verify-set) [ "$#" -eq 6 ] || exit 2; verify_route_set "$2" "$3" "$4" "$5" "$6"; exit $? ;;
     return-route-verify-clear) [ "$#" -eq 2 ] || exit 2; verify_route_clear "$2"; exit $? ;;
+    interface-resync-settle) resync_gate_after_settle; exit $? ;;
     return-route-loop)
         rg_interval="${RETURN_ROUTE_INTERVAL:-2}"; case "$rg_interval" in ''|*[!0-9]*) rg_interval=2 ;; esac; [ "$rg_interval" -ge 1 ] || rg_interval=1
         while :; do return_route_sync || true; sleep "$rg_interval"; done
@@ -232,9 +249,13 @@ case "${1:-}" in
 esac
 
 case "${ACTION:-}" in
-    ifup|ifupdate|update|ifdown)
+    ifdown)
         [ -x /usr/lib/remote-gate/remote-gate-agent.sh ] || exit 0
-        ( /usr/lib/remote-gate/remote-gate-agent.sh sync-firewall >/dev/null 2>&1 || true; "$0" return-route-sync >/dev/null 2>&1 || true ) &
+        ( resync_gate_once ) &
+        ;;
+    ifup|ifupdate|update)
+        [ -x /usr/lib/remote-gate/remote-gate-agent.sh ] || exit 0
+        ( "$0" interface-resync-settle >/dev/null 2>&1 || true ) &
         ;;
 esac
 exit 0
