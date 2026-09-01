@@ -1,16 +1,26 @@
 #!/bin/sh
 set -u
 
+OPENWRT_RELEASE_FILE="${REMOTE_GATE_OPENWRT_RELEASE_FILE:-/etc/openwrt_release}"
+OS_RELEASE_FILE="${REMOTE_GATE_OS_RELEASE_FILE:-/etc/os-release}"
+RC_COMMON_FILE="${REMOTE_GATE_RC_COMMON_FILE:-/etc/rc.common}"
+PROCD_FILE="${REMOTE_GATE_PROCD_FILE:-/sbin/procd}"
+ROOT_PREFIX="${REMOTE_GATE_ROOT_PREFIX:-}"
+
 release_value() {
     key="$1"
-    [ -r /etc/openwrt_release ] || return 1
-    sed -n "s/^${key}='\([^']*\)'/\1/p" /etc/openwrt_release | sed -n '1p'
+    [ -r "$OPENWRT_RELEASE_FILE" ] || return 1
+    sed -n "s/^${key}='\([^']*\)'/\1/p" "$OPENWRT_RELEASE_FILE" | sed -n '1p'
 }
 
 os_release_value() {
     key="$1"
-    [ -r /etc/os-release ] || return 1
-    sed -n "s/^${key}=\"\{0,1\}\([^\"]*\)\"\{0,1\}$/\1/p" /etc/os-release | sed -n '1p'
+    [ -r "$OS_RELEASE_FILE" ] || return 1
+    value="$(sed -n "s/^${key}=//p" "$OS_RELEASE_FILE" | sed -n '1p')"
+    value="${value#\"}"
+    value="${value%\"}"
+    [ -n "$value" ] || return 1
+    printf '%s\n' "$value"
 }
 
 board_release_arch() {
@@ -88,22 +98,22 @@ kernel_arch() {
 }
 
 libc_family() {
-    for file in /lib/ld-musl-*.so.1 /usr/lib/ld-musl-*.so.1; do
+    for file in "$ROOT_PREFIX"/lib/ld-musl-*.so.1 "$ROOT_PREFIX"/usr/lib/ld-musl-*.so.1; do
         [ -e "$file" ] && { printf '%s\n' musl; return 0; }
     done
-    for file in /lib/ld-uClibc.so.* /lib/ld-uClibc-*.so.*; do
+    for file in "$ROOT_PREFIX"/lib/ld-uClibc.so.* "$ROOT_PREFIX"/lib/ld-uClibc-*.so.*; do
         [ -e "$file" ] && { printf '%s\n' uclibc; return 0; }
     done
-    for file in /lib/ld-linux*.so.* /lib64/ld-linux*.so.*; do
+    for file in "$ROOT_PREFIX"/lib/ld-linux*.so.* "$ROOT_PREFIX"/lib64/ld-linux*.so.*; do
         [ -e "$file" ] && { printf '%s\n' glibc; return 0; }
     done
     printf '%s\n' unknown
 }
 
 init_system() {
-    if [ -r /etc/rc.common ] && { [ -x /sbin/procd ] || command -v procd >/dev/null 2>&1; }; then
+    if [ -r "$RC_COMMON_FILE" ] && { [ -x "$PROCD_FILE" ] || command -v procd >/dev/null 2>&1; }; then
         printf '%s\n' procd
-    elif [ -r /etc/rc.common ]; then
+    elif [ -r "$RC_COMMON_FILE" ]; then
         printf '%s\n' rc.common
     else
         printf '%s\n' unknown
@@ -124,7 +134,7 @@ core_runtime_capable() {
     for cmd in sh curl ubus jsonfilter awk sed grep sort uci ip; do
         command -v "$cmd" >/dev/null 2>&1 || return 1
     done
-    [ -r /etc/rc.common ] || return 1
+    [ -r "$RC_COMMON_FILE" ] || return 1
     return 0
 }
 
