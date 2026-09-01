@@ -27,8 +27,13 @@ class DualEgressRuntimeContractTests(unittest.TestCase):
     def test_dual_egress_remains_runtime_only_and_transactional(self):
         source = HELPER.read_text(encoding="utf-8")
         self.assertIn('RUNTIME_DIR="${REMOTE_GATE_RUNTIME_DIR:-/tmp/remote-gate}"', source)
-        self.assertIn('rollback "Cannot build IPv6 default route through $wan"', source)
+        self.assertIn('enable-split <wireguard-interface> <ipv4-wan> <ipv6-wan>', source)
+        self.assertIn('enable_egress_plan "$1" "$2" "$3" "${4:-300}" dual', source)
+        self.assertIn('rollback "Cannot build IPv4 default route through $wan4"', source)
+        self.assertIn('rollback "Cannot build IPv6 default route through $wan6"', source)
         self.assertIn('rollback "IPv6 nft NAT66 installation failed"', source)
+        self.assertIn('WAN_INTERFACE4=\'$WAN_INTERFACE4\'', source)
+        self.assertIn('WAN_INTERFACE6=\'$WAN_INTERFACE6\'', source)
         self.assertIn('runtime_cleanup "${FIREWALL_BACKEND:-}"', source)
         self.assertIn('Persistent UCI egress rules: no', source)
         self.assertIn('AllowedIPs = 0.0.0.0/0, ::/0', source)
@@ -45,12 +50,22 @@ class DualEgressRuntimeContractTests(unittest.TestCase):
         self.assertIn('detail="wireguard-egress-activation-failed"', agent)
         self.assertIn('ack "$id" false "$detail"', agent)
 
+    def test_agent_applies_one_split_dual_transaction(self):
+        source = AGENT.read_text(encoding="utf-8")
+        self.assertIn("egress_wan_ipv4", source)
+        self.assertIn("egress_wan_ipv6", source)
+        self.assertIn('"$EGRESS" enable-split "$wireguard" "$egress_wan_ipv4" "$egress_wan_ipv6" "$ttl"', source)
+        self.assertIn('rollback_batch_access "$batch_count"', source)
+        self.assertIn('incomplete-dual-egress-plan', source)
+
     def test_vps_sanitizes_and_persists_agent_egress(self):
         source = SERVER.read_text(encoding="utf-8")
         self.assertIn('def _clean_egress(value: object) -> dict:', source)
         self.assertIn('{"inactive", "active", "failed"}', source)
         self.assertIn('egress = _clean_egress(data.get("egress"))', source)
         self.assertIn('"egress": egress', source)
+        self.assertIn('"wan_v4"', source)
+        self.assertIn('"wan_v6"', source)
 
     def test_ui_does_not_mask_exit_failure_with_gate_open(self):
         source = GATE.read_text(encoding="utf-8")
