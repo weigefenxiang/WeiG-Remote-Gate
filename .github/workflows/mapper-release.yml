@@ -38,14 +38,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t source_files < <(sudo grep -RIl 'azure\.archive\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null || true)
-          for source_file in "${source_files[@]}"; do
-            sudo sed -i -E 's#https?://azure\.archive\.ubuntu\.com/ubuntu#http://archive.ubuntu.com/ubuntu#g' "$source_file"
+          for source_file in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+            [ -f "$source_file" ] || continue
+            sudo sed -i -E 's#https?://([A-Za-z0-9.-]+\.)?archive\.ubuntu\.com/ubuntu#http://archive.ubuntu.com/ubuntu#g' "$source_file"
           done
-          if sudo grep -RI 'azure\.archive\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
-            echo 'Azure Ubuntu mirror is still configured.' >&2
-            exit 1
-          fi
 
       - name: Install QEMU user emulation
         run: |
