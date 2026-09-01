@@ -1,5 +1,6 @@
 # sample	family	release	target	package_abi	archive	sha256	url
 lede-17.01.7-x86_64	lede	17.01.7	x86/64	x86_64	xz	dc8814263db97e563fe620774295f78bab0fb726cf39829f1b937b7b01bac5a0	https://downloads.openwrt.org/releases/17.01.7/targets/x86/64/lede-sdk-17.01.7-x86-64_gcc-5.4.0_musl-1.1.16.Linux-x86_64.tar.xz
+openwrt-19.07.9-armvirt-64	openwrt	19.07.9	armvirt/64	aarch64_generic	xz	ba83f860b714241355192f85c2e9714c81d0d6e2d50f6eefcc8fb2a842af55c0	https://downloads.openwrt.org/releases/19.07.9/targets/armvirt/64/openwrt-sdk-19.07.9-armvirt-64_gcc-7.5.0_musl.Linux-x86_64.tar.xz
 openwrt-19.07.10-x86_64	openwrt	19.07.10	x86/64	x86_64	xz	db05bea54331b1f7c88033af3ae162359179132e7f52168f32651c5330abd2f5	https://downloads.openwrt.org/releases/19.07.10/targets/x86/64/openwrt-sdk-19.07.10-x86-64_gcc-7.5.0_musl.Linux-x86_64.tar.xz
 openwrt-19.07.10-x86-geode	openwrt	19.07.10	x86/geode	i386_pentium	xz	8ac5f44f6c20ef7f4c37e3ad47c10162e7c8acf889878a84f98f0b8ef4c02217	https://downloads.openwrt.org/releases/19.07.10/targets/x86/geode/openwrt-sdk-19.07.10-x86-geode_gcc-7.5.0_musl.Linux-x86_64.tar.xz
 openwrt-19.07.10-ramips-mt76x8	openwrt	19.07.10	ramips/mt76x8	mipsel_24kc	xz	8e4a8f2de37938d5f78ab8ec07567f094214eec69dc71ba46158e716656b94c9	https://downloads.openwrt.org/releases/19.07.10/targets/ramips/mt76x8/openwrt-sdk-19.07.10-ramips-mt76x8_gcc-7.5.0_musl.Linux-x86_64.tar.xz
