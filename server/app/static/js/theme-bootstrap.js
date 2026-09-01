@@ -11,17 +11,10 @@
   favicon.href = '/static/Wei.G.ico';
   document.head.append(favicon);
 
-  function loadStylesheet(path) {
-    if (document.querySelector(`link[data-remote-gate-style="${path}"]`)) return;
-    const link = document.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = assetUrl(path);
-    link.dataset.remoteGateStyle = path;
-    document.head.append(link);
-  }
-
-  loadStylesheet('/static/css/interaction.css');
-  loadStylesheet('/static/css/gate-status.css');
+  const interaction = document.createElement('link');
+  interaction.rel = 'stylesheet';
+  interaction.href = assetUrl('/static/css/interaction.css');
+  document.head.append(interaction);
 
   const key = 'weig-remote-gate:theme';
   const saved = localStorage.getItem(key);
@@ -126,14 +119,12 @@
       stage = document.createElement('div');
       stage.id = 'gate-status-stage';
       stage.className = 'gate-status-stage';
-
       const left = document.createElement('span');
       left.className = 'gate-status-side gate-status-side--left';
       left.dataset.gateStatusSide = 'left';
       const right = document.createElement('span');
       right.className = 'gate-status-side gate-status-side--right';
       right.dataset.gateStatusSide = 'right';
-
       wrap.insertBefore(stage, wrap.firstChild);
       stage.append(left, orb, right);
     }
@@ -215,11 +206,7 @@
       const address = String(mapping.external_address || '').trim();
       const port = Number(mapping.external_port || 0);
       if (address && Number.isInteger(port) && port >= 1 && port <= 65535) {
-        return {
-          endpoint: `${address}:${port}`,
-          current: true,
-          observedAt: Number(mapping.observed_at || 0)
-        };
+        return {endpoint: `${address}:${port}`, current: true};
       }
     }
     return ackMappedEndpoint(last);
@@ -269,27 +256,22 @@
     if (!wrap) return null;
     let row = document.getElementById('mapped-public-endpoint');
     if (row) return row;
-
     row = document.createElement('div');
     row.id = 'mapped-public-endpoint';
     row.className = 'verified-endpoint';
     row.hidden = true;
-
     const label = document.createElement('span');
     label.className = 'verified-endpoint-label';
     label.dataset.mappedEndpointLabel = '1';
-
     const value = document.createElement('button');
     value.type = 'button';
     value.className = 'verified-endpoint-value';
     value.dataset.mappedEndpointCopy = '1';
     value.dataset.mappedEndpointValue = '1';
     value.addEventListener('click', () => copyMappedEndpoint(value.textContent));
-
     const note = document.createElement('span');
     note.className = 'verified-endpoint-note';
     note.dataset.mappedEndpointNote = '1';
-
     row.append(label, value, note);
     wrap.append(row);
     return row;
@@ -305,7 +287,6 @@
       row.classList.remove('is-current');
       return;
     }
-
     row.hidden = false;
     row.classList.toggle('is-current', Boolean(mapped.current));
     row.querySelector('[data-mapped-endpoint-label]').textContent = zh()
