@@ -15,9 +15,6 @@ on:
           - openwrt-24.10.5-x86_64
           - openwrt-25.12.5-x86_64
           - immortalwrt-24.10.5-x86_64
-  push:
-    branches:
-      - dev
 
 permissions:
   contents: read
@@ -28,7 +25,6 @@ concurrency:
 
 jobs:
   sdk-build:
-    if: github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.sample == 'openwrt-19.07.10-x86_64' && 'ubuntu-22.04' || 'ubuntu-latest' }}
     timeout-minutes: 45
     strategy:
@@ -56,79 +52,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: remote-gate-mapper-${{ matrix.sample }}-${{ github.sha }}
-          path: native/dist-sdk/remote-gate-mapper-x86_64
-          if-no-files-found: error
-          retention-days: 14
-
-  sdk-1907-once:
-    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[sdk-1907-once]')
-    runs-on: ubuntu-22.04
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install SDK archive and diagnostic tools
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xz-utils zstd file strace binutils gdb
-
-      - name: Build and smoke OpenWrt 19.07 SDK mapper
-        shell: bash
-        run: |
-          set -euo pipefail
-          sh native/run-sdk-compat.sh "openwrt-19.07.10-x86_64" "$PWD/native/dist-sdk"
-
-      - name: Diagnose OpenWrt 19.07 SDK binary
-        if: failure()
-        shell: bash
-        run: |
-          set +e
-          binary="$PWD/native/dist-sdk/remote-gate-mapper-x86_64"
-          [ -f "$binary" ] || { echo 'no exported mapper binary to diagnose'; exit 0; }
-
-          echo '===== FILE ====='
-          file "$binary"
-          echo
-          echo '===== ELF HEADER ====='
-          readelf -h "$binary"
-          echo
-          echo '===== RELEVANT SYMBOLS ====='
-          readelf -sW "$binary" | grep -E '(^|[[:space:]])(_start|__libc_start_main|__init_libc|main|remote_gate_mapper_main|__stack_chk_fail|printf|fprintf)$' || true
-          echo
-          echo '===== STARTUP DISASSEMBLY ====='
-          objdump -d --start-address=0x401000 --stop-address=0x401180 "$binary" || true
-          echo
-          echo '===== GDB VERSION ====='
-          gdb -q -batch \
-            -ex 'set pagination off' \
-            -ex 'run --version' \
-            -ex 'bt' \
-            -ex 'info registers' \
-            -ex 'x/24i $pc-32' \
-            --args "$binary" --version || true
-          echo
-          echo '===== GDB USAGE ====='
-          gdb -q -batch \
-            -ex 'set pagination off' \
-            -ex 'run' \
-            -ex 'bt' \
-            -ex 'info registers' \
-            -ex 'x/24i $pc-32' \
-            --args "$binary" || true
-          echo
-          echo '===== STRACE VERSION ====='
-          strace -f -o /tmp/remote-gate-version.strace "$binary" --version
-          echo "strace_version_rc=$?"
-          tail -n 40 /tmp/remote-gate-version.strace || true
-          exit 0
-
-      - name: Upload OpenWrt 19.07 SDK candidate
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: remote-gate-mapper-openwrt-19.07.10-x86_64-${{ github.sha }}
           path: native/dist-sdk/remote-gate-mapper-x86_64
           if-no-files-found: error
           retention-days: 14
