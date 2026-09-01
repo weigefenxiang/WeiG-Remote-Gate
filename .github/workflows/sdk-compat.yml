@@ -10,6 +10,7 @@ on:
         type: choice
         options:
           - all
+          - openwrt-19.07.0-x86_64
           - openwrt-19.07.9-armvirt-64
           - openwrt-19.07.9-x86_64
           - openwrt-19.07.10-x86_64
@@ -37,7 +38,7 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        sample: ${{ fromJSON(inputs.sample == 'all' && '["openwrt-19.07.9-armvirt-64","openwrt-19.07.9-x86_64","openwrt-19.07.10-x86_64","openwrt-19.07.10-x86-geode","openwrt-19.07.10-ramips-mt76x8","openwrt-19.07.10-ar71xx-generic","openwrt-21.02.7-x86_64","openwrt-24.10.5-x86_64","openwrt-25.12.5-x86_64","immortalwrt-24.10.5-x86_64"]' || format('["{0}"]', inputs.sample)) }}
+        sample: ${{ fromJSON(inputs.sample == 'all' && '["openwrt-19.07.0-x86_64","openwrt-19.07.9-armvirt-64","openwrt-19.07.9-x86_64","openwrt-19.07.10-x86_64","openwrt-19.07.10-x86-geode","openwrt-19.07.10-ramips-mt76x8","openwrt-19.07.10-ar71xx-generic","openwrt-21.02.7-x86_64","openwrt-24.10.5-x86_64","openwrt-25.12.5-x86_64","immortalwrt-24.10.5-x86_64"]' || format('["{0}"]', inputs.sample)) }}
     steps:
       - uses: actions/checkout@v4
 
