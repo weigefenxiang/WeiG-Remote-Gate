@@ -1,6 +1,6 @@
 # Firewall compatibility
 
-WeiG-Remote-Gate supports two firewall generations through one backend contract.
+WeiG-Remote-Gate supports two firewall generations through one Gate backend contract.
 
 | Detected stack | Backend |
 | --- | --- |
@@ -11,12 +11,28 @@ The installer auto-detects the stack. It never asks the user to migrate firewall
 
 ## Traffic boundary
 
-Remote Gate filters only router-local INPUT traffic for:
+### Access Gate
+
+The Gate firewall abstraction filters only router-local INPUT traffic for:
 
 - ICMP echo-request on protected WAN devices;
 - UDP ports currently reported by local WireGuard interfaces.
 
-It never installs filtering in FORWARD. qBittorrent/BT, UPnP, NAT-PMP, DNAT and ordinary port forwarding remain under the original firewall policy.
+It never installs generic filtering in FORWARD. qBittorrent/BT, UPnP, NAT-PMP, DNAT and ordinary port forwarding remain under the original firewall policy.
+
+### Optional Internet Exit
+
+`remote-gate-wireguard-egress.sh` is a separate runtime helper. When Internet Exit is explicitly selected, it may temporarily install only the FORWARD/NAT/PBR state needed to carry the selected WireGuard client subnet through the selected WAN.
+
+The ownership is narrow:
+
+- IPv4 mode: selected WG IPv4 subnet -> selected WAN, with runtime policy routing and NAT44;
+- IPv6 mode: selected WG IPv6 ULA subnet -> selected WAN, with runtime policy routing and NAT66;
+- Dual mode: both families are installed transactionally or rolled back together.
+
+These rules are not persistent UCI egress policy. Disable, Close, TTL expiry, activation failure or reboot removes the runtime egress state. Existing qBittorrent/BT, UPnP, NAT-PMP, DNAT, LAN forwarding and unrelated traffic stay outside Remote Gate egress ownership.
+
+On fw3/iptables systems, egress operations wait for the xtables lock instead of treating a short-lived concurrent firewall update as an immediate failure.
 
 ## Multi-source authorization
 
@@ -38,15 +54,19 @@ The return path is fully data-driven:
 
 Remote Gate first reuses an existing per-WAN policy-routing table discovered from the router's own `ip rule` state. If no suitable table exists and the ordinary route points at a different WAN, it creates a temporary routing table containing only that authorized client's host route.
 
-The additional rule matches `iif lo`, so it applies only to packets generated locally by the router. It does not change forwarded LAN/BT/DNAT traffic. Expiring one authorization removes only that source's rule; `Close access now` clears all temporary authorization and return-route state.
+The additional Gate return rule matches `iif lo`, so it applies only to packets generated locally by the router. It does not change forwarded LAN/BT/DNAT traffic. Expiring one authorization removes only that source's rule; `Close access now` clears all temporary authorization and return-route state.
+
+Internet Exit PBR is separate: it matches packets arriving from the selected WireGuard interface/subnet and sends them to the explicitly selected WAN egress table.
 
 ## Priority
 
-The guard must run before the normal established/related shortcut so an expired WireGuard authorization is blocked immediately.
+The Gate guard must run before the normal established/related shortcut so an expired WireGuard authorization is blocked immediately.
 
 - fw3 inserts `WEIG_REMOTE_GATE` at INPUT position 1.
 - fw4 uses `/usr/share/nftables.d/chain-pre/input/`.
 
 ## Reload recovery
 
-A firewall include calls `remote-gate-firewall.sh restore` after firewall rebuilds. Protected WAN/WireGuard policy is restored from local state. Every active source is restored only for its remaining TTL. The return-route watcher independently reconciles all router-local same-WAN reply rules while those source authorizations remain valid.
+A firewall include calls `remote-gate-firewall.sh restore` after firewall rebuilds. Protected WAN/WireGuard Gate policy is restored from local state. Every active source is restored only for its remaining TTL. The return-route watcher independently reconciles all router-local same-WAN reply rules while those source authorizations remain valid.
+
+Internet Exit remains runtime-only and is reconciled from temporary state rather than committed as persistent firewall/network UCI configuration.
