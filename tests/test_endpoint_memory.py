@@ -12,7 +12,7 @@ class EndpointMemoryTests(unittest.TestCase):
         self.assertIn("state.endpointSelections={}", source)
         self.assertIn("function rememberEndpointSelection", source)
         self.assertIn("function restoreEndpointSelection", source)
-        self.assertIn("context.state.endpointSelections[family] = {value, wan}", source)
+        self.assertIn("context.state.endpointSelections[family] = {value, wan: endpointWanForSelection(family, value)}", source)
         self.assertIn("rememberEndpointSelection(state.family)", source)
         self.assertIn("restoreEndpointSelection(state.family)", source)
         self.assertIn("endpointWanForSelection", source)
