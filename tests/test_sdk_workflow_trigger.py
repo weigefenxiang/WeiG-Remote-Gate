@@ -22,6 +22,14 @@ class SdkWorkflowTriggerTests(unittest.TestCase):
         ):
             self.assertIn(sample, WORKFLOW)
 
+    def test_manual_dispatch_can_target_one_sdk_sample(self):
+        self.assertIn("inputs:", WORKFLOW)
+        self.assertIn("description: SDK sample to validate", WORKFLOW)
+        self.assertIn("default: all", WORKFLOW)
+        self.assertIn("type: choice", WORKFLOW)
+        self.assertIn("fromJSON(inputs.sample == 'all'", WORKFLOW)
+        self.assertIn("format('[\"{0}\"]', inputs.sample)", WORKFLOW)
+
 
 if __name__ == "__main__":
     unittest.main()
