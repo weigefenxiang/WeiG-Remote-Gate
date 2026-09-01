@@ -68,7 +68,7 @@ jobs:
       - name: Install Chromium test runtime
         run: |
           npm install --no-save playwright@1.55.0
-          npx playwright install --with-deps chromium
+          npx playwright install chromium
 
       - name: Start fixture server
         run: |
