@@ -64,7 +64,7 @@ trap cleanup EXIT INT TERM
 (
     cd "$SDK_ROOT"
     if [ "$SDK_FORCE_PREREQ" = 1 ]; then
-        FORCE=1 make defconfig
+        make FORCE=1 defconfig
     else
         make defconfig
     fi
@@ -94,7 +94,7 @@ fi
     cd "$SDK_ROOT"
     make package/weig-remote-gate-mapper/clean >/dev/null 2>&1 || true
     if [ "$SDK_FORCE_PREREQ" = 1 ]; then
-        FORCE=1 make package/weig-remote-gate-mapper/compile V=s -j1
+        make FORCE=1 package/weig-remote-gate-mapper/compile V=s -j1
     else
         make package/weig-remote-gate-mapper/compile V=s -j1
     fi

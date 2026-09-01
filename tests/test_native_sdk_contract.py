@@ -46,6 +46,9 @@ class NativeSdkContractTests(unittest.TestCase):
         make = fakebin / "make"
         make.write_text(
             "#!/bin/sh\n"
+            "if [ \"${REQUIRE_FORCE_ARG:-0}\" = 1 ]; then\n"
+            "  case \" $* \" in *' FORCE=1 '*) ;; *) echo 'missing FORCE=1 make argument' >&2; exit 9 ;; esac\n"
+            "fi\n"
             "case \" $* \" in\n"
             "  *' package/weig-remote-gate-mapper/compile '*)\n"
             f"    out=\"$PWD/build_dir/target-test/remote-gate-mapper-{version}/remote-gate-mapper\"\n"
@@ -114,6 +117,26 @@ class NativeSdkContractTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("SDK ABI mismatch", result.stderr)
             self.assertFalse((sdk / "build_dir").exists())
+
+    def test_legacy_prerequisite_override_is_passed_as_make_argument(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            sdk = base / "sdk"
+            out = base / "out"
+            env = self._fake_environment(sdk, "powerpc64_e5500")
+            env["REMOTE_GATE_SDK_FORCE_PREREQ"] = "1"
+            env["REQUIRE_FORCE_ARG"] = "1"
+            result = subprocess.run(
+                ["sh", str(BUILD_SDK), str(sdk), "powerpc64_e5500", str(out)],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((out / "remote-gate-mapper-powerpc64_e5500").is_file())
 
 
 if __name__ == "__main__":
