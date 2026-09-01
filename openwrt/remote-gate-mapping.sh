@@ -176,16 +176,34 @@ status_value() {
     jsonfilter -i "$file" -e "$expr" 2>/dev/null | sed -n '1p'
 }
 
-ingress_ports() {
+status_meta() {
+    status="$1"
+    key="$(basename "$status" .status.json)"
+    meta="$(meta_path "$key")"
+    [ -r "$meta" ] || return 1
+    line="$(sed -n '1p' "$meta")"
+    oldifs="$IFS"; IFS='|'; set -- $line; IFS="$oldifs"
+    [ "$#" -eq 4 ] || return 1
+    STATUS_WAN="$1"; STATUS_DEVICE="$2"; STATUS_SERVICE_ID="$3"; STATUS_SERVICE_PORT="$4"
+    valid_name "$STATUS_WAN" && valid_device "$STATUS_DEVICE" && valid_name "$STATUS_SERVICE_ID" && valid_port "$STATUS_SERVICE_PORT" || return 1
+    "$SERVICES" validate "$STATUS_SERVICE_ID" udp "$STATUS_SERVICE_PORT" >/dev/null 2>&1 || return 1
+}
+
+ingress_pairs() {
     mapper_available || return 0
     for status in "$STATE_DIR"/*.status.json; do
         [ -f "$status" ] || continue
         state="$(status_value "$status" '@.state')"
         case "$state" in prepared|active) ;; *) continue ;; esac
+        status_meta "$status" || continue
         port="$(status_value "$status" '@.ingress_port')"
         valid_port "$port" || continue
-        printf '%s\n' "$port"
-    done | sort -nu
+        printf '%s|%s\n' "$STATUS_DEVICE" "$port"
+    done | sort -u
+}
+
+ingress_ports() {
+    ingress_pairs | awk -F'|' '$2 ~ /^[0-9]+$/ {print $2}' | sort -nu
 }
 
 activate_prepared() {
@@ -194,6 +212,7 @@ activate_prepared() {
         [ -f "$status" ] || continue
         state="$(status_value "$status" '@.state')"
         [ "$state" = "prepared" ] || continue
+        status_meta "$status" || continue
         port="$(status_value "$status" '@.ingress_port')"
         valid_port "$port" || continue
         key="$(basename "$status" .status.json)"
@@ -207,16 +226,7 @@ activate_prepared() {
 
 mapping_record() {
     status="$1"
-    key="$(basename "$status" .status.json)"
-    meta="$(meta_path "$key")"
-    [ -r "$meta" ] || return 1
-    line="$(sed -n '1p' "$meta")"
-    oldifs="$IFS"; IFS='|'; set -- $line; IFS="$oldifs"
-    [ "$#" -eq 4 ] || return 1
-    wan="$1"; device="$2"; service_id="$3"; service_port="$4"
-    valid_name "$wan" && valid_device "$device" && valid_name "$service_id" && valid_port "$service_port" || return 1
-    "$SERVICES" validate "$service_id" udp "$service_port" >/dev/null 2>&1 || return 1
-
+    status_meta "$status" || return 1
     state="$(status_value "$status" '@.state')"
     [ "$state" = "active" ] || return 1
     external="$(status_value "$status" '@.external_address')"
@@ -228,7 +238,7 @@ mapping_record() {
     valid_uint "$observed_at" || observed_at=0
 
     printf '%s|%s|%s|%s|%s|%s|%s\n' \
-        "$wan" "$device" "$service_id" "$external" "$external_port" "$ingress_port" "$observed_at"
+        "$STATUS_WAN" "$STATUS_DEVICE" "$STATUS_SERVICE_ID" "$external" "$external_port" "$ingress_port" "$observed_at"
 }
 
 inventory_json() {
@@ -295,6 +305,7 @@ status_json() {
 case "${1:-status-json}" in
     available) mapper_available ;;
     sync-prepare) shift; sync_prepare "$@" ;;
+    ingress-pairs) ingress_pairs ;;
     ingress-ports) ingress_ports ;;
     activate-prepared) activate_prepared ;;
     inventory-json) inventory_json ;;
@@ -305,5 +316,5 @@ case "${1:-status-json}" in
         ;;
     status-json) status_json ;;
     stop-all|cleanup) stop_all ;;
-    *) echo "usage: $0 available|sync-prepare [wan,device,service,port ...]|ingress-ports|activate-prepared|inventory-json|validate-ingress ...|status-json|stop-all" >&2; exit 2 ;;
+    *) echo "usage: $0 available|sync-prepare [wan,device,service,port ...]|ingress-pairs|ingress-ports|activate-prepared|inventory-json|validate-ingress ...|status-json|stop-all" >&2; exit 2 ;;
 esac
