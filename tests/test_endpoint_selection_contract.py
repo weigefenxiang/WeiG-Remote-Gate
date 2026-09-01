@@ -9,17 +9,49 @@ ENDPOINTS = ROOT / "server/app/endpoints.py"
 
 
 class EndpointSelectionContractTests(unittest.TestCase):
-    def test_public_endpoint_waits_for_explicit_wan_selection(self):
+    def test_public_endpoint_is_automatically_preferred_and_confirmed(self):
         gate = GATE.read_text(encoding="utf-8")
         theme = THEME.read_text(encoding="utf-8")
-        self.assertIn("endpointManualSelections", gate)
-        self.assertIn("endpointSelectionIsManual(state.family)", gate)
-        self.assertIn("select.dataset.selectionConfirmed = confirmed ? '1' : '0'", gate)
+        self.assertIn("preferredIpv4Endpoint", gate)
+        self.assertIn("preferredIpv6Endpoint", gate)
+        self.assertIn("preferredSelection", gate)
+        self.assertIn("endpointScore", gate)
+        self.assertIn("const confirmed = Boolean(value);", gate)
+        self.assertIn("select.dataset.selectionSource = confirmed ? source : '';", gate)
+        self.assertIn("const source = endpointSelectionIsManual(family) ? 'manual' : 'auto';", gate)
+        self.assertNotIn("endpointSelectionIsManual(state.family) &&", gate)
         self.assertIn("select.dataset.selectionConfirmed !== '1'", theme)
         self.assertIn("selectedEndpointRecord", theme)
         self.assertIn("remote-gate-endpoint-selection", theme)
 
-    def test_picker_opens_before_an_endpoint_is_selected(self):
+    def test_ipv4_prefers_direct_before_mapped_or_private(self):
+        gate = GATE.read_text(encoding="utf-8")
+        score = gate.split("function endpointScore(item) {", 1)[1].split("function endpointCompare", 1)[0]
+        direct = score.index("item.family === 'ipv4' && item.reachability === 'direct'")
+        mapped = score.index("item.family === 'ipv4' && item.reachability === 'mapped'")
+        probe = score.index("item.family === 'ipv4' && item.reachability === 'egress_probe'")
+        private = score.index("item.reachability === 'private'")
+        self.assertLess(direct, mapped)
+        self.assertLess(mapped, probe)
+        self.assertLess(probe, private)
+
+    def test_ipv6_prefers_the_selected_ipv4_wan_when_available(self):
+        gate = GATE.read_text(encoding="utf-8")
+        preferred = gate.split("function preferredIpv6Endpoint() {", 1)[1].split("function dualEndpointPairs", 1)[0]
+        self.assertIn("preferredIpv4Endpoint()?.wan", preferred)
+        self.assertIn("a?.wan === preferredV4Wan", preferred)
+        self.assertIn("b?.wan === preferredV4Wan", preferred)
+
+    def test_manual_endpoint_override_is_preserved_until_it_disappears(self):
+        gate = GATE.read_text(encoding="utf-8")
+        restore = gate.split("function restoreEndpointSelection", 1)[1].split("function syncDualEndpointSelect", 1)[0]
+        self.assertIn("endpointSelectionIsManual(family) && saved", restore)
+        self.assertIn("option.value === saved.value", restore)
+        self.assertIn("endpointWanForSelection(family, option.value) === saved.wan", restore)
+        self.assertIn("context.state.endpointManualSelections[family] = false", restore)
+        self.assertIn("const preferred = preferredSelection(family);", restore)
+
+    def test_picker_still_allows_manual_endpoint_override(self):
         picker = PICKER.read_text(encoding="utf-8")
         self.assertIn("请选择 WAN Endpoint", picker)
         self.assertIn("Choose WAN endpoint", picker)
