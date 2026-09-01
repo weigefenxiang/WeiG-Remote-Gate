@@ -58,25 +58,29 @@ case "$family" in
         ;;
 esac
 
-# OpenWrt 19.07.10 SDKs still enforce the obsolete Python 2 host prerequisite
-# on current hosts even for this self-contained C package. Validate and bypass
-# that exact prerequisite failure across the pinned 19.07.10 samples only.
+# OpenWrt 19.07 SDKs still enforce the obsolete Python 2 host prerequisite on
+# current hosts even for this self-contained C package. Real 19.07.9 AArch64
+# and 19.07.10 x86/MIPS samples all fail that same single prerequisite. Keep
+# the exception release-series scoped, while the builder still validates that
+# Python 2 is the only failed prerequisite before creating the host stamp.
 #
-# The x86_64 sample has an additional old static musl/binutils startup quirk.
-# A real 32-bit x86/geode runtime test shows the same five-header/0x1000 first
-# LOAD layout can execute correctly there, while both MIPS endian variants also
-# run without the workaround. Keep build-id injection x86_64-only.
+# OpenWrt 19.07.10 x86_64 has an additional old static musl/binutils startup
+# quirk. A real 32-bit x86/geode runtime test shows the same five-header/0x1000
+# first LOAD layout can execute correctly there, while both MIPS endian variants
+# run without the workaround. Keep build-id injection exact to the proven
+# x86_64 sample unless another real sample demonstrates the same failure.
 sdk_force_prereq=0
 sdk_link_flags=''
 sdk_emulator=''
 case "$sample" in
-    openwrt-19.07.10-*) sdk_force_prereq=1 ;;
+    openwrt-19.07.*-*) sdk_force_prereq=1 ;;
 esac
 case "$sample" in
     openwrt-19.07.10-x86_64) sdk_link_flags='-Wl,--build-id=sha1' ;;
     openwrt-19.07.10-x86-geode) sdk_emulator='qemu-i386' ;;
     openwrt-19.07.10-ramips-mt76x8) sdk_emulator='qemu-mipsel' ;;
     openwrt-19.07.10-ar71xx-generic) sdk_emulator='qemu-mips' ;;
+    openwrt-19.07.9-armvirt-64) sdk_emulator='qemu-aarch64' ;;
 esac
 
 for cmd in curl sha256sum tar file; do
