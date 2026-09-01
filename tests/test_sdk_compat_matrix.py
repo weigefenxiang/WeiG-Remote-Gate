@@ -27,7 +27,7 @@ def rows(path: Path, columns: int):
 class SdkCompatibilityMatrixTests(unittest.TestCase):
     def test_matrix_is_exact_and_trusted(self):
         entries = rows(MATRIX, 8)
-        self.assertGreaterEqual(len(entries), 6)
+        self.assertGreaterEqual(len(entries), 7)
         ids = [entry[0] for entry in entries]
         self.assertEqual(len(ids), len(set(ids)))
         known_abis = {entry[0] for entry in rows(ABI_MAP, 3)}
@@ -51,6 +51,7 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
         expected = {
             "lede-17.01.7-x86_64",
             "openwrt-19.07.10-x86_64",
+            "openwrt-19.07.10-ramips-mt76x8",
             "openwrt-21.02.7-x86_64",
             "openwrt-24.10.5-x86_64",
             "openwrt-25.12.5-x86_64",
@@ -67,6 +68,7 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
     def test_sdk_workflow_is_manual_and_keeps_samples_for_later(self):
         for sample in (
             "openwrt-19.07.10-x86_64",
+            "openwrt-19.07.10-ramips-mt76x8",
             "openwrt-21.02.7-x86_64",
             "openwrt-24.10.5-x86_64",
             "openwrt-25.12.5-x86_64",
@@ -78,6 +80,7 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
         self.assertNotIn("push:", SDK_CI)
         self.assertIn("runs-on: ubuntu-latest", SDK_CI)
         self.assertNotIn("ubuntu-22.04", SDK_CI)
+        self.assertIn("path: native/dist-sdk/remote-gate-mapper-*", SDK_CI)
         self.assertIn("fail-fast: false", SDK_CI)
 
     def test_runner_verifies_hash_and_restricts_hosts(self):
@@ -90,8 +93,8 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
         self.assertNotIn("eval ", RUNNER)
 
     def test_python2_prerequisite_override_is_narrowly_scoped_to_openwrt_1907(self):
-        self.assertIn('openwrt-19.07.10-x86_64)', RUNNER)
-        self.assertIn('sdk_force_prereq=1', RUNNER)
+        self.assertIn('openwrt-19.07.10-*) sdk_force_prereq=1', RUNNER)
+        self.assertEqual(RUNNER.count('openwrt-19.07.10-*) sdk_force_prereq=1'), 1)
         self.assertIn('sdk_force_prereq=0', RUNNER)
         self.assertIn('REMOTE_GATE_SDK_FORCE_PREREQ="$sdk_force_prereq"', RUNNER)
         self.assertIn('SDK_FORCE_PREREQ="${REMOTE_GATE_SDK_FORCE_PREREQ:-0}"', BUILDER)
@@ -105,9 +108,9 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
         self.assertNotIn('make FORCE=1', BUILDER)
         self.assertNotIn('FORCE=1 make', BUILDER)
 
-    def test_static_musl_build_id_workaround_is_narrowly_scoped_to_openwrt_1907(self):
+    def test_static_musl_build_id_workaround_is_narrowly_scoped_to_openwrt_1907_x86_64(self):
         self.assertIn("sdk_link_flags=''", RUNNER)
-        self.assertIn("sdk_link_flags='-Wl,--build-id=sha1'", RUNNER)
+        self.assertIn("openwrt-19.07.10-x86_64) sdk_link_flags='-Wl,--build-id=sha1'", RUNNER)
         self.assertEqual(RUNNER.count("sdk_link_flags='-Wl,--build-id=sha1'"), 1)
         self.assertIn('REMOTE_GATE_SDK_LINK_FLAGS="$sdk_link_flags"', RUNNER)
         self.assertIn('$(REMOTE_GATE_SDK_LINK_FLAGS)', PACKAGE)
