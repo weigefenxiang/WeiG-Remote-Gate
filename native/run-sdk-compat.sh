@@ -67,20 +67,24 @@ esac
 # compiler-version false negative.
 #
 # OpenWrt 19.07 x86_64 also has an old static musl/binutils startup quirk.
-# 19.07.0, 19.07.9 and 19.07.10 x86_64 are covered by the same series rule;
-# later probes established that non-x86_64 19.07 targets do not need build-id.
+# Real 19.07.0, 19.07.7, 19.07.8, 19.07.9 and 19.07.10 x86_64 SDKs establish
+# the series-wide x86_64 build-id rule. Non-x86_64 19.07 runtime probes do not
+# need it. Scope compatibility from validated matrix metadata, never sample
+# naming, so a custom matrix cannot opt a different SDK into legacy bypasses.
 sdk_force_prereq=0
 sdk_allow_compiler_prereq=0
 sdk_link_flags=''
 sdk_emulator=''
+if [ "$family" = openwrt ]; then
+    case "$release" in
+        19.07.*)
+            sdk_force_prereq=1
+            sdk_allow_compiler_prereq=1
+            [ "$abi" != x86_64 ] || sdk_link_flags='-Wl,--build-id=sha1'
+            ;;
+    esac
+fi
 case "$sample" in
-    openwrt-19.07.*-*)
-        sdk_force_prereq=1
-        sdk_allow_compiler_prereq=1
-        ;;
-esac
-case "$sample" in
-    openwrt-19.07.*-x86_64) sdk_link_flags='-Wl,--build-id=sha1' ;;
     openwrt-19.07.10-x86-geode) sdk_emulator='qemu-i386' ;;
     openwrt-19.07.10-ramips-mt76x8) sdk_emulator='qemu-mipsel' ;;
     openwrt-19.07.10-ar71xx-generic) sdk_emulator='qemu-mips' ;;
