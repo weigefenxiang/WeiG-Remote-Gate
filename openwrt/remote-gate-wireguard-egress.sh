@@ -12,6 +12,10 @@ FW3_NAT_CHAIN="WEIG_WG_EGRESS_NAT"
 FW3_FILTER_CHAIN6="WEIG_WG_EGRESS6"
 FW3_NAT_CHAIN6="WEIG_WG_EGRESS_NAT6"
 NFT_COMMENT="WeiG Remote Gate WG egress"
+XTABLES_WAIT_SECONDS="${REMOTE_GATE_XTABLES_WAIT_SECONDS:-15}"
+case "$XTABLES_WAIT_SECONDS" in ''|*[!0-9]*) XTABLES_WAIT_SECONDS=15 ;; esac
+[ "$XTABLES_WAIT_SECONDS" -ge 1 ] || XTABLES_WAIT_SECONDS=15
+[ "$XTABLES_WAIT_SECONDS" -le 60 ] || XTABLES_WAIT_SECONDS=60
 
 sanitize_detail() {
     printf '%s' "$1" | tr '\r\n' '  ' | sed 's/[^A-Za-z0-9 ._:/(),+-]/_/g' | cut -c1-200
@@ -73,6 +77,8 @@ mode_has_v6() { case "$1" in ipv6|dual) return 0 ;; *) return 1 ;; esac; }
 interface_status() { ubus call "network.interface.$1" status 2>/dev/null; }
 interface_up() { interface_status "$1" | jsonfilter -e '@.up' 2>/dev/null | grep -qx 'true'; }
 l3_device() { interface_status "$1" | jsonfilter -e '@.l3_device' 2>/dev/null | sed -n '1p'; }
+xtables4() { iptables -w "$XTABLES_WAIT_SECONDS" "$@"; }
+xtables6() { ip6tables -w "$XTABLES_WAIT_SECONDS" "$@"; }
 
 wireguard_subnet4() {
     logical="$1"
@@ -140,22 +146,22 @@ cleanup_legacy_uci() {
 
 fw3_cleanup4() {
     command -v iptables >/dev/null 2>&1 || return 0
-    while iptables -C FORWARD -j "$FW3_FILTER_CHAIN" >/dev/null 2>&1; do iptables -D FORWARD -j "$FW3_FILTER_CHAIN" >/dev/null 2>&1 || break; done
-    iptables -F "$FW3_FILTER_CHAIN" >/dev/null 2>&1 || true
-    iptables -X "$FW3_FILTER_CHAIN" >/dev/null 2>&1 || true
-    while iptables -t nat -C POSTROUTING -j "$FW3_NAT_CHAIN" >/dev/null 2>&1; do iptables -t nat -D POSTROUTING -j "$FW3_NAT_CHAIN" >/dev/null 2>&1 || break; done
-    iptables -t nat -F "$FW3_NAT_CHAIN" >/dev/null 2>&1 || true
-    iptables -t nat -X "$FW3_NAT_CHAIN" >/dev/null 2>&1 || true
+    while xtables4 -C FORWARD -j "$FW3_FILTER_CHAIN" >/dev/null 2>&1; do xtables4 -D FORWARD -j "$FW3_FILTER_CHAIN" >/dev/null 2>&1 || break; done
+    xtables4 -F "$FW3_FILTER_CHAIN" >/dev/null 2>&1 || true
+    xtables4 -X "$FW3_FILTER_CHAIN" >/dev/null 2>&1 || true
+    while xtables4 -t nat -C POSTROUTING -j "$FW3_NAT_CHAIN" >/dev/null 2>&1; do xtables4 -t nat -D POSTROUTING -j "$FW3_NAT_CHAIN" >/dev/null 2>&1 || break; done
+    xtables4 -t nat -F "$FW3_NAT_CHAIN" >/dev/null 2>&1 || true
+    xtables4 -t nat -X "$FW3_NAT_CHAIN" >/dev/null 2>&1 || true
 }
 
 fw3_cleanup6() {
     command -v ip6tables >/dev/null 2>&1 || return 0
-    while ip6tables -C FORWARD -j "$FW3_FILTER_CHAIN6" >/dev/null 2>&1; do ip6tables -D FORWARD -j "$FW3_FILTER_CHAIN6" >/dev/null 2>&1 || break; done
-    ip6tables -F "$FW3_FILTER_CHAIN6" >/dev/null 2>&1 || true
-    ip6tables -X "$FW3_FILTER_CHAIN6" >/dev/null 2>&1 || true
-    while ip6tables -t nat -C POSTROUTING -j "$FW3_NAT_CHAIN6" >/dev/null 2>&1; do ip6tables -t nat -D POSTROUTING -j "$FW3_NAT_CHAIN6" >/dev/null 2>&1 || break; done
-    ip6tables -t nat -F "$FW3_NAT_CHAIN6" >/dev/null 2>&1 || true
-    ip6tables -t nat -X "$FW3_NAT_CHAIN6" >/dev/null 2>&1 || true
+    while xtables6 -C FORWARD -j "$FW3_FILTER_CHAIN6" >/dev/null 2>&1; do xtables6 -D FORWARD -j "$FW3_FILTER_CHAIN6" >/dev/null 2>&1 || break; done
+    xtables6 -F "$FW3_FILTER_CHAIN6" >/dev/null 2>&1 || true
+    xtables6 -X "$FW3_FILTER_CHAIN6" >/dev/null 2>&1 || true
+    while xtables6 -t nat -C POSTROUTING -j "$FW3_NAT_CHAIN6" >/dev/null 2>&1; do xtables6 -t nat -D POSTROUTING -j "$FW3_NAT_CHAIN6" >/dev/null 2>&1 || break; done
+    xtables6 -t nat -F "$FW3_NAT_CHAIN6" >/dev/null 2>&1 || true
+    xtables6 -t nat -X "$FW3_NAT_CHAIN6" >/dev/null 2>&1 || true
 }
 
 fw3_cleanup() { fw3_cleanup4; fw3_cleanup6; }
@@ -163,27 +169,27 @@ fw3_cleanup() { fw3_cleanup4; fw3_cleanup6; }
 fw3_install4() {
     wg_dev="$1"; wan_dev="$2"; subnet="$3"
     fw3_cleanup4
-    iptables -N "$FW3_FILTER_CHAIN" || return 1
-    iptables -A "$FW3_FILTER_CHAIN" -i "$wg_dev" -o "$wan_dev" -s "$subnet" -j ACCEPT || return 1
-    iptables -A "$FW3_FILTER_CHAIN" -i "$wan_dev" -o "$wg_dev" -d "$subnet" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT || return 1
-    iptables -I FORWARD 1 -j "$FW3_FILTER_CHAIN" || return 1
-    iptables -t nat -N "$FW3_NAT_CHAIN" || return 1
-    iptables -t nat -A "$FW3_NAT_CHAIN" -s "$subnet" -o "$wan_dev" -j MASQUERADE || return 1
-    iptables -t nat -I POSTROUTING 1 -j "$FW3_NAT_CHAIN" || return 1
+    xtables4 -N "$FW3_FILTER_CHAIN" || return 1
+    xtables4 -A "$FW3_FILTER_CHAIN" -i "$wg_dev" -o "$wan_dev" -s "$subnet" -j ACCEPT || return 1
+    xtables4 -A "$FW3_FILTER_CHAIN" -i "$wan_dev" -o "$wg_dev" -d "$subnet" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT || return 1
+    xtables4 -I FORWARD 1 -j "$FW3_FILTER_CHAIN" || return 1
+    xtables4 -t nat -N "$FW3_NAT_CHAIN" || return 1
+    xtables4 -t nat -A "$FW3_NAT_CHAIN" -s "$subnet" -o "$wan_dev" -j MASQUERADE || return 1
+    xtables4 -t nat -I POSTROUTING 1 -j "$FW3_NAT_CHAIN" || return 1
 }
 
 fw3_install6() {
     wg_dev="$1"; wan_dev="$2"; subnet="$3"
     command -v ip6tables >/dev/null 2>&1 || return 1
-    ip6tables -t nat -L POSTROUTING >/dev/null 2>&1 || return 1
+    xtables6 -t nat -L POSTROUTING >/dev/null 2>&1 || return 1
     fw3_cleanup6
-    ip6tables -N "$FW3_FILTER_CHAIN6" || return 1
-    ip6tables -A "$FW3_FILTER_CHAIN6" -i "$wg_dev" -o "$wan_dev" -s "$subnet" -j ACCEPT || return 1
-    ip6tables -A "$FW3_FILTER_CHAIN6" -i "$wan_dev" -o "$wg_dev" -d "$subnet" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT || return 1
-    ip6tables -I FORWARD 1 -j "$FW3_FILTER_CHAIN6" || return 1
-    ip6tables -t nat -N "$FW3_NAT_CHAIN6" || return 1
-    ip6tables -t nat -A "$FW3_NAT_CHAIN6" -s "$subnet" -o "$wan_dev" -j MASQUERADE || return 1
-    ip6tables -t nat -I POSTROUTING 1 -j "$FW3_NAT_CHAIN6" || return 1
+    xtables6 -N "$FW3_FILTER_CHAIN6" || return 1
+    xtables6 -A "$FW3_FILTER_CHAIN6" -i "$wg_dev" -o "$wan_dev" -s "$subnet" -j ACCEPT || return 1
+    xtables6 -A "$FW3_FILTER_CHAIN6" -i "$wan_dev" -o "$wg_dev" -d "$subnet" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT || return 1
+    xtables6 -I FORWARD 1 -j "$FW3_FILTER_CHAIN6" || return 1
+    xtables6 -t nat -N "$FW3_NAT_CHAIN6" || return 1
+    xtables6 -t nat -A "$FW3_NAT_CHAIN6" -s "$subnet" -o "$wan_dev" -j MASQUERADE || return 1
+    xtables6 -t nat -I POSTROUTING 1 -j "$FW3_NAT_CHAIN6" || return 1
 }
 
 nft_delete_comment_rules() {
@@ -505,8 +511,8 @@ sync_egress() {
     firewall_ok=0
     case "${FIREWALL_BACKEND:-}" in
         fw3-iptables)
-            if mode_has_v4 "$mode"; then iptables -C FORWARD -j "$FW3_FILTER_CHAIN" >/dev/null 2>&1 || rule_ok=0; fi
-            if mode_has_v6 "$mode"; then ip6tables -C FORWARD -j "$FW3_FILTER_CHAIN6" >/dev/null 2>&1 || rule_ok=0; fi
+            if mode_has_v4 "$mode"; then xtables4 -C FORWARD -j "$FW3_FILTER_CHAIN" >/dev/null 2>&1 || rule_ok=0; fi
+            if mode_has_v6 "$mode"; then xtables6 -C FORWARD -j "$FW3_FILTER_CHAIN6" >/dev/null 2>&1 || rule_ok=0; fi
             [ "$rule_ok" -eq 1 ] && firewall_ok=1
             ;;
         fw4-nftables)
