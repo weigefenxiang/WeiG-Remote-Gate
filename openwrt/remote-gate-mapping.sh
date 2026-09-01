@@ -95,6 +95,70 @@ status_process_current() {
     owned_pid "$pid" "$status"
 }
 
+runtime_status_for_pid() {
+    local rg_pid="$1" rg_argv rg_expect=0 rg_arg
+    valid_uint "$rg_pid" || return 1
+    [ -r "/proc/$rg_pid/cmdline" ] || return 1
+    rg_argv="$(tr '\000' '\n' < "/proc/$rg_pid/cmdline" 2>/dev/null || true)"
+    [ -n "$rg_argv" ] || return 1
+    printf '%s\n' "$rg_argv" | grep -Fqx "$MAPPER_BIN" || return 1
+    while IFS= read -r rg_arg; do
+        if [ "$rg_expect" -eq 1 ]; then
+            case "$rg_arg" in
+                "$STATE_DIR"/*.status.json) printf '%s\n' "$rg_arg"; return 0 ;;
+                *) return 1 ;;
+            esac
+        fi
+        [ "$rg_arg" = "--status-file" ] && rg_expect=1
+    done <<EOF2
+$rg_argv
+EOF2
+    return 1
+}
+
+terminate_managed_pid() {
+    local rg_pid="$1" rg_status="$2" rg_current rg_n=0
+    rg_current="$(runtime_status_for_pid "$rg_pid" 2>/dev/null || true)"
+    [ "$rg_current" = "$rg_status" ] || return 0
+    kill "$rg_pid" 2>/dev/null || true
+    while [ "$rg_n" -lt 5 ]; do
+        rg_current="$(runtime_status_for_pid "$rg_pid" 2>/dev/null || true)"
+        [ "$rg_current" = "$rg_status" ] || return 0
+        sleep 1
+        rg_n=$((rg_n + 1))
+    done
+    rg_current="$(runtime_status_for_pid "$rg_pid" 2>/dev/null || true)"
+    [ "$rg_current" = "$rg_status" ] && kill -9 "$rg_pid" 2>/dev/null || true
+}
+
+stop_managed_runtimes() {
+    local rg_proc rg_pid rg_status
+    for rg_proc in /proc/[0-9]*; do
+        [ -d "$rg_proc" ] || continue
+        rg_pid="${rg_proc##*/}"
+        rg_status="$(runtime_status_for_pid "$rg_pid" 2>/dev/null || true)"
+        [ -n "$rg_status" ] || continue
+        terminate_managed_pid "$rg_pid" "$rg_status"
+    done
+}
+
+cleanup_orphan_runtimes() {
+    local rg_proc rg_pid rg_status rg_key rg_expected_status rg_pfile rg_recorded
+    for rg_proc in /proc/[0-9]*; do
+        [ -d "$rg_proc" ] || continue
+        rg_pid="${rg_proc##*/}"
+        rg_status="$(runtime_status_for_pid "$rg_pid" 2>/dev/null || true)"
+        [ -n "$rg_status" ] || continue
+        rg_key="$(basename "$rg_status" .status.json)"
+        rg_expected_status="$(status_path "$rg_key")"
+        rg_pfile="$(pid_path "$rg_key")"
+        rg_recorded="$(sed -n '1p' "$rg_pfile" 2>/dev/null || true)"
+        if [ "$rg_status" != "$rg_expected_status" ] || [ "$rg_recorded" != "$rg_pid" ]; then
+            terminate_managed_pid "$rg_pid" "$rg_status"
+        fi
+    done
+}
+
 stop_key() {
     key="$1"
     pfile="$(pid_path "$key")"; sfile="$(status_path "$key")"
@@ -117,6 +181,7 @@ stop_all() {
         key="$(basename "$pfile" .pid)"
         stop_key "$key"
     done
+    stop_managed_runtimes
     rm -f "$STATE_DIR"/*.meta "$STATE_DIR"/*.status.json "$STATE_DIR"/*.go 2>/dev/null || true
 }
 
@@ -173,6 +238,7 @@ sync_prepare() {
         return 0
     fi
 
+    cleanup_orphan_runtimes
     desired="$STATE_DIR/.desired.$$"
     : > "$desired"
     trap 'rm -f "$desired"' EXIT INT TERM
