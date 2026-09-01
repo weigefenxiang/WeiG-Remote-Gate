@@ -149,7 +149,7 @@
   }
 
   function mappedPlaceholder() {
-    return zh() ? 'Endpoint 在 Activate 后确认' : 'Endpoint resolved after Activate';
+    return zh() ? '选择 WAN 后显示实时 Endpoint' : 'Live endpoint shown after WAN selection';
   }
 
   function rewriteMappedOptions() {
@@ -170,46 +170,57 @@
     if (changed) window.RemoteGateEndpointPicker?.sync?.(select.id);
   }
 
-  function ackMappedEndpoint(last) {
-    if (!last || last.action !== 'activate' || last.state !== 'done' || last.access_method !== 'mapped') return null;
-    const match = String(last.detail || '').match(/(?:^|\s)mapped-endpoint:([0-9.]+):([0-9]{1,5})(?:\s|$)/);
-    if (!match) return null;
-    const port = Number(match[2]);
-    if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
-    return {endpoint: `${match[1]}:${port}`, current: false};
+  function selectedEndpointRecord(data) {
+    const select = document.getElementById('endpoint-select') || document.getElementById('wan-select');
+    if (!select || select.dataset.selectionConfirmed !== '1' || !select.value) return null;
+    if (String(select.dataset.selectionFamily || '') === 'dual' || String(select.value).startsWith('dual:')) return null;
+    const endpoints = Array.isArray(data?.endpoints) ? data.endpoints : [];
+    return endpoints.find((item) => item && String(item.id || '') === String(select.value)) || null;
   }
 
-  function mappedEndpointFromDashboard(data) {
+  function validPort(value) {
+    const port = Number(value || 0);
+    return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : 0;
+  }
+
+  function directEndpoint(item) {
+    if (!item || item.reachability !== 'direct' || item.access_method !== 'direct') return null;
+    const address = String(item.external_address || '').trim();
+    const port = validPort(item.external_port || item.service_port);
+    if (!address || !port) return null;
+    const endpoint = item.family === 'ipv6' ? `[${address}]:${port}` : `${address}:${port}`;
+    return {endpoint, current: true, method: 'direct', family: String(item.family || '')};
+  }
+
+  function mappedEndpoint(data, selected) {
+    if (!selected || selected.family !== 'ipv4' || (selected.access_method !== 'mapped' && selected.reachability !== 'mapped')) return null;
     const inventory = data?.inventory;
     const raw = Array.isArray(inventory?.mappings) ? inventory.mappings : [];
-    const wgName = String(document.getElementById('wg-select')?.value || '').trim();
-    const serviceId = wgName ? `wg.${wgName}` : '';
-    let mappings = raw.filter((item) => item && item.family === 'ipv4' && item.transport === 'udp');
-    if (serviceId) {
-      const serviceMatches = mappings.filter((item) => String(item.service_id || '') === serviceId);
-      if (serviceMatches.length) mappings = serviceMatches;
-    }
+    const exact = raw
+      .filter((item) =>
+        item &&
+        item.family === 'ipv4' &&
+        item.transport === 'udp' &&
+        String(item.wan || '') === String(selected.wan || '') &&
+        String(item.device || '') === String(selected.device || '') &&
+        String(item.service_id || '') === String(selected.service_id || '')
+      )
+      .sort((a, b) => Number(b.observed_at || 0) - Number(a.observed_at || 0));
+    const mapping = exact[0];
+    const address = String(mapping?.external_address || selected.external_address || '').trim();
+    const port = validPort(mapping?.external_port || selected.external_port);
+    if (!address || !port) return null;
+    return {endpoint: `${address}:${port}`, current: Boolean(mapping), method: 'mapped', family: 'ipv4'};
+  }
 
-    const last = data?.gate?.queue?.last;
-    if (last?.access_method === 'mapped') {
-      const exact = mappings.filter((item) =>
-        (!last.wan || String(item.wan || '') === String(last.wan)) &&
-        (!last.device || String(item.device || '') === String(last.device)) &&
-        (!last.service_id || String(item.service_id || '') === String(last.service_id))
-      );
-      if (exact.length) mappings = exact;
+  function selectedPublicEndpoint(data) {
+    const selected = selectedEndpointRecord(data);
+    if (!selected) return null;
+    if (selected.family === 'ipv4' && (selected.access_method === 'mapped' || selected.reachability === 'mapped')) {
+      return mappedEndpoint(data, selected);
     }
-
-    mappings.sort((a, b) => Number(b.observed_at || 0) - Number(a.observed_at || 0));
-    const mapping = mappings[0];
-    if (mapping) {
-      const address = String(mapping.external_address || '').trim();
-      const port = Number(mapping.external_port || 0);
-      if (address && Number.isInteger(port) && port >= 1 && port <= 65535) {
-        return {endpoint: `${address}:${port}`, current: true};
-      }
-    }
-    return ackMappedEndpoint(last);
+    if (selected.family === 'ipv6' && (selected.access_method === 'mapped' || selected.reachability === 'mapped')) return null;
+    return directEndpoint(selected);
   }
 
   function copyFallback(text) {
@@ -277,28 +288,36 @@
     return row;
   }
 
-  function renderMappedEndpoint(data) {
+  function renderSelectedEndpoint(data) {
     latestDashboard = data || latestDashboard;
     const row = ensureVerifiedEndpoint();
     if (!row || !latestDashboard) return;
-    const mapped = mappedEndpointFromDashboard(latestDashboard);
-    if (!mapped?.endpoint) {
+    const selected = selectedPublicEndpoint(latestDashboard);
+    if (!selected?.endpoint) {
       row.hidden = true;
       row.classList.remove('is-current');
       return;
     }
     row.hidden = false;
-    row.classList.toggle('is-current', Boolean(mapped.current));
+    row.classList.toggle('is-current', Boolean(selected.current));
     row.querySelector('[data-mapped-endpoint-label]').textContent = zh()
       ? '当前 WireGuard 公网 Endpoint'
       : 'Current WireGuard Public Endpoint';
     const value = row.querySelector('[data-mapped-endpoint-value]');
-    value.textContent = mapped.endpoint;
-    value.title = zh() ? `复制 ${mapped.endpoint}` : `Copy ${mapped.endpoint}`;
+    value.textContent = selected.endpoint;
+    value.title = zh() ? `复制 ${selected.endpoint}` : `Copy ${selected.endpoint}`;
     value.setAttribute('aria-label', value.title);
-    row.querySelector('[data-mapped-endpoint-note]').textContent = mapped.current
-      ? (zh() ? 'OpenWrt 持续观测，Activate 时实时确认' : 'Continuously observed by OpenWrt and re-confirmed on Activate')
-      : (zh() ? '由 OpenWrt 在 Activate 时实时确认' : 'Resolved live by OpenWrt on Activate');
+    let note = zh() ? 'OpenWrt 当前上报' : 'Currently reported by OpenWrt';
+    if (selected.method === 'mapped') {
+      note = selected.current
+        ? (zh() ? 'OpenWrt 持续观测，Activate 时实时确认' : 'Continuously observed by OpenWrt and re-confirmed on Activate')
+        : (zh() ? '由 OpenWrt 在 Activate 时实时确认' : 'Resolved live by OpenWrt on Activate');
+    } else if (selected.family === 'ipv6') {
+      note = zh() ? 'IPv6 Direct · OpenWrt 当前上报' : 'IPv6 Direct · currently reported by OpenWrt';
+    } else if (selected.family === 'ipv4') {
+      note = zh() ? 'IPv4 Direct · OpenWrt 当前上报' : 'IPv4 Direct · currently reported by OpenWrt';
+    }
+    row.querySelector('[data-mapped-endpoint-note]').textContent = note;
   }
 
   function observeMappedPicker() {
@@ -321,7 +340,7 @@
       const requestUrl = new URL(typeof args[0] === 'string' ? args[0] : args[0]?.url || '', location.href);
       if (requestUrl.pathname === '/api/v1/dashboard' && response.ok) {
         response.clone().json().then((data) => {
-          renderMappedEndpoint(data);
+          renderSelectedEndpoint(data);
           queueMicrotask(rewriteMappedOptions);
         }).catch(() => {});
       }
@@ -337,10 +356,14 @@
     observeMappedPicker();
   }
 
+  window.addEventListener('remote-gate-endpoint-selection', () => {
+    if (latestDashboard) renderSelectedEndpoint(latestDashboard);
+  });
+
   window.addEventListener('remote-gate-language', () => {
     syncGateStatusPresentation();
     queueMicrotask(rewriteMappedOptions);
-    if (latestDashboard) renderMappedEndpoint(latestDashboard);
+    if (latestDashboard) renderSelectedEndpoint(latestDashboard);
   });
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready, {once: true});

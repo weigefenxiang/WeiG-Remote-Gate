@@ -55,6 +55,11 @@
     return select?.selectedOptions?.[0] || null;
   }
 
+  function emptyTriggerLabel(selectId) {
+    if (selectId === 'egress-select') return zh() ? '选择 Internet 出口' : 'Choose Internet exit';
+    return zh() ? '请选择 WAN Endpoint' : 'Choose WAN endpoint';
+  }
+
   function normalizeField(select) {
     const label = select.closest('label');
     if (!label) return;
@@ -241,9 +246,9 @@
     if (!select || !trigger) return;
     const option = selectedOption(selectId);
     const parsed = splitLabel(option?.textContent || '');
-    trigger.disabled = select.disabled || !option?.value;
+    trigger.disabled = Boolean(select.disabled);
     trigger.setAttribute('aria-disabled', trigger.disabled ? 'true' : 'false');
-    trigger.querySelector('[data-endpoint-wan]')?.replaceChildren(document.createTextNode(option?.value ? parsed.wan : (zh() ? '不可用' : 'Unavailable')));
+    trigger.querySelector('[data-endpoint-wan]')?.replaceChildren(document.createTextNode(option?.value ? parsed.wan : emptyTriggerLabel(selectId)));
     trigger.querySelector('[data-endpoint-kind]')?.replaceChildren(document.createTextNode(option?.value ? [parsed.family, parsed.provider].filter(Boolean).join(' · ') : ''));
     const address = trigger.querySelector('[data-endpoint-address]');
     address?.replaceChildren(document.createTextNode(option?.value ? parsed.address : ''));
@@ -262,7 +267,7 @@
   function open(selectId = 'endpoint-select') {
     const select = $(selectId);
     const trigger = ensureTrigger(selectId);
-    if (!select || select.disabled || !select.value || !trigger) return;
+    if (!select || select.disabled || !trigger) return;
     ensureLayer();
     activeSelectId = selectId;
     lastFocus = document.activeElement;
