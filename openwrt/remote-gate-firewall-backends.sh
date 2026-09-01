@@ -8,6 +8,7 @@ write_fw4_includes() {
 set weig_remote_gate_protected_ifname_v4 { type ifname; }
 set weig_remote_gate_protected_ifname_v6 { type ifname; }
 set weig_remote_gate_protected_udp_port { type inet_service; }
+set weig_remote_gate_mapped_ingress_v4 { type ifname . inet_service; }
 
 set weig_remote_gate_auth_ipv4 { type ipv4_addr; flags timeout; }
 set weig_remote_gate_auth_ipv6 { type ipv6_addr; flags timeout; }
@@ -29,7 +30,8 @@ NFT
 iifname @weig_remote_gate_verify_ifname_v4 ip saddr @weig_remote_gate_verify_ipv4 udp dport @weig_remote_gate_verify_udp_port_v4 counter accept comment "!WeiG Remote Gate: IPv4 verification window"
 iifname @weig_remote_gate_auth_ping_ifname_v4 ip saddr @weig_remote_gate_auth_ipv4 icmp type echo-request counter accept comment "!WeiG Remote Gate: authorized IPv4 ICMP"
 iifname @weig_remote_gate_protected_ifname_v4 icmp type echo-request counter drop comment "!WeiG Remote Gate: protected IPv4 ICMP"
-iifname @weig_remote_gate_auth_ifname_v4 ip saddr @weig_remote_gate_auth_ipv4 udp dport @weig_remote_gate_auth_udp_port_v4 counter accept comment "!WeiG Remote Gate: authorized IPv4 WireGuard"
+iifname @weig_remote_gate_auth_ifname_v4 ip saddr @weig_remote_gate_auth_ipv4 udp dport @weig_remote_gate_auth_udp_port_v4 counter accept comment "!WeiG Remote Gate: authorized IPv4 ingress"
+iifname . udp dport @weig_remote_gate_mapped_ingress_v4 counter drop comment "!WeiG Remote Gate: protected IPv4 mapped ingress"
 iifname @weig_remote_gate_protected_ifname_v4 udp dport @weig_remote_gate_protected_udp_port counter drop comment "!WeiG Remote Gate: protected IPv4 WireGuard"
 
 iifname @weig_remote_gate_verify_ifname_v6 ip6 saddr @weig_remote_gate_verify_ipv6 udp dport @weig_remote_gate_verify_udp_port_v6 counter accept comment "!WeiG Remote Gate: IPv6 verification window"
@@ -76,7 +78,7 @@ read_auth_record_file() {
     valid_scope "$rg_scope" || { rm -f "$rg_file"; return 1; }
     valid_source_kind "$rg_kind" || { rm -f "$rg_file"; return 1; }
     case "$rg_family" in ipv4) valid_ipv4 "$rg_ip" ;; ipv6) valid_ipv6 "$rg_ip" ;; esac || { rm -f "$rg_file"; return 1; }
-    valid_device "$rg_dev" && valid_uint "$rg_port" && valid_uint "$rg_expires" && [ "$rg_expires" -gt "$rg_now" ] || { rm -f "$rg_file"; return 1; }
+    valid_device "$rg_dev" && valid_port "$rg_port" && valid_uint "$rg_expires" && [ "$rg_expires" -gt "$rg_now" ] || { rm -f "$rg_file"; return 1; }
     rg_remaining="$((rg_expires - rg_now))"
     printf '%s %s %s %s %s %s\n' "$rg_ip" "$rg_dev" "$rg_port" "$rg_expires" "$rg_remaining" "$rg_scope:$rg_kind"
 }
@@ -102,7 +104,7 @@ read_verify_record() {
     rg_now="$(date +%s)"
     [ "$rg_file_family" = "$rg_family" ] || { rm -f "$rg_file"; return 1; }
     case "$rg_mode" in candidate|discovery) ;; *) rm -f "$rg_file"; return 1 ;; esac
-    valid_device "$rg_dev" && valid_uint "$rg_port" && valid_uint "$rg_expires" && [ "$rg_expires" -gt "$rg_now" ] || { rm -f "$rg_file"; return 1; }
+    valid_device "$rg_dev" && valid_port "$rg_port" && valid_uint "$rg_expires" && [ "$rg_expires" -gt "$rg_now" ] || { rm -f "$rg_file"; return 1; }
     if [ "$rg_source" != "any" ]; then
         case "$rg_family" in ipv4) valid_ipv4 "$rg_source" ;; ipv6) valid_ipv6 "$rg_source" ;; esac || { rm -f "$rg_file"; return 1; }
     fi
@@ -116,7 +118,7 @@ auth_record_policy_current() {
     set -- $rg_record; rg_ip="$1"; rg_dev="$2"; rg_port="$3"; rg_expires="$4"; rg_remaining="$5"; rg_meta="$6"
     rg_device_file="$(family_device_file "$rg_family")"
     grep -Fqx "$rg_dev" "$rg_device_file" 2>/dev/null || return 1
-    grep -Fqx "$rg_port" "$PORTS_FILE" 2>/dev/null || return 1
+    protected_ingress_current "$rg_family" "$rg_dev" "$rg_port"
 }
 verify_policy_current() {
     local rg_family="$1" rg_record rg_source rg_dev rg_port rg_expires rg_remaining rg_mode rg_device_file
@@ -134,7 +136,7 @@ reconcile_family() {
         rg_record="$(read_auth_record_file "$rg_family" "$rg_file" 2>/dev/null || true)"
         [ -n "$rg_record" ] || continue
         if ! auth_record_policy_current "$rg_family" "$rg_record"; then
-            logger -t "$TAG" "$rg_family authorization revoked because protected WAN/port policy changed" 2>/dev/null || true
+            logger -t "$TAG" "$rg_family authorization revoked because protected WAN/ingress policy changed" 2>/dev/null || true
             rm -f "$rg_file"
             continue
         fi
@@ -164,7 +166,7 @@ fw3_load_verify() {
 }
 
 fw3_load_auth() {
-    local rg_family="$1" rg_records rg_record rg_ip rg_dev rg_port rg_expires rg_remaining rg_meta rg_scope rg_set rg_chain rg_cmd rg_first=1
+    local rg_family="$1" rg_records rg_record rg_ip rg_dev rg_port rg_expires rg_remaining rg_meta rg_scope rg_set rg_chain rg_cmd
     rg_records="$(read_auth_records "$rg_family" 2>/dev/null || true)"; [ -n "$rg_records" ] || return 0
     if [ "$rg_family" = ipv4 ]; then rg_set="$FW3_AUTH_SET_V4"; rg_chain="$FW3_CHAIN_V4"; rg_cmd=iptables; else rg_set="$FW3_AUTH_SET_V6"; rg_chain="$FW3_CHAIN_V6"; rg_cmd=ip6tables; fi
     printf '%s\n' "$rg_records" | while IFS= read -r rg_record; do
@@ -180,16 +182,28 @@ fw3_load_auth() {
     "$rg_cmd" -A "$rg_chain" -i "$rg_dev" -p udp --dport "$rg_port" -m set --match-set "$rg_set" src -j ACCEPT
 }
 
+fw3_load_mapped_drops_v4() {
+    local rg_pair rg_dev rg_port
+    [ -r "$MAPPED_INGRESS_V4_FILE" ] || return 0
+    while IFS= read -r rg_pair; do
+        [ -n "$rg_pair" ] || continue
+        rg_dev="${rg_pair%%|*}"; rg_port="${rg_pair#*|}"
+        valid_device "$rg_dev" && valid_port "$rg_port" || continue
+        iptables -A "$FW3_CHAIN_V4" -i "$rg_dev" -p udp --dport "$rg_port" -j DROP
+    done < "$MAPPED_INGRESS_V4_FILE"
+}
+
 fw3_rebuild_v4() {
     local rg_dev rg_port
     iptables -N "$FW3_CHAIN_V4" >/dev/null 2>&1 || true
     fw3_remove_jump_v4; iptables -F "$FW3_CHAIN_V4"; iptables -I INPUT 1 -j "$FW3_CHAIN_V4"
     ipset flush "$FW3_AUTH_SET_V4" >/dev/null 2>&1 || true; ipset flush "$FW3_VERIFY_SET_V4" >/dev/null 2>&1 || true
     fw3_load_verify ipv4; fw3_load_auth ipv4
+    fw3_load_mapped_drops_v4
     while IFS= read -r rg_dev; do
         [ -n "$rg_dev" ] || continue; valid_device "$rg_dev" || continue
         iptables -A "$FW3_CHAIN_V4" -i "$rg_dev" -p icmp --icmp-type echo-request -j DROP
-        while IFS= read -r rg_port; do [ -n "$rg_port" ] || continue; valid_uint "$rg_port" || continue; [ "$rg_port" -ge 1 ] && [ "$rg_port" -le 65535 ] || continue; iptables -A "$FW3_CHAIN_V4" -i "$rg_dev" -p udp --dport "$rg_port" -j DROP; done < "$PORTS_FILE"
+        while IFS= read -r rg_port; do [ -n "$rg_port" ] || continue; valid_port "$rg_port" || continue; iptables -A "$FW3_CHAIN_V4" -i "$rg_dev" -p udp --dport "$rg_port" -j DROP; done < "$PORTS_FILE"
     done < "$DEVICES_V4_FILE"
     iptables -A "$FW3_CHAIN_V4" -j RETURN
 }
@@ -204,7 +218,7 @@ fw3_rebuild_v6() {
     while IFS= read -r rg_dev; do
         [ -n "$rg_dev" ] || continue; valid_device "$rg_dev" || continue
         ip6tables -A "$FW3_CHAIN_V6" -i "$rg_dev" -p ipv6-icmp --icmpv6-type echo-request -j DROP
-        while IFS= read -r rg_port; do [ -n "$rg_port" ] || continue; valid_uint "$rg_port" || continue; [ "$rg_port" -ge 1 ] && [ "$rg_port" -le 65535 ] || continue; ip6tables -A "$FW3_CHAIN_V6" -i "$rg_dev" -p udp --dport "$rg_port" -j DROP; done < "$PORTS_FILE"
+        while IFS= read -r rg_port; do [ -n "$rg_port" ] || continue; valid_port "$rg_port" || continue; ip6tables -A "$FW3_CHAIN_V6" -i "$rg_dev" -p udp --dport "$rg_port" -j DROP; done < "$PORTS_FILE"
     done < "$DEVICES_V6_FILE"
     ip6tables -A "$FW3_CHAIN_V6" -j RETURN
 }
@@ -230,12 +244,24 @@ fw4_add_lines() {
 add element inet fw4 $rg_set { "$rg_value" }
 EOF2
                 ;;
-            port) valid_uint "$rg_value" || continue; [ "$rg_value" -ge 1 ] && [ "$rg_value" -le 65535 ] || continue; nft -f - <<EOF2
+            port) valid_port "$rg_value" || continue; nft -f - <<EOF2
 add element inet fw4 $rg_set { $rg_value }
 EOF2
                 ;;
         esac
     done < "$rg_file"
+}
+fw4_add_mapped_pairs() {
+    local rg_pair rg_dev rg_port
+    [ -r "$MAPPED_INGRESS_V4_FILE" ] || return 0
+    while IFS= read -r rg_pair; do
+        [ -n "$rg_pair" ] || continue
+        rg_dev="${rg_pair%%|*}"; rg_port="${rg_pair#*|}"
+        valid_device "$rg_dev" && valid_port "$rg_port" || continue
+        nft -f - <<EOF2
+add element inet fw4 weig_remote_gate_mapped_ingress_v4 { "$rg_dev" . $rg_port }
+EOF2
+    done < "$MAPPED_INGRESS_V4_FILE"
 }
 fw4_load_family() {
     local rg_family="$1" rg_record rg_records rg_ip rg_dev rg_port rg_expires rg_remaining rg_meta rg_scope rg_auth_set rg_auth_if rg_ping_if rg_auth_port rg_verify_set rg_verify_if rg_verify_port rg_source rg_mode rg_network
@@ -274,10 +300,11 @@ EOF2
 fw4_restore_sets() {
     local rg_s
     nft list set inet fw4 weig_remote_gate_protected_ifname_v4 >/dev/null 2>&1 || return 1
-    for rg_s in weig_remote_gate_protected_ifname_v4 weig_remote_gate_protected_ifname_v6 weig_remote_gate_protected_udp_port weig_remote_gate_auth_ipv4 weig_remote_gate_auth_ipv6 weig_remote_gate_auth_ifname_v4 weig_remote_gate_auth_ifname_v6 weig_remote_gate_auth_ping_ifname_v4 weig_remote_gate_auth_ping_ifname_v6 weig_remote_gate_auth_udp_port_v4 weig_remote_gate_auth_udp_port_v6 weig_remote_gate_verify_ipv4 weig_remote_gate_verify_ipv6 weig_remote_gate_verify_ifname_v4 weig_remote_gate_verify_ifname_v6 weig_remote_gate_verify_udp_port_v4 weig_remote_gate_verify_udp_port_v6; do fw4_flush_set "$rg_s"; done
+    for rg_s in weig_remote_gate_protected_ifname_v4 weig_remote_gate_protected_ifname_v6 weig_remote_gate_protected_udp_port weig_remote_gate_mapped_ingress_v4 weig_remote_gate_auth_ipv4 weig_remote_gate_auth_ipv6 weig_remote_gate_auth_ifname_v4 weig_remote_gate_auth_ifname_v6 weig_remote_gate_auth_ping_ifname_v4 weig_remote_gate_auth_ping_ifname_v6 weig_remote_gate_auth_udp_port_v4 weig_remote_gate_auth_udp_port_v6 weig_remote_gate_verify_ipv4 weig_remote_gate_verify_ipv6 weig_remote_gate_verify_ifname_v4 weig_remote_gate_verify_ifname_v6 weig_remote_gate_verify_udp_port_v4 weig_remote_gate_verify_udp_port_v6; do fw4_flush_set "$rg_s"; done
     fw4_add_lines weig_remote_gate_protected_ifname_v4 "$DEVICES_V4_FILE" ifname
     fw4_add_lines weig_remote_gate_protected_ifname_v6 "$DEVICES_V6_FILE" ifname
     fw4_add_lines weig_remote_gate_protected_udp_port "$PORTS_FILE" port
+    fw4_add_mapped_pairs
     reconcile_policy
     fw4_load_family ipv4; fw4_load_family ipv6
 }
@@ -300,15 +327,33 @@ normalize_list_to_file() {
     local rg_input="$1" rg_kind="$2" rg_out="$3" rg_tmp rg_value
     rg_tmp="${rg_out}.tmp.$$"; : > "$rg_tmp"
     for rg_value in $rg_input; do
-        case "$rg_kind" in device) valid_device "$rg_value" || fail "invalid protected device: $rg_value" ;; port) valid_uint "$rg_value" || fail "invalid protected UDP port: $rg_value"; [ "$rg_value" -ge 1 ] && [ "$rg_value" -le 65535 ] || fail "UDP port out of range: $rg_value" ;; esac
+        case "$rg_kind" in
+            device) valid_device "$rg_value" || fail "invalid protected device: $rg_value" ;;
+            port) valid_port "$rg_value" || fail "invalid protected UDP port: $rg_value" ;;
+            mapped_pair)
+                rg_dev="${rg_value%%|*}"; rg_port="${rg_value#*|}"
+                [ "$rg_dev" != "$rg_value" ] && valid_device "$rg_dev" && valid_port "$rg_port" || fail "invalid mapped ingress pair: $rg_value"
+                rg_value="${rg_dev}|${rg_port}"
+                ;;
+            *) fail "invalid protected-list kind" ;;
+        esac
         printf '%s\n' "$rg_value" >> "$rg_tmp"
     done
     sort -u "$rg_tmp" > "$rg_out"; rm -f "$rg_tmp"; chmod 600 "$rg_out"
 }
 sync_policy() {
     ensure_state
-    local rg_v4 rg_v6 rg_ports
-    case "$#" in 2) rg_v4="$1"; rg_v6=""; rg_ports="$2" ;; 3) rg_v4="$1"; rg_v6="$2"; rg_ports="$3" ;; *) fail "usage: $0 sync <ipv4-devices> [ipv6-devices] <wireguard-udp-ports>" ;; esac
+    local rg_v4 rg_v6 rg_ports rg_mapped=""
+    case "$#" in
+        2) rg_v4="$1"; rg_v6=""; rg_ports="$2" ;;
+        3) rg_v4="$1"; rg_v6="$2"; rg_ports="$3" ;;
+        4) rg_v4="$1"; rg_v6="$2"; rg_ports="$3"; rg_mapped="$4" ;;
+        *) fail "usage: $0 sync <ipv4-devices> [ipv6-devices] <wireguard-udp-ports> [mapped-ipv4-device-port-pairs]" ;;
+    esac
     if [ -n "$rg_v6" ] && [ "$(backend 2>/dev/null || true)" = fw3-iptables ] && ! fw3_ipv6_capable; then fail "IPv6 Gate requested but ip6tables/ipset inet6 support is unavailable"; fi
-    normalize_list_to_file "$rg_v4" device "$DEVICES_V4_FILE"; normalize_list_to_file "$rg_v6" device "$DEVICES_V6_FILE"; normalize_list_to_file "$rg_ports" port "$PORTS_FILE"; restore_rules
+    normalize_list_to_file "$rg_v4" device "$DEVICES_V4_FILE"
+    normalize_list_to_file "$rg_v6" device "$DEVICES_V6_FILE"
+    normalize_list_to_file "$rg_ports" port "$PORTS_FILE"
+    normalize_list_to_file "$rg_mapped" mapped_pair "$MAPPED_INGRESS_V4_FILE"
+    restore_rules
 }
