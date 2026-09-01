@@ -8,16 +8,21 @@ STATE_DIR="/etc/remote-gate-state"
 CONFIG_FILE="/etc/remote-gate.conf"
 INIT_FILE="/etc/init.d/remote-gate-agent"
 HOTPLUG_FILE="/etc/hotplug.d/iface/95-remote-gate"
+PLATFORM="$LIB_DIR/remote-gate-platform.sh"
 CRON_LINE="*/5 * * * * /usr/lib/remote-gate/remote-gate-report.sh"
 
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 [ "$(id -u)" -eq 0 ] || fail "Run this installer as root."
 
+# These are core runtime capabilities, not release-number gates. OpenWrt,
+# LEDE, ImmortalWrt and compatible derivatives are accepted when they provide
+# the required OpenWrt-family runtime interfaces.
 for cmd in curl ubus jsonfilter awk sed grep sort uci ip; do
-    command -v "$cmd" >/dev/null 2>&1 || fail "Missing dependency: $cmd"
+    command -v "$cmd" >/dev/null 2>&1 || fail "Missing core dependency: $cmd"
 done
+[ -r /etc/rc.common ] || fail "Missing OpenWrt rc.common service framework."
 
-printf '\nWeiG Remote Gate OpenWrt installer\n\n'
+printf '\nWeiG Remote Gate OpenWrt-family installer\n\n'
 printf 'Public hostname (example: remote.example.com): '
 IFS= read -r HOSTNAME
 HOSTNAME="${HOSTNAME#http://}"
@@ -52,6 +57,7 @@ fetch_file() {
     fi
 }
 
+fetch_file "remote-gate-platform.sh" "$PLATFORM"
 fetch_file "remote-gate-report.sh" "$LIB_DIR/remote-gate-report.sh"
 fetch_file "remote-gate-agent.sh" "$LIB_DIR/remote-gate-agent.sh"
 fetch_file "remote-gate-egress-probe.sh" "$LIB_DIR/remote-gate-egress-probe.sh"
@@ -69,8 +75,30 @@ fetch_file "remote-gate-agent.init" "$INIT_FILE"
 fetch_file "remote-gate-hotplug.sh" "$HOTPLUG_FILE"
 chmod 0755 "$LIB_DIR"/*.sh "$INIT_FILE" "$HOTPLUG_FILE"
 
-# A router compiler is never required. A prebuilt mapper may be shipped beside
-# a local source checkout/package; otherwise Mapped Access remains optional.
+for file in "$LIB_DIR"/*.sh "$INIT_FILE" "$HOTPLUG_FILE"; do
+    sh -n "$file" || fail "Shell syntax check failed: $file"
+done
+
+"$PLATFORM" core-capable || fail "Required OpenWrt-family core runtime capabilities are unavailable."
+INIT_SYSTEM="$("$PLATFORM" init 2>/dev/null || printf unknown)"
+[ "$INIT_SYSTEM" = procd ] || fail "Remote Gate currently requires OpenWrt procd service management; detected: $INIT_SYSTEM"
+DIST="$("$PLATFORM" distribution 2>/dev/null || printf unknown)"
+RELEASE="$("$PLATFORM" release 2>/dev/null || printf unknown)"
+PKG_MANAGER="$("$PLATFORM" package-manager 2>/dev/null || printf none)"
+PKG_ARCH="$("$PLATFORM" package-arch 2>/dev/null || true)"
+KERNEL_ARCH="$("$PLATFORM" kernel-arch 2>/dev/null || printf unknown)"
+LIBC_FAMILY="$("$PLATFORM" libc 2>/dev/null || printf unknown)"
+
+printf 'Platform: %s %s\n' "$DIST" "$RELEASE"
+printf 'Package manager: %s\n' "$PKG_MANAGER"
+printf 'Package ABI: %s\n' "${PKG_ARCH:-unknown}"
+printf 'Kernel machine: %s\n' "$KERNEL_ARCH"
+printf 'libc: %s\n' "$LIBC_FAMILY"
+
+# A router compiler is never required. A prebuilt mapper may be supplied
+# explicitly or shipped beside a local source checkout/package. Selection by
+# kernel machine alone is forbidden; automatic artifact delivery uses the
+# exact package ABI reported by remote-gate-platform.sh.
 MAPPER_SOURCE="${REMOTE_GATE_MAPPER_SOURCE:-$SCRIPT_DIR/../native/remote-gate-mapper}"
 if [ -f "$MAPPER_SOURCE" ] && [ -x "$MAPPER_SOURCE" ]; then
     cp "$MAPPER_SOURCE" "$LIB_DIR/remote-gate-mapper"
@@ -84,11 +112,7 @@ else
 fi
 chmod 0644 "$LIB_DIR/VERSION"
 
-for file in "$LIB_DIR"/*.sh "$INIT_FILE" "$HOTPLUG_FILE"; do
-    sh -n "$file" || fail "Shell syntax check failed: $file"
-done
-
-BACKEND="$("$LIB_DIR/remote-gate-firewall.sh" detect 2>/dev/null)" || fail "Unsupported firewall. Need fw4+nftables or fw3+iptables+ipset."
+BACKEND="$("$LIB_DIR/remote-gate-firewall.sh" detect 2>/dev/null)" || fail "Unsupported firewall capability. Need fw4+nftables or fw3+iptables+ipset."
 case "$BACKEND" in
     fw4-nftables) printf 'Detected firewall backend: firewall4 / nftables\n' ;;
     fw3-iptables) printf 'Detected firewall backend: firewall3 / iptables + ipset\n' ;;
@@ -144,7 +168,8 @@ if [ -x /etc/init.d/cron ]; then /etc/init.d/cron restart >/dev/null 2>&1 || tru
 "$LIB_DIR/remote-gate-egress-probe.sh" >/dev/null 2>&1 || true
 "$LIB_DIR/remote-gate-agent.sh" report || true
 
-printf '\nWeiG Remote Gate OpenWrt components installed.\n'
+printf '\nWeiG Remote Gate OpenWrt-family components installed.\n'
+printf 'Platform: %s %s | package=%s | ABI=%s\n' "$DIST" "$RELEASE" "$PKG_MANAGER" "${PKG_ARCH:-unknown}"
 printf 'Firewall backend: %s\n' "$BACKEND"
 printf 'IPv6 Gate: auto (%s firewall capability)\n' "$IPV6_CAPABLE"
 printf 'Mapped Access: %s\n' "$([ "$MAPPER_AVAILABLE" = yes ] && printf 'available when NAT behavior permits UDP mapping' || printf 'unavailable until a compatible Remote Gate mapper binary is installed')"
@@ -154,6 +179,7 @@ printf 'The WAN has no HTTP/HTTPS listener from this project.\n'
 printf 'qBittorrent/BT port forwarding remains under the original firewall and is unaffected.\n'
 printf 'Safe update: %s/update.sh\n' "$LIB_DIR"
 printf 'Read-only audit: %s/remote-gate-audit.sh\n' "$LIB_DIR"
+printf 'Platform audit: %s summary\n' "$PLATFORM"
 printf 'Mapped Access status: %s/remote-gate-mapping.sh status-json\n' "$LIB_DIR"
 printf 'Optional WG home Internet egress: %s/remote-gate-wireguard-egress.sh status-json\n' "$LIB_DIR"
 printf 'Safe uninstall: %s/uninstall.sh --dry-run\n' "$LIB_DIR"
