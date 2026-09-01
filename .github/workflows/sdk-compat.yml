@@ -2,11 +2,6 @@ name: SDK Compatibility (manual)
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - dev
-    paths:
-      - '.github/workflows/sdk-compat.yml'
 
 permissions:
   contents: read
@@ -17,14 +12,18 @@ concurrency:
 
 jobs:
   sdk-build:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[sdk-1907-reverify]')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         sample:
           - openwrt-19.07.10-x86_64
+          - openwrt-21.02.7-x86_64
+          - openwrt-24.10.5-x86_64
+          - openwrt-25.12.5-x86_64
+          - immortalwrt-24.10.5-x86_64
     steps:
       - uses: actions/checkout@v4
 
