@@ -24,6 +24,7 @@ CONFIG_FILE="/etc/remote-gate.conf"
 STATE_DIR="/etc/remote-gate-state"
 INIT_FILE="/etc/init.d/remote-gate-agent"
 HOTPLUG_FILE="/etc/hotplug.d/iface/95-remote-gate"
+PLATFORM="$LIB_DIR/remote-gate-platform.sh"
 BACKUP_ROOT="/var/backups/weig-remote-gate"
 TMP_DIR="/tmp/remote-gate-update.$$"
 SUCCESS=0
@@ -35,11 +36,12 @@ info() { printf '==> %s\n' "$*"; }
 [ "$(id -u)" -eq 0 ] || fail "Run this updater as root."
 [ -d "$LIB_DIR" ] || fail "WeiG Remote Gate is not installed."
 [ -r "$CONFIG_FILE" ] || fail "Missing $CONFIG_FILE"
-for cmd in curl sh cp mv rm mkdir chmod date grep sed; do command -v "$cmd" >/dev/null 2>&1 || fail "Missing dependency: $cmd"; done
+for cmd in curl sh cp mv rm mkdir chmod date grep sed; do command -v "$cmd" >/dev/null 2>&1 || fail "Missing core dependency: $cmd"; done
+[ -r /etc/rc.common ] || fail "Missing OpenWrt rc.common service framework."
 
 mkdir -p "$TMP_DIR"
 trap 'rc=$?; if [ "$SUCCESS" -ne 1 ] && [ -n "$BACKUP" ] && [ -d "$BACKUP" ]; then
-    printf "\nUpdate failed; restoring previous OpenWrt Remote Gate files...\n" >&2
+    printf "\nUpdate failed; restoring previous OpenWrt-family Remote Gate files...\n" >&2
     [ -x "$INIT_FILE" ] && "$INIT_FILE" stop >/dev/null 2>&1 || true
     [ -x "$LIB_DIR/remote-gate-mapping.sh" ] && "$LIB_DIR/remote-gate-mapping.sh" stop-all >/dev/null 2>&1 || true
     if [ "$NEW_FILES_INSTALLED" -eq 1 ] && [ -x "$LIB_DIR/remote-gate-firewall.sh" ]; then "$LIB_DIR/remote-gate-firewall.sh" uninstall >/dev/null 2>&1 || true; fi
@@ -87,16 +89,21 @@ fetch() {
     fetch_repo_path "openwrt/${rel}" "$out"
 }
 
-FILES="remote-gate-report.sh remote-gate-agent.sh remote-gate-egress-probe.sh remote-gate-wireguard-egress.sh remote-gate-service-registry.sh remote-gate-mapping.sh remote-gate-firewall.sh remote-gate-firewall-backends.sh remote-gate-wireguard-verify.sh remote-gate-firewall-include.sh remote-gate-audit.sh remote-gate-agent.init remote-gate-hotplug.sh uninstall.sh update.sh"
-info "Downloading OpenWrt update."
+FILES="remote-gate-platform.sh remote-gate-report.sh remote-gate-agent.sh remote-gate-egress-probe.sh remote-gate-wireguard-egress.sh remote-gate-service-registry.sh remote-gate-mapping.sh remote-gate-firewall.sh remote-gate-firewall-backends.sh remote-gate-wireguard-verify.sh remote-gate-firewall-include.sh remote-gate-audit.sh remote-gate-agent.init remote-gate-hotplug.sh uninstall.sh update.sh"
+info "Downloading OpenWrt-family update."
 for rel in $FILES; do fetch "$rel" "$TMP_DIR/$rel"; done
 fetch_repo_path "VERSION" "$TMP_DIR/VERSION"
 for rel in $FILES; do sh -n "$TMP_DIR/$rel" || fail "Shell syntax check failed: $rel"; done
 
+# Validate the target platform with the newly downloaded capability helper.
+sh "$TMP_DIR/remote-gate-platform.sh" core-capable || fail "Required OpenWrt-family core runtime capabilities are unavailable."
+init_system="$(sh "$TMP_DIR/remote-gate-platform.sh" init 2>/dev/null || printf unknown)"
+[ "$init_system" = procd ] || fail "Remote Gate currently requires OpenWrt procd service management; detected: $init_system"
+
 remote_version="$(sed -n '1p' "$TMP_DIR/VERSION")"
 local_version="$(cat "$LIB_DIR/VERSION" 2>/dev/null || echo unknown)"
 if [ "$remote_version" = "$local_version" ] && [ "${FORCE:-0}" != "1" ]; then
-    printf 'WeiG Remote Gate is already up to date (%s).\n' "$local_version"; SUCCESS=1; trap - EXIT INT TERM; rm -rf "$TMP_DIR"; exit 0
+    printf 'WeiG Remote Gate is already up to date (%s). Use FORCE=1 for a same-version development refresh.\n' "$local_version"; SUCCESS=1; trap - EXIT INT TERM; rm -rf "$TMP_DIR"; exit 0
 fi
 
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"; BACKUP="$BACKUP_ROOT/$stamp"
@@ -115,14 +122,15 @@ chmod -R go-rwx "$BACKUP"; info "Backup created: $BACKUP"
 [ -x "$INIT_FILE" ] && "$INIT_FILE" stop >/dev/null 2>&1 || true
 [ -x "$LIB_DIR/remote-gate-mapping.sh" ] && "$LIB_DIR/remote-gate-mapping.sh" stop-all >/dev/null 2>&1 || true
 mkdir -p "$LIB_DIR" "$(dirname "$HOTPLUG_FILE")" "$STATE_DIR"
-for rel in remote-gate-report.sh remote-gate-agent.sh remote-gate-egress-probe.sh remote-gate-wireguard-egress.sh remote-gate-service-registry.sh remote-gate-mapping.sh remote-gate-firewall.sh remote-gate-firewall-backends.sh remote-gate-wireguard-verify.sh remote-gate-firewall-include.sh remote-gate-audit.sh uninstall.sh update.sh; do cp "$TMP_DIR/$rel" "$LIB_DIR/$rel"; done
+for rel in remote-gate-platform.sh remote-gate-report.sh remote-gate-agent.sh remote-gate-egress-probe.sh remote-gate-wireguard-egress.sh remote-gate-service-registry.sh remote-gate-mapping.sh remote-gate-firewall.sh remote-gate-firewall-backends.sh remote-gate-wireguard-verify.sh remote-gate-firewall-include.sh remote-gate-audit.sh uninstall.sh update.sh; do cp "$TMP_DIR/$rel" "$LIB_DIR/$rel"; done
 cp "$TMP_DIR/remote-gate-agent.init" "$INIT_FILE"
 cp "$TMP_DIR/remote-gate-hotplug.sh" "$HOTPLUG_FILE"
 cp "$TMP_DIR/VERSION" "$LIB_DIR/VERSION"
 chmod 0755 "$LIB_DIR"/*.sh "$INIT_FILE" "$HOTPLUG_FILE"; chmod 0644 "$LIB_DIR/VERSION"; NEW_FILES_INSTALLED=1
 
-# Preserve an already installed compatible mapper binary. A locally supplied
-# replacement is accepted explicitly; the updater never requires a compiler.
+# Preserve an already installed mapper binary. An explicitly supplied
+# replacement is accepted; automatic artifact selection must use exact Package
+# ABI from remote-gate-platform.sh and is never guessed from uname -m.
 MAPPER_SOURCE="${REMOTE_GATE_MAPPER_SOURCE:-}"
 if [ -n "$MAPPER_SOURCE" ] && [ -f "$MAPPER_SOURCE" ] && [ -x "$MAPPER_SOURCE" ]; then
     cp "$MAPPER_SOURCE" "$LIB_DIR/remote-gate-mapper"
@@ -156,8 +164,14 @@ printf '%s\n' "$status" | grep -q '"ready":true' || fail "Firewall self-check di
 "$INIT_FILE" start || fail "Remote Gate agent failed to start."
 "$LIB_DIR/remote-gate-egress-probe.sh" >/dev/null 2>&1 || true
 
+DIST="$("$PLATFORM" distribution 2>/dev/null || printf unknown)"
+RELEASE="$("$PLATFORM" release 2>/dev/null || printf unknown)"
+PKG_MANAGER="$("$PLATFORM" package-manager 2>/dev/null || printf none)"
+PKG_ARCH="$("$PLATFORM" package-arch 2>/dev/null || true)"
+
 SUCCESS=1; trap - EXIT INT TERM; rm -rf "$TMP_DIR"
-printf 'WeiG Remote Gate OpenWrt updated: %s -> %s\n' "$local_version" "$remote_version"
+printf 'WeiG Remote Gate OpenWrt-family updated: %s -> %s\n' "$local_version" "$remote_version"
+printf 'Platform: %s %s | package=%s | ABI=%s\n' "$DIST" "$RELEASE" "$PKG_MANAGER" "${PKG_ARCH:-unknown}"
 printf 'Backup: %s\n' "$BACKUP"
 printf 'IPv6 Gate mode: %s\n' "$(sed -n "s/^GATE_IPV6='\([^']*\)'/\1/p" "$CONFIG_FILE" | sed -n '1p')"
 if [ -x "$LIB_DIR/remote-gate-mapper" ]; then
@@ -168,4 +182,5 @@ fi
 printf 'Private/CGNAT WAN IPv4 egress probe: enabled\n'
 printf 'Optional WG home Internet egress: runtime only, reboot returns it to OFF\n'
 printf 'Read-only audit: %s/remote-gate-audit.sh\n' "$LIB_DIR"
+printf 'Platform audit: %s summary\n' "$PLATFORM"
 printf 'WireGuard configuration was preserved.\n'
