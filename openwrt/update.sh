@@ -89,7 +89,7 @@ fetch() {
     fetch_repo_path "openwrt/${rel}" "$out"
 }
 
-FILES="remote-gate-platform.sh remote-gate-report.sh remote-gate-agent.sh remote-gate-egress-probe.sh remote-gate-wireguard-egress.sh remote-gate-service-registry.sh remote-gate-mapping.sh remote-gate-firewall.sh remote-gate-firewall-backends.sh remote-gate-wireguard-verify.sh remote-gate-firewall-include.sh remote-gate-audit.sh remote-gate-agent.init remote-gate-hotplug.sh uninstall.sh update.sh"
+FILES="remote-gate-platform.sh remote-gate-report.sh remote-gate-agent.sh remote-gate-egress-probe.sh remote-gate-wireguard-egress.sh remote-gate-service-registry.sh remote-gate-mapping.sh remote-gate-mapper-install.sh remote-gate-firewall.sh remote-gate-firewall-backends.sh remote-gate-wireguard-verify.sh remote-gate-firewall-include.sh remote-gate-audit.sh remote-gate-agent.init remote-gate-hotplug.sh uninstall.sh update.sh"
 info "Downloading OpenWrt-family update."
 for rel in $FILES; do fetch "$rel" "$TMP_DIR/$rel"; done
 fetch_repo_path "VERSION" "$TMP_DIR/VERSION"
@@ -125,19 +125,29 @@ chmod -R go-rwx "$BACKUP"; info "Backup created: $BACKUP"
 [ -x "$INIT_FILE" ] && "$INIT_FILE" stop >/dev/null 2>&1 || true
 [ -x "$LIB_DIR/remote-gate-mapping.sh" ] && "$LIB_DIR/remote-gate-mapping.sh" stop-all >/dev/null 2>&1 || true
 mkdir -p "$LIB_DIR" "$(dirname "$HOTPLUG_FILE")" "$STATE_DIR"
-for rel in remote-gate-platform.sh remote-gate-report.sh remote-gate-agent.sh remote-gate-egress-probe.sh remote-gate-wireguard-egress.sh remote-gate-service-registry.sh remote-gate-mapping.sh remote-gate-firewall.sh remote-gate-firewall-backends.sh remote-gate-wireguard-verify.sh remote-gate-firewall-include.sh remote-gate-audit.sh uninstall.sh update.sh; do cp "$TMP_DIR/$rel" "$LIB_DIR/$rel"; done
+for rel in remote-gate-platform.sh remote-gate-report.sh remote-gate-agent.sh remote-gate-egress-probe.sh remote-gate-wireguard-egress.sh remote-gate-service-registry.sh remote-gate-mapping.sh remote-gate-mapper-install.sh remote-gate-firewall.sh remote-gate-firewall-backends.sh remote-gate-wireguard-verify.sh remote-gate-firewall-include.sh remote-gate-audit.sh uninstall.sh update.sh; do cp "$TMP_DIR/$rel" "$LIB_DIR/$rel"; done
 cp "$TMP_DIR/remote-gate-agent.init" "$INIT_FILE"
 cp "$TMP_DIR/remote-gate-hotplug.sh" "$HOTPLUG_FILE"
 cp "$TMP_DIR/VERSION" "$LIB_DIR/VERSION"
 chmod 0755 "$LIB_DIR"/*.sh "$INIT_FILE" "$HOTPLUG_FILE"; chmod 0644 "$LIB_DIR/VERSION"; NEW_FILES_INSTALLED=1
 
-# Preserve an already installed mapper binary. An explicitly supplied
-# replacement is accepted; automatic artifact selection must use exact Package
-# ABI from remote-gate-platform.sh and is never guessed from uname -m.
+# Prefer an explicitly supplied mapper during development/recovery. Otherwise
+# try the immutable GitHub Release manifest for the new VERSION. Failure is
+# non-fatal and never overwrites a previously working mapper.
 MAPPER_SOURCE="${REMOTE_GATE_MAPPER_SOURCE:-}"
-if [ -n "$MAPPER_SOURCE" ] && [ -f "$MAPPER_SOURCE" ] && [ -x "$MAPPER_SOURCE" ]; then
-    cp "$MAPPER_SOURCE" "$LIB_DIR/remote-gate-mapper"
-    chmod 0755 "$LIB_DIR/remote-gate-mapper"
+if [ -n "$MAPPER_SOURCE" ]; then
+    sh "$LIB_DIR/remote-gate-mapper-install.sh" install-local "$MAPPER_SOURCE" || fail "Explicit mapper binary failed validation."
+else
+    if sh "$LIB_DIR/remote-gate-mapper-install.sh" install-release; then
+        info "Released mapper installed for the exact Package ABI."
+    else
+        mapper_rc=$?
+        if [ "$mapper_rc" -eq 3 ]; then
+            printf 'WARN: No released mapper is available for this exact Package ABI; existing mapper, if any, was preserved.\n' >&2
+        else
+            printf 'WARN: Released mapper validation failed; existing mapper, if any, was preserved.\n' >&2
+        fi
+    fi
 fi
 
 append_default() { key="$1" value="$2"; grep -Eq "^${key}=" "$CONFIG_FILE" 2>/dev/null || printf "%s='%s'\n" "$key" "$value" >> "$CONFIG_FILE"; }
@@ -178,8 +188,10 @@ printf 'WeiG Remote Gate OpenWrt-family updated: %s -> %s\n' "$local_version" "$
 printf 'Platform: %s %s | service=%s | package=%s | ABI=%s\n' "$DIST" "$RELEASE" "$INIT_SYSTEM" "$PKG_MANAGER" "${PKG_ARCH:-unknown}"
 printf 'Backup: %s\n' "$BACKUP"
 printf 'IPv6 Gate mode: %s\n' "$(sed -n "s/^GATE_IPV6='\([^']*\)'/\1/p" "$CONFIG_FILE" | sed -n '1p')"
-if [ -x "$LIB_DIR/remote-gate-mapper" ]; then
-    printf 'Mapped Access: mapper binary available; activation still depends on compatible NAT behavior\n'
+if sh "$LIB_DIR/remote-gate-mapper-install.sh" current >/dev/null 2>&1; then
+    printf 'Mapped Access: mapper binary matches current VERSION and exact Package ABI\n'
+elif [ -x "$LIB_DIR/remote-gate-mapper" ]; then
+    printf 'Mapped Access: mapper binary is present but delivery metadata is not current; validate before relying on mapping\n'
 else
     printf 'Mapped Access: mapper binary unavailable; Direct/IPv6/Gate features remain enabled\n'
 fi
@@ -187,4 +199,5 @@ printf 'Private/CGNAT WAN IPv4 egress probe: enabled\n'
 printf 'Optional WG home Internet egress: runtime only, reboot returns it to OFF\n'
 printf 'Read-only audit: %s/remote-gate-audit.sh\n' "$LIB_DIR"
 printf 'Platform audit: %s summary\n' "$PLATFORM"
+printf 'Mapper delivery audit: %s/remote-gate-mapper-install.sh status-json\n' "$LIB_DIR"
 printf 'WireGuard configuration was preserved.\n'

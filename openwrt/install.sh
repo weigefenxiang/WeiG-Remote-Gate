@@ -64,6 +64,7 @@ fetch_file "remote-gate-egress-probe.sh" "$LIB_DIR/remote-gate-egress-probe.sh"
 fetch_file "remote-gate-wireguard-egress.sh" "$LIB_DIR/remote-gate-wireguard-egress.sh"
 fetch_file "remote-gate-service-registry.sh" "$LIB_DIR/remote-gate-service-registry.sh"
 fetch_file "remote-gate-mapping.sh" "$LIB_DIR/remote-gate-mapping.sh"
+fetch_file "remote-gate-mapper-install.sh" "$LIB_DIR/remote-gate-mapper-install.sh"
 fetch_file "remote-gate-firewall.sh" "$LIB_DIR/remote-gate-firewall.sh"
 fetch_file "remote-gate-firewall-backends.sh" "$LIB_DIR/remote-gate-firewall-backends.sh"
 fetch_file "remote-gate-wireguard-verify.sh" "$LIB_DIR/remote-gate-wireguard-verify.sh"
@@ -99,22 +100,36 @@ printf 'Package ABI: %s\n' "${PKG_ARCH:-unknown}"
 printf 'Kernel machine: %s\n' "$KERNEL_ARCH"
 printf 'libc: %s\n' "$LIBC_FAMILY"
 
-# A router compiler is never required. A prebuilt mapper may be supplied
-# explicitly or shipped beside a local source checkout/package. Selection by
-# kernel machine alone is forbidden; automatic artifact delivery uses the
-# exact package ABI reported by remote-gate-platform.sh.
-MAPPER_SOURCE="${REMOTE_GATE_MAPPER_SOURCE:-$SCRIPT_DIR/../native/remote-gate-mapper}"
-if [ -f "$MAPPER_SOURCE" ] && [ -x "$MAPPER_SOURCE" ]; then
-    cp "$MAPPER_SOURCE" "$LIB_DIR/remote-gate-mapper"
-    chmod 0755 "$LIB_DIR/remote-gate-mapper"
-fi
-
 if [ -f "$SCRIPT_DIR/../VERSION" ]; then
     cp "$SCRIPT_DIR/../VERSION" "$LIB_DIR/VERSION"
 else
     curl -fsSL "$RAW_BASE/VERSION" -o "$LIB_DIR/VERSION"
 fi
 chmod 0644 "$LIB_DIR/VERSION"
+
+# The router never compiles the mapper. An explicit/local mapper is target-
+# smoke-tested and recorded as local; otherwise only a published Release asset
+# selected by exact Package ABI and verified by SHA-256 is accepted. Failure to
+# obtain a released mapper is non-fatal: Direct/Gate remain available.
+MAPPER_INSTALLER="$LIB_DIR/remote-gate-mapper-install.sh"
+MAPPER_EXPLICIT_SOURCE="${REMOTE_GATE_MAPPER_SOURCE:-}"
+MAPPER_LOCAL_SOURCE="$SCRIPT_DIR/../native/remote-gate-mapper"
+if [ -n "$MAPPER_EXPLICIT_SOURCE" ]; then
+    sh "$MAPPER_INSTALLER" install-local "$MAPPER_EXPLICIT_SOURCE" || fail "Explicit mapper binary failed validation."
+elif [ -f "$MAPPER_LOCAL_SOURCE" ] && [ -x "$MAPPER_LOCAL_SOURCE" ]; then
+    sh "$MAPPER_INSTALLER" install-local "$MAPPER_LOCAL_SOURCE" || fail "Local mapper binary failed validation."
+else
+    if sh "$MAPPER_INSTALLER" install-release; then
+        :
+    else
+        mapper_rc=$?
+        if [ "$mapper_rc" -eq 3 ]; then
+            printf 'WARN: No released mapper is available for this exact Package ABI; Mapped Access stays unavailable.\n' >&2
+        else
+            printf 'WARN: Released mapper validation failed; Mapped Access stays unavailable.\n' >&2
+        fi
+    fi
+fi
 
 BACKEND="$("$LIB_DIR/remote-gate-firewall.sh" detect 2>/dev/null)" || fail "Unsupported firewall capability. Need fw4+nftables or fw3+iptables+ipset."
 case "$BACKEND" in
@@ -176,7 +191,7 @@ printf '\nWeiG Remote Gate OpenWrt-family components installed.\n'
 printf 'Platform: %s %s | service=%s | package=%s | ABI=%s\n' "$DIST" "$RELEASE" "$INIT_SYSTEM" "$PKG_MANAGER" "${PKG_ARCH:-unknown}"
 printf 'Firewall backend: %s\n' "$BACKEND"
 printf 'IPv6 Gate: auto (%s firewall capability)\n' "$IPV6_CAPABLE"
-printf 'Mapped Access: %s\n' "$([ "$MAPPER_AVAILABLE" = yes ] && printf 'available when NAT behavior permits UDP mapping' || printf 'unavailable until a compatible Remote Gate mapper binary is installed')"
+printf 'Mapped Access: %s\n' "$([ "$MAPPER_AVAILABLE" = yes ] && printf 'available when NAT behavior permits UDP mapping' || printf 'unavailable until a compatible Remote Gate mapper binary is released')"
 printf 'Control transport: automatic IPv4/IPv6 Multi-WAN health fallback\n'
 printf 'Private/CGNAT WAN IPv4 egress: best-effort per-WAN probe enabled\n'
 printf 'The WAN has no HTTP/HTTPS listener from this project.\n'
@@ -184,6 +199,7 @@ printf 'qBittorrent/BT port forwarding remains under the original firewall and i
 printf 'Safe update: %s/update.sh\n' "$LIB_DIR"
 printf 'Read-only audit: %s/remote-gate-audit.sh\n' "$LIB_DIR"
 printf 'Platform audit: %s summary\n' "$PLATFORM"
+printf 'Mapper delivery audit: %s/remote-gate-mapper-install.sh status-json\n' "$LIB_DIR"
 printf 'Mapped Access status: %s/remote-gate-mapping.sh status-json\n' "$LIB_DIR"
 printf 'Optional WG home Internet egress: %s/remote-gate-wireguard-egress.sh status-json\n' "$LIB_DIR"
 printf 'Safe uninstall: %s/uninstall.sh --dry-run\n' "$LIB_DIR"

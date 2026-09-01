@@ -1,0 +1,90 @@
+name: Mapper Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify stable release contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '\r\n' < VERSION)"
+          test "$GITHUB_REF_NAME" = "v$version"
+          git fetch origin main --depth=1
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
+
+      - name: Install verified Zig 0.16.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz -o /tmp/zig.tar.xz
+          echo '70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00  /tmp/zig.tar.xz' | sha256sum -c -
+          mkdir -p .zig
+          tar -xJf /tmp/zig.tar.xz --strip-components=1 -C .zig
+
+      - name: Install QEMU user emulation
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-user file
+
+      - name: Build and smoke all portable mapper classes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p native/dist
+          while IFS=$'\t' read -r class target cflags validation; do
+            [[ -n "$class" && "$class" != \#* ]] || continue
+            [[ "$validation" == cross-build ]] || continue
+            ZIG="$PWD/.zig/zig" OUT_DIR="$PWD/native/dist" sh native/build-portable.sh "$class"
+            sh native/smoke-portable.sh "$class" "native/dist/remote-gate-mapper-$class"
+          done < native/mapper-build-classes.tsv
+
+      - name: Build exact-ABI release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          REMOTE_GATE_RELEASE_COMMIT="$(git rev-parse HEAD)" \
+            sh native/build-release-assets.sh "$PWD/native/dist" "$PWD/native/release"
+
+      - name: Publish complete release atomically
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          version="$(tr -d '\r\n' < VERSION)"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "release already exists and will not be overwritten: $tag" >&2
+            exit 1
+          fi
+          created=0
+          cleanup() {
+            if [[ "$created" -eq 1 ]]; then
+              gh release delete "$tag" --yes >/dev/null 2>&1 || true
+            fi
+          }
+          trap cleanup EXIT
+          gh release create "$tag" --verify-tag --draft --title "WeiG Remote Gate $version" \
+            --notes "Verified Remote Gate mapper binaries. Installers select only exact Package ABI entries from the signed-by-release SHA-256 manifest."
+          created=1
+          for asset in native/release/remote-gate-mapper-*; do
+            [[ "$(basename "$asset")" == remote-gate-mapper-manifest.tsv ]] && continue
+            gh release upload "$tag" "$asset"
+          done
+          gh release upload "$tag" native/release/remote-gate-mapper-manifest.tsv
+          gh release edit "$tag" --draft=false --latest=false
+          created=0
+          trap - EXIT
