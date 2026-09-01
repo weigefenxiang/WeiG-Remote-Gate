@@ -110,7 +110,8 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
         self.assertIn('REMOTE_GATE_SDK_LINK_FLAGS="$sdk_link_flags"', RUNNER)
         self.assertIn('$(REMOTE_GATE_SDK_LINK_FLAGS)', PACKAGE)
         self.assertNotIn('--build-id=sha1', PACKAGE)
-        self.assertNotIn('--build-id=sha1', BUILDER)
+        self.assertEqual(BUILDER.count("'-Wl,--build-id=sha1'"), 1)
+        self.assertIn('REMOTE_GATE_SDK_LINK_FLAGS is restricted to the legacy SDK path', BUILDER)
 
 
 if __name__ == "__main__":
