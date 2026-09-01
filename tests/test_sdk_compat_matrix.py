@@ -27,7 +27,7 @@ def rows(path: Path, columns: int):
 class SdkCompatibilityMatrixTests(unittest.TestCase):
     def test_matrix_is_exact_and_trusted(self):
         entries = rows(MATRIX, 8)
-        self.assertGreaterEqual(len(entries), 10)
+        self.assertGreaterEqual(len(entries), 11)
         ids = [entry[0] for entry in entries]
         self.assertEqual(len(ids), len(set(ids)))
         known_abis = {entry[0] for entry in rows(ABI_MAP, 3)}
@@ -51,6 +51,7 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
         expected = {
             "lede-17.01.7-x86_64",
             "openwrt-19.07.9-armvirt-64",
+            "openwrt-19.07.9-x86_64",
             "openwrt-19.07.10-x86_64",
             "openwrt-19.07.10-x86-geode",
             "openwrt-19.07.10-ramips-mt76x8",
@@ -71,6 +72,7 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
     def test_sdk_workflow_is_manual_and_keeps_samples_for_later(self):
         for sample in (
             "openwrt-19.07.9-armvirt-64",
+            "openwrt-19.07.9-x86_64",
             "openwrt-19.07.10-x86_64",
             "openwrt-19.07.10-x86-geode",
             "openwrt-19.07.10-ramips-mt76x8",
