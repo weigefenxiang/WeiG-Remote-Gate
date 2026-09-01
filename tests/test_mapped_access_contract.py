@@ -10,6 +10,7 @@ MAPPING = (ROOT / "openwrt" / "remote-gate-mapping.sh").read_text(encoding="utf-
 REGISTRY = (ROOT / "openwrt" / "remote-gate-service-registry.sh").read_text(encoding="utf-8")
 APP = (ROOT / "server" / "app" / "static" / "js" / "app.js").read_text(encoding="utf-8")
 BOOTSTRAP = (ROOT / "server" / "app" / "static" / "js" / "theme-bootstrap.js").read_text(encoding="utf-8")
+DASHBOARD_CSS = (ROOT / "server" / "app" / "static" / "css" / "dashboard.css").read_text(encoding="utf-8")
 MAPPER = (ROOT / "native" / "remote-gate-mapper.c").read_text(encoding="utf-8")
 
 
@@ -95,29 +96,46 @@ class MappedAccessContractTests(unittest.TestCase):
         self.assertIn('Endpoint 在 Activate 后确认', BOOTSTRAP)
         self.assertIn('Endpoint resolved after Activate', BOOTSTRAP)
 
-    def test_active_mapped_endpoint_is_from_agent_ack_and_copyable(self):
-        self.assertIn('mappedEndpointFromDashboard', BOOTSTRAP)
+    def test_current_mapped_endpoint_prefers_live_inventory_and_is_copyable(self):
+        self.assertIn('function mappedEndpointFromDashboard(data)', BOOTSTRAP)
+        self.assertIn('inventory?.mappings', BOOTSTRAP)
+        self.assertIn('Number(b.observed_at || 0) - Number(a.observed_at || 0)', BOOTSTRAP)
         self.assertIn('mapped-endpoint:', BOOTSTRAP)
         self.assertIn('当前 WireGuard 公网 Endpoint', BOOTSTRAP)
         self.assertIn('Current WireGuard Public Endpoint', BOOTSTRAP)
-        self.assertIn('由 OpenWrt 在 Activate 时实时确认', BOOTSTRAP)
+        self.assertIn('OpenWrt 持续观测，Activate 时实时确认', BOOTSTRAP)
         self.assertIn('navigator.clipboard.writeText(text)', BOOTSTRAP)
         self.assertIn('copyFallback(text)', BOOTSTRAP)
         self.assertIn('RemoteGateFeedback?.notify', BOOTSTRAP)
-        self.assertIn('点击复制', BOOTSTRAP)
+        self.assertNotIn('data-mapped-copy-hint', BOOTSTRAP)
+        self.assertNotIn("textContent = zh() ? '点击复制'", BOOTSTRAP)
 
-    def test_gate_orb_contains_only_short_state_and_mobile_stacks_status(self):
-        self.assertIn('function polishGateStatusLayout()', BOOTSTRAP)
+    def test_gate_status_component_separates_orb_side_meta_and_endpoint(self):
+        self.assertIn('function ensureGateStatusStructure()', BOOTSTRAP)
         self.assertIn("shortState.id = 'gate-orb-state'", BOOTSTRAP)
+        self.assertIn("stage.className = 'gate-status-stage'", BOOTSTRAP)
+        self.assertIn("left.dataset.gateStatusSide = 'left'", BOOTSTRAP)
+        self.assertIn("right.dataset.gateStatusSide = 'right'", BOOTSTRAP)
+        self.assertIn("return zh() ? ['WAN 入口', '保持隐藏']", BOOTSTRAP)
         self.assertIn("copy.id = 'gate-status-copy'", BOOTSTRAP)
         self.assertIn('copy.append(state)', BOOTSTRAP)
         self.assertIn('copy.append(substate)', BOOTSTRAP)
         self.assertIn("if (state === 'open') return 'OPEN'", BOOTSTRAP)
         self.assertIn("if (state === 'authorizing') return 'WAIT'", BOOTSTRAP)
-        self.assertIn('@media (max-width: 767px)', BOOTSTRAP)
-        self.assertIn('grid-template-columns: 1fr !important', BOOTSTRAP)
-        self.assertIn('wrap.append(row)', BOOTSTRAP)
-        self.assertNotIn("substate.insertAdjacentElement('afterend', row)", BOOTSTRAP)
+        self.assertIn("row.className = 'verified-endpoint'", BOOTSTRAP)
+        self.assertNotIn('ensureGatePolishStyles', BOOTSTRAP)
+        self.assertNotIn('gate-orb-polish-styles', BOOTSTRAP)
+        self.assertNotIn("document.createElement('style')", BOOTSTRAP)
+
+    def test_verified_endpoint_uses_shared_tokens_and_respects_reduced_motion(self):
+        self.assertIn('.gate-status-stage', DASHBOARD_CSS)
+        self.assertIn('grid-template-areas: "left orb right"', DASHBOARD_CSS)
+        self.assertIn('.verified-endpoint-value', DASHBOARD_CSS)
+        self.assertIn('color: var(--success)', DASHBOARD_CSS)
+        self.assertIn('remote-gate-endpoint-verified', DASHBOARD_CSS)
+        self.assertIn('@media (prefers-reduced-motion: reduce)', DASHBOARD_CSS)
+        self.assertIn('@media (max-width: 767px)', DASHBOARD_CSS)
+        self.assertIn('grid-template-columns: 1fr;', DASHBOARD_CSS)
 
 
 if __name__ == "__main__":
