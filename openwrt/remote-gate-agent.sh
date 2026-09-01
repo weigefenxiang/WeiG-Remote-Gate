@@ -196,6 +196,11 @@ mapped_ingress_pairs() {
     "$MAPPING" ingress-pairs 2>/dev/null || true
 }
 
+mapped_control_pairs() {
+    [ -x "$MAPPING" ] || return 0
+    "$MAPPING" control-pairs 2>/dev/null || true
+}
+
 ipv6_firewall_capable() {
     [ -x "$FIREWALL" ] || return 1
     "$FIREWALL" ipv6-capable >/dev/null 2>&1
@@ -236,7 +241,8 @@ sync_firewall_policy() {
     v6="$(v6_protected_devices | tr '\n' ' ')"
     wg_ports="$(wireguard_ports | tr '\n' ' ')"
     mapped_pairs="$(mapped_ingress_pairs | tr '\n' ' ')"
-    "$FIREWALL" sync "$v4" "$v6" "$wg_ports" "$mapped_pairs" >/dev/null 2>&1 || {
+    mapped_control="$(mapped_control_pairs | tr '\n' ' ')"
+    "$FIREWALL" sync "$v4" "$v6" "$wg_ports" "$mapped_pairs" "$mapped_control" >/dev/null 2>&1 || {
         logger -t "$TAG" "firewall policy sync failed" 2>/dev/null || true
         return 1
     }
@@ -344,7 +350,7 @@ control_candidates() {
         if [ -f "$base.v6" ] && [ -f "$base.def6" ]; then
             has6=0
             while IFS= read -r a; do is_global_ipv6 "$a" && has6=1; done < "$base.v6"
-            [ "$has6" -eq 1 ] && printf '20|ipv6|%s\n' "$dev" >> "$tmp"
+            [ "$has6" -eq 1 ] && printf '20|ipv6|%s\n' "$rank" "$dev" >> "$tmp"
         fi
     done
 
