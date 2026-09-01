@@ -58,13 +58,20 @@ case "$family" in
         ;;
 esac
 
-# OpenWrt 19.07's SDK prerequisite gate still requires Python 2, which is no
-# longer provided by the Ubuntu 24 GitHub runner. The Remote Gate package is a
-# self-contained C build and does not use Python, so only this pinned sample is
-# allowed to bypass that obsolete host prerequisite. All other SDKs stay strict.
+# OpenWrt 19.07 has two pinned legacy SDK quirks on current hosts:
+# 1. its prerequisite gate still requires Python 2 even though this package is
+#    a self-contained C build; and
+# 2. its old static musl/binutils combination can omit the initial PT_LOAD when
+#    no build-id note is emitted, leaving musl without a usable AT_PHDR mapping
+#    and crashing in static_init_tls before main(). Keep both workarounds scoped
+#    to this exact compatibility sample. All other SDKs stay strict/default.
 sdk_force_prereq=0
+sdk_link_flags=''
 case "$sample" in
-    openwrt-19.07.10-x86_64) sdk_force_prereq=1 ;;
+    openwrt-19.07.10-x86_64)
+        sdk_force_prereq=1
+        sdk_link_flags='-Wl,--build-id=sha1'
+        ;;
 esac
 
 for cmd in curl sha256sum tar file; do
@@ -88,7 +95,9 @@ case "$archive" in
     zst) tar --zstd -xf "$archive_file" --strip-components=1 -C "$sdk_root" ;;
 esac
 
-REMOTE_GATE_SDK_FORCE_PREREQ="$sdk_force_prereq" sh "$BUILDER" "$sdk_root" "$abi" "$OUT_DIR"
+REMOTE_GATE_SDK_FORCE_PREREQ="$sdk_force_prereq" \
+REMOTE_GATE_SDK_LINK_FLAGS="$sdk_link_flags" \
+    sh "$BUILDER" "$sdk_root" "$abi" "$OUT_DIR"
 binary="$OUT_DIR/remote-gate-mapper-$abi"
 [ -x "$binary" ] || { echo "SDK runner did not produce expected mapper: $binary" >&2; exit 1; }
 
