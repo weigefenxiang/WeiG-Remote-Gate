@@ -6,6 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MATRIX = ROOT / "native" / "sdk-compat-matrix.tsv"
 ABI_MAP = ROOT / "native" / "mapper-abi-map.tsv"
 RUNNER = (ROOT / "native" / "run-sdk-compat.sh").read_text(encoding="utf-8")
+BUILDER = (ROOT / "native" / "build-openwrt-sdk.sh").read_text(encoding="utf-8")
 MAIN_CI = (ROOT / ".github" / "workflows" / "v030-ci.yml").read_text(encoding="utf-8")
 SDK_CI = (ROOT / ".github" / "workflows" / "sdk-compat.yml").read_text(encoding="utf-8")
 
@@ -84,6 +85,15 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
         self.assertNotIn('[ -x "$BUILDER" ]', RUNNER)
         self.assertIn('sh "$BUILDER"', RUNNER)
         self.assertNotIn("eval ", RUNNER)
+
+    def test_python2_prerequisite_override_is_narrowly_scoped_to_openwrt_1907(self):
+        self.assertIn('openwrt-19.07.10-x86_64) sdk_force_prereq=1', RUNNER)
+        self.assertIn('sdk_force_prereq=0', RUNNER)
+        self.assertIn('REMOTE_GATE_SDK_FORCE_PREREQ="$sdk_force_prereq" sh "$BUILDER"', RUNNER)
+        self.assertIn('SDK_FORCE_PREREQ="${REMOTE_GATE_SDK_FORCE_PREREQ:-0}"', BUILDER)
+        self.assertIn('case "$SDK_FORCE_PREREQ" in 0|1)', BUILDER)
+        self.assertIn('FORCE=1 make defconfig', BUILDER)
+        self.assertIn('FORCE=1 make package/weig-remote-gate-mapper/compile V=s -j1', BUILDER)
 
 
 if __name__ == "__main__":
