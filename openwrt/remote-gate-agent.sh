@@ -191,11 +191,9 @@ sync_mapping_prepare() {
     fi
 }
 
-registered_ingress_ports() {
-    {
-        wireguard_ports
-        if [ -x "$MAPPING" ]; then "$MAPPING" ingress-ports 2>/dev/null || true; fi
-    } | sort -nu
+mapped_ingress_pairs() {
+    [ -x "$MAPPING" ] || return 0
+    "$MAPPING" ingress-pairs 2>/dev/null || true
 }
 
 ipv6_firewall_capable() {
@@ -236,8 +234,9 @@ sync_firewall_policy() {
     sync_mapping_prepare
     v4="$(v4_protected_devices | tr '\n' ' ')"
     v6="$(v6_protected_devices | tr '\n' ' ')"
-    ports="$(registered_ingress_ports | tr '\n' ' ')"
-    "$FIREWALL" sync "$v4" "$v6" "$ports" >/dev/null 2>&1 || {
+    wg_ports="$(wireguard_ports | tr '\n' ' ')"
+    mapped_pairs="$(mapped_ingress_pairs | tr '\n' ' ')"
+    "$FIREWALL" sync "$v4" "$v6" "$wg_ports" "$mapped_pairs" >/dev/null 2>&1 || {
         logger -t "$TAG" "firewall policy sync failed" 2>/dev/null || true
         return 1
     }
@@ -497,7 +496,7 @@ egress_json() {
 }
 
 post_status() {
-    fw="$("$FIREWALL" status-json 2>/dev/null || printf '{"backend":"unsupported","ready":false,"active":false,"source_ip":"","device":"","wg_port":0,"expires_in":0,"protected_devices_v4":0,"protected_devices_v6":0,"protected_ports":0}')"
+    fw="$("$FIREWALL" status-json 2>/dev/null || printf '{"backend":"unsupported","ready":false,"active":false,"source_ip":"","device":"","ingress_port":0,"wg_port":0,"expires_in":0,"protected_devices_v4":0,"protected_devices_v6":0,"protected_ports":0,"protected_mapped_ingress_v4":0}')"
     wg_json="$(wireguard_json)"
     egress="$(egress_json)"
     mapping="$(mapping_status_json)"
