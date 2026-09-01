@@ -650,3 +650,204 @@
     animation: none !important;
   }
 }
+
+/* Standardized GateStatusHero component: state, explanation and runtime
+ * endpoint are deliberately separate layers. Uses existing design tokens only. */
+.gate-layout {
+  grid-template-columns: minmax(300px, .82fr) minmax(0, 1.18fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+.gate-orb-wrap.gate-status-hero {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-3);
+}
+.gate-status-stage {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-areas: "left orb right";
+  align-items: center;
+  gap: var(--space-3);
+}
+.gate-status-stage .gate-orb { grid-area: orb; justify-self: center; }
+.gate-status-side {
+  min-width: 0;
+  color: var(--ink-subtle);
+  font-size: 11px;
+  font-weight: 720;
+  line-height: 1.35;
+  letter-spacing: .035em;
+}
+.gate-status-side--left { grid-area: left; text-align: right; }
+.gate-status-side--right { grid-area: right; text-align: left; }
+.gate-core .gate-orb-short-state {
+  margin-top: 5px;
+  max-width: 82px;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 760;
+  line-height: 1;
+  letter-spacing: .045em;
+  text-align: center;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.gate-status-copy {
+  width: min(100%, 430px);
+  min-width: 0;
+  text-align: center;
+}
+.gate-status-copy.is-redundant { display: none; }
+.gate-status-copy #gate-state {
+  display: block;
+  margin: 0;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 680;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.gate-status-copy #gate-substate {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--ink-subtle);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.verified-endpoint {
+  width: min(100%, 430px);
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+  text-align: center;
+}
+.verified-endpoint[hidden] { display: none !important; }
+.verified-endpoint-label,
+.verified-endpoint-note { display: block; }
+.verified-endpoint-label {
+  color: var(--ink-muted);
+  font-size: 11px;
+  font-weight: 680;
+  line-height: 1.35;
+}
+.verified-endpoint-value {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  min-width: 0;
+  margin: var(--space-2) 0 var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--success);
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: clamp(17px, 2vw, 22px);
+  font-weight: 780;
+  line-height: 1.2;
+  letter-spacing: -.025em;
+  overflow-wrap: anywhere;
+  text-align: center;
+  text-shadow: 0 0 16px color-mix(in srgb, var(--success) 22%, transparent);
+  transition: background .18s ease, border-color .18s ease, transform .18s ease, text-shadow .18s ease;
+}
+.verified-endpoint.is-current .verified-endpoint-value {
+  animation: remote-gate-endpoint-verified 3.4s ease-in-out infinite;
+}
+.verified-endpoint-note {
+  color: var(--ink-subtle);
+  font-size: 10px;
+  line-height: 1.4;
+}
+@keyframes remote-gate-endpoint-verified {
+  0%, 68%, 100% {
+    opacity: .9;
+    text-shadow: 0 0 14px color-mix(in srgb, var(--success) 18%, transparent);
+  }
+  82% {
+    opacity: 1;
+    text-shadow:
+      0 0 12px color-mix(in srgb, var(--success) 42%, transparent),
+      0 0 26px color-mix(in srgb, var(--success) 18%, transparent);
+  }
+}
+@media (hover:hover) and (pointer:fine) {
+  .verified-endpoint-value:hover {
+    border-color: color-mix(in srgb, var(--success) 24%, var(--hairline));
+    background: color-mix(in srgb, var(--surface-raised) 54%, transparent);
+    transform: translateY(-1px);
+    text-shadow: 0 0 20px color-mix(in srgb, var(--success) 34%, transparent);
+  }
+}
+@media (max-width: 1099px) {
+  .gate-layout {
+    grid-template-columns: minmax(270px, .75fr) minmax(0, 1.25fr);
+    gap: var(--space-4);
+  }
+  .gate-status-stage { gap: var(--space-2); }
+  .gate-status-side { font-size: 10px; }
+}
+@media (max-width: 767px) {
+  .gate-layout {
+    grid-template-columns: 1fr;
+    gap: var(--space-5);
+    align-items: start;
+  }
+  .gate-orb-wrap.gate-status-hero {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-height: 0;
+    padding: var(--space-1) 0 var(--space-2);
+  }
+  .gate-status-stage {
+    width: min(100%, 430px);
+    gap: var(--space-3);
+  }
+  .gate-status-side {
+    font-size: 11px;
+    line-height: 1.4;
+  }
+  .gate-status-copy #gate-state { font-size: 15px; }
+  .gate-status-copy #gate-substate { font-size: 11px; }
+  .verified-endpoint {
+    width: min(100%, 430px);
+    padding: var(--space-3) var(--space-2);
+  }
+  .verified-endpoint-label { font-size: 12px; }
+  .verified-endpoint-value {
+    margin-top: var(--space-2);
+    margin-bottom: var(--space-2);
+    padding: var(--space-2);
+    font-size: clamp(20px, 5.5vw, 26px);
+    overflow-wrap: normal;
+    word-break: normal;
+  }
+  .verified-endpoint-note { font-size: 11px; }
+}
+@media (max-width: 379px) {
+  .gate-status-stage {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "orb orb"
+      "left right";
+    row-gap: var(--space-2);
+  }
+  .gate-status-side--left { text-align: left; }
+  .gate-status-side--right { text-align: right; }
+  .verified-endpoint-value { font-size: clamp(18px, 5.4vw, 22px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .verified-endpoint.is-current .verified-endpoint-value { animation: none !important; }
+  .verified-endpoint-value { transition: none !important; }
+}
