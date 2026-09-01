@@ -15,6 +15,9 @@ on:
           - openwrt-24.10.5-x86_64
           - openwrt-25.12.5-x86_64
           - immortalwrt-24.10.5-x86_64
+  push:
+    branches:
+      - dev
 
 permissions:
   contents: read
@@ -25,6 +28,7 @@ concurrency:
 
 jobs:
   sdk-build:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.sample == 'openwrt-19.07.10-x86_64' && 'ubuntu-22.04' || 'ubuntu-latest' }}
     timeout-minutes: 45
     strategy:
@@ -52,6 +56,34 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: remote-gate-mapper-${{ matrix.sample }}-${{ github.sha }}
+          path: native/dist-sdk/remote-gate-mapper-x86_64
+          if-no-files-found: error
+          retention-days: 14
+
+  sdk-1907-ubuntu-latest-once:
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[sdk-1907-u24]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SDK archive tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xz-utils zstd file
+
+      - name: Build and smoke OpenWrt 19.07 SDK mapper
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh native/run-sdk-compat.sh "openwrt-19.07.10-x86_64" "$PWD/native/dist-sdk"
+
+      - name: Upload OpenWrt 19.07 SDK candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-gate-mapper-openwrt-19.07.10-ubuntu-latest-${{ github.sha }}
           path: native/dist-sdk/remote-gate-mapper-x86_64
           if-no-files-found: error
           retention-days: 14
