@@ -82,6 +82,44 @@ def egress_wan(store: JsonStore, name: str | None, mode: str = "ipv4") -> str:
     raise GateError("egress_wan_unavailable")
 
 
+def _egress_plan(
+    store: JsonStore,
+    *,
+    egress_name: str | None,
+    egress_names: dict[str, str] | None,
+    mode: str,
+) -> tuple[str, str, str, str]:
+    selected_mode = str(mode or "").strip()
+    if selected_mode not in ALLOWED_EGRESS_MODES:
+        raise GateError("invalid_egress_mode")
+
+    requested = egress_names if isinstance(egress_names, dict) else {}
+    if selected_mode == "dual" and requested:
+        raw4 = str(requested.get("ipv4") or "").strip()
+        raw6 = str(requested.get("ipv6") or "").strip()
+        if bool(raw4) != bool(raw6):
+            raise GateError("dual_egress_incomplete")
+        if not raw4:
+            return "", "", "", ""
+        selected4 = egress_wan(store, raw4, "ipv4")
+        selected6 = egress_wan(store, raw6, "ipv6")
+        legacy = selected4 if selected4 == selected6 else ""
+        return legacy, selected4, selected6, "dual"
+
+    if selected_mode == "dual":
+        shared = egress_wan(store, egress_name, "dual")
+        if not shared:
+            return "", "", "", ""
+        return shared, shared, shared, "dual"
+
+    if selected_mode == "ipv4":
+        selected4 = egress_wan(store, egress_name, "ipv4")
+        return selected4, selected4, "", "ipv4" if selected4 else ""
+
+    selected6 = egress_wan(store, egress_name, "ipv6")
+    return selected6, "", selected6, "ipv6" if selected6 else ""
+
+
 def wireguard_interface(store: JsonStore, name: str) -> dict[str, Any]:
     status = store.read("agent-status.json", {})
     interfaces = status.get("wireguard") if isinstance(status, dict) else None
@@ -161,6 +199,7 @@ def _activation_command(
     wan_name: str | None = None,
     wg_name: str | None = None,
     egress_name: str | None = None,
+    egress_names: dict[str, str] | None = None,
     egress_mode: str = "ipv4",
     batch_id: str = "",
     batch_index: int = 0,
@@ -172,9 +211,12 @@ def _activation_command(
         raise GateError("invalid_scope")
     if source_confidence not in {"verified", "observed", "candidate"}:
         raise GateError("invalid_source_confidence")
-    selected_mode = str(egress_mode or "ipv4")
-    selected_egress = egress_wan(store, egress_name, selected_mode)
-    command_egress_mode = selected_mode if selected_egress else ""
+    selected_egress, selected_egress4, selected_egress6, command_egress_mode = _egress_plan(
+        store,
+        egress_name=egress_name,
+        egress_names=egress_names,
+        mode=str(egress_mode or "ipv4"),
+    )
 
     if endpoint_id:
         endpoint = endpoint_by_id(store, endpoint_id)
@@ -218,7 +260,7 @@ def _activation_command(
             or endpoint.get("reachability") in {"private", "egress_probe"}
             or source_confidence == "candidate"
             or batch_count > 1
-            or bool(selected_egress)
+            or bool(selected_egress4 or selected_egress6)
         )
         if advanced and agent_schema < 2:
             raise GateError("agent_upgrade_required")
@@ -253,6 +295,8 @@ def _activation_command(
             "external_address": str(endpoint.get("external_address", "")),
             "external_port": int(endpoint.get("external_port", ingress_port)),
             "egress_wan": selected_egress,
+            "egress_wan_ipv4": selected_egress4,
+            "egress_wan_ipv6": selected_egress6,
             "egress_mode": command_egress_mode,
             "ttl": ttl,
             "state": "pending",
@@ -289,6 +333,8 @@ def _activation_command(
         "service_port": port,
         "wg_port": port,
         "egress_wan": selected_egress,
+        "egress_wan_ipv4": selected_egress4,
+        "egress_wan_ipv6": selected_egress6,
         "egress_mode": command_egress_mode,
         "ttl": ttl,
         "state": "pending",
@@ -336,6 +382,7 @@ def queue_activate_many(
     ttl: int,
     scope: str,
     egress_name: str | None = None,
+    egress_names: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     if not isinstance(requests, list) or not 1 <= len(requests) <= 2:
         raise GateError("invalid_families")
@@ -355,6 +402,7 @@ def queue_activate_many(
             scope=scope,
             ttl=ttl,
             egress_name=egress_name,
+            egress_names=egress_names,
             egress_mode=egress_mode,
             batch_id=batch_id,
             batch_index=index,
@@ -388,6 +436,8 @@ def _append_gate_request(store: JsonStore, command: dict[str, Any]) -> None:
             "access_method": command.get("access_method", "direct"),
             "wan": command.get("wan", ""),
             "egress_wan": command.get("egress_wan", ""),
+            "egress_wan_ipv4": command.get("egress_wan_ipv4", ""),
+            "egress_wan_ipv6": command.get("egress_wan_ipv6", ""),
             "egress_mode": command.get("egress_mode", ""),
             "service_id": command.get("service_id", ""),
             "wireguard": command.get("wireguard", ""),
