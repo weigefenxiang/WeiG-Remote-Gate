@@ -5,6 +5,7 @@ CONFIG_FILE="${REMOTE_GATE_CONFIG_FILE:-/etc/remote-gate.conf}"
 LIB_DIR="${REMOTE_GATE_LIB_DIR:-/usr/lib/remote-gate}"
 STATE_DIR="${REMOTE_GATE_MAPPING_STATE_DIR:-/tmp/remote-gate/mapping}"
 MAPPER_BIN="${REMOTE_GATE_MAPPER_BIN:-$LIB_DIR/remote-gate-mapper}"
+MAPPER_INSTALLER="${REMOTE_GATE_MAPPER_INSTALLER:-$LIB_DIR/remote-gate-mapper-install.sh}"
 SERVICES="${REMOTE_GATE_SERVICE_REGISTRY:-$LIB_DIR/remote-gate-service-registry.sh}"
 TAG="remote-gate-mapping"
 
@@ -46,7 +47,12 @@ is_public_ipv4() {
 }
 
 mapper_available() {
-    [ "$MAPPED_ACCESS" != "disabled" ] && [ -x "$MAPPER_BIN" ] && [ -x "$SERVICES" ] && command -v jsonfilter >/dev/null 2>&1
+    [ "$MAPPED_ACCESS" != "disabled" ] &&
+        [ -x "$MAPPER_BIN" ] &&
+        [ -r "$MAPPER_INSTALLER" ] &&
+        REMOTE_GATE_MAPPER_DEST="$MAPPER_BIN" sh "$MAPPER_INSTALLER" current >/dev/null 2>&1 &&
+        [ -x "$SERVICES" ] &&
+        command -v jsonfilter >/dev/null 2>&1
 }
 
 entry_key() {
@@ -301,7 +307,7 @@ status_json() {
         return 0
     fi
     if ! mapper_available; then
-        printf '{"available":false,"state":"unavailable","active_mappings":0,"detail":"mapper-binary-unavailable"}'
+        printf '{"available":false,"state":"unavailable","active_mappings":0,"detail":"mapper-integrity-unavailable"}'
         return 0
     fi
     active=0; prepared=0; failed=0
