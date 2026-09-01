@@ -2,6 +2,9 @@ name: SDK Compatibility (manual)
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - dev
 
 permissions:
   contents: read
@@ -12,6 +15,7 @@ concurrency:
 
 jobs:
   sdk-build:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[sdk-reverify]')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
