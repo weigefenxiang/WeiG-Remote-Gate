@@ -58,6 +58,18 @@ class NativeSdkContractTests(unittest.TestCase):
             "        echo 'Build dependency: Please install Python 2.x'\n"
             "        exit 2\n"
             "        ;;\n"
+            "      legacy_compiler)\n"
+            "        echo \"Checking 'gcc'... failed.\"\n"
+            "        echo \"Checking 'working-gcc'... ok.\"\n"
+            "        echo \"Checking 'g++'... failed.\"\n"
+            "        echo \"Checking 'working-g++'... ok.\"\n"
+            "        echo \"Checking 'python'... failed.\"\n"
+            "        echo\n"
+            "        echo 'Build dependency: Please install the GNU C Compiler (gcc) 4.8 or later'\n"
+            "        echo 'Build dependency: Please install the GNU C++ Compiler (g++) 4.8 or later'\n"
+            "        echo 'Build dependency: Please install Python 2.x'\n"
+            "        exit 2\n"
+            "        ;;\n"
             "      other)\n"
             "        echo \"Checking 'tar'... failed.\"\n"
             "        echo\n"
@@ -174,12 +186,57 @@ class NativeSdkContractTests(unittest.TestCase):
             self.assertIn("Checking 'python'... failed.", result.stdout)
             self.assertIn("bypassed only for missing Python 2", result.stderr)
 
-    def test_legacy_prerequisite_bypass_rejects_any_non_python2_failure(self):
+    def test_legacy_compiler_version_false_negatives_are_independently_validated(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            sdk = base / "sdk"
+            out = base / "out"
+            env = self._fake_environment(sdk, "powerpc64_e5500")
+            env["REMOTE_GATE_SDK_FORCE_PREREQ"] = "1"
+            env["REMOTE_GATE_SDK_ALLOW_COMPILER_PREREQ"] = "1"
+            env["FAKE_PREREQ_FAILURE"] = "legacy_compiler"
+            env["REQUIRE_PREREQ_STAMP"] = "1"
+            result = subprocess.run(
+                ["sh", str(BUILD_SDK), str(sdk), "powerpc64_e5500", str(out)],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((out / "remote-gate-mapper-powerpc64_e5500").is_file())
+            self.assertIn("compiler-version false negatives", result.stderr)
+            self.assertIn("gcc=", result.stderr)
+            self.assertIn("g++=", result.stderr)
+
+    def test_legacy_compiler_false_negative_mode_does_not_bypass_without_opt_in(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
             sdk = base / "sdk"
             env = self._fake_environment(sdk, "powerpc64_e5500")
             env["REMOTE_GATE_SDK_FORCE_PREREQ"] = "1"
+            env["FAKE_PREREQ_FAILURE"] = "legacy_compiler"
+            result = subprocess.run(
+                ["sh", str(BUILD_SDK), str(sdk), "powerpc64_e5500", str(base / "out")],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("gcc prerequisite failed outside validated compiler compatibility mode", result.stderr)
+
+    def test_legacy_prerequisite_bypass_rejects_any_non_python2_or_validated_compiler_failure(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            sdk = base / "sdk"
+            env = self._fake_environment(sdk, "powerpc64_e5500")
+            env["REMOTE_GATE_SDK_FORCE_PREREQ"] = "1"
+            env["REMOTE_GATE_SDK_ALLOW_COMPILER_PREREQ"] = "1"
             env["FAKE_PREREQ_FAILURE"] = "other"
             result = subprocess.run(
                 ["sh", str(BUILD_SDK), str(sdk), "powerpc64_e5500", str(base / "out")],
@@ -213,6 +270,24 @@ class NativeSdkContractTests(unittest.TestCase):
             self.assertIn("restricted to the legacy SDK path", result.stderr)
             self.assertFalse((sdk / "build_dir").exists())
 
+    def test_non_legacy_path_rejects_compiler_prerequisite_compatibility_mode(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            sdk = base / "sdk"
+            env = self._fake_environment(sdk, "powerpc64_e5500")
+            env["REMOTE_GATE_SDK_ALLOW_COMPILER_PREREQ"] = "1"
+            result = subprocess.run(
+                ["sh", str(BUILD_SDK), str(sdk), "powerpc64_e5500", str(base / "out")],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("REMOTE_GATE_SDK_ALLOW_COMPILER_PREREQ is restricted to the legacy SDK path", result.stderr)
+
     def test_legacy_path_rejects_arbitrary_link_flags(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
@@ -238,6 +313,8 @@ class NativeSdkContractTests(unittest.TestCase):
         self.assertIn("prepare_legacy_prereq_stamp", source)
         self.assertIn('make TOPDIR="$SDK_ROOT/" -r -s -f "$prereq_mk" prereq', source)
         self.assertIn('touch "$prereq_stamp"', source)
+        self.assertIn("SDK_ALLOW_COMPILER_PREREQ", source)
+        self.assertIn("validate_host_compiler", source)
         self.assertIn("'-Wl,--build-id=sha1'", source)
         self.assertIn("restricted to the legacy SDK path", source)
         self.assertNotIn("make FORCE=1", source)
