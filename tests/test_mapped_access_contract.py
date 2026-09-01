@@ -98,10 +98,26 @@ class MappedAccessContractTests(unittest.TestCase):
     def test_active_mapped_endpoint_is_from_agent_ack_and_copyable(self):
         self.assertIn('mappedEndpointFromDashboard', BOOTSTRAP)
         self.assertIn('mapped-endpoint:', BOOTSTRAP)
-        self.assertIn('WireGuard 公网 Endpoint', BOOTSTRAP)
-        self.assertIn('WireGuard Public Endpoint', BOOTSTRAP)
-        self.assertIn('Resolved by OpenWrt on Activate', BOOTSTRAP)
-        self.assertIn('navigator.clipboard.writeText(currentValue)', BOOTSTRAP)
+        self.assertIn('当前 WireGuard 公网 Endpoint', BOOTSTRAP)
+        self.assertIn('Current WireGuard Public Endpoint', BOOTSTRAP)
+        self.assertIn('由 OpenWrt 在 Activate 时实时确认', BOOTSTRAP)
+        self.assertIn('navigator.clipboard.writeText(text)', BOOTSTRAP)
+        self.assertIn('copyFallback(text)', BOOTSTRAP)
+        self.assertIn('RemoteGateFeedback?.notify', BOOTSTRAP)
+        self.assertIn('点击复制', BOOTSTRAP)
+
+    def test_gate_orb_contains_only_short_state_and_mobile_stacks_status(self):
+        self.assertIn('function polishGateStatusLayout()', BOOTSTRAP)
+        self.assertIn("shortState.id = 'gate-orb-state'", BOOTSTRAP)
+        self.assertIn("copy.id = 'gate-status-copy'", BOOTSTRAP)
+        self.assertIn('copy.append(state)', BOOTSTRAP)
+        self.assertIn('copy.append(substate)', BOOTSTRAP)
+        self.assertIn("if (state === 'open') return 'OPEN'", BOOTSTRAP)
+        self.assertIn("if (state === 'authorizing') return 'WAIT'", BOOTSTRAP)
+        self.assertIn('@media (max-width: 767px)', BOOTSTRAP)
+        self.assertIn('grid-template-columns: 1fr !important', BOOTSTRAP)
+        self.assertIn('wrap.append(row)', BOOTSTRAP)
+        self.assertNotIn("substate.insertAdjacentElement('afterend', row)", BOOTSTRAP)
 
 
 if __name__ == "__main__":
