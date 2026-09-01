@@ -18,6 +18,9 @@ on:
           - openwrt-24.10.5-x86_64
           - openwrt-25.12.5-x86_64
           - immortalwrt-24.10.5-x86_64
+  push:
+    branches:
+      - dev
 
 permissions:
   contents: read
@@ -27,7 +30,40 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  sdk-1907-series-probe-once:
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[sdk-1907-series]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SDK runtime tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xz-utils zstd file qemu-user
+
+      - name: Probe OpenWrt 19.07.9 AArch64 SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          matrix="$RUNNER_TEMP/sdk-compat-19079.tsv"
+          cp native/sdk-compat-matrix.tsv "$matrix"
+          printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+            'openwrt-19.07.9-armvirt-64' \
+            'openwrt' \
+            '19.07.9' \
+            'armvirt/64' \
+            'aarch64_armv8-a' \
+            'xz' \
+            'ba83f860b714241355192f85c2e9714c81d0d6e2d50f6eefcc8fb2a842af55c0' \
+            'https://downloads.openwrt.org/releases/19.07.9/targets/armvirt/64/openwrt-sdk-19.07.9-armvirt-64_gcc-7.5.0_musl.Linux-x86_64.tar.xz' >> "$matrix"
+          REMOTE_GATE_SDK_COMPAT_MATRIX="$matrix" \
+            sh native/run-sdk-compat.sh openwrt-19.07.9-armvirt-64 "$PWD/native/dist-sdk-19079-aarch64"
+
   sdk-build:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
