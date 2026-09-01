@@ -18,13 +18,18 @@ class CiContractTests(unittest.TestCase):
     def test_browser_job_waits_for_core(self):
         self.assertIn("browser:\n    runs-on: ubuntu-latest\n    needs: core", self.workflow)
 
-    def test_browser_job_installs_playwright_runtime(self):
+    def test_browser_job_installs_playwright_runtime_without_apt_dependencies(self):
         self.assertIn("npm install --no-save playwright@1.55.0", self.workflow)
-        self.assertIn("npx playwright install --with-deps chromium", self.workflow)
+        self.assertIn("npx playwright install chromium", self.workflow)
+        self.assertNotIn("playwright install --with-deps", self.workflow)
         self.assertIn("node tests/browser_layout.mjs", self.workflow)
+        self.assertIn("node tests/browser_split_dual.mjs", self.workflow)
 
-    def test_browser_job_does_not_use_ubuntu_chromium_snap_stub(self):
-        self.assertNotIn("apt-get install -y chromium-browser", self.workflow)
+    def test_browser_job_does_not_use_ubuntu_package_installers(self):
+        self.assertNotIn("apt-get install", self.workflow)
+        self.assertNotIn("apt install", self.workflow)
+        self.assertNotIn("azure.archive.ubuntu.com", self.workflow)
+        self.assertNotIn("chromium-browser", self.workflow)
 
 
 if __name__ == "__main__":
