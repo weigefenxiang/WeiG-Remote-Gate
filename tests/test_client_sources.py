@@ -57,6 +57,46 @@ class TrustedSourceTests(unittest.TestCase):
         self.assertEqual(sources["ipv4"]["confidence"], "observed")
         self.assertEqual(sources["ipv6"]["confidence"], "candidate")
 
+    def test_router_mapped_source_does_not_replace_remote_source(self):
+        observe_source(self.store, self.token, "1.1.1.1", now=100)
+        self.store.write(
+            "inventory-v3.json",
+            {
+                "schema": 3,
+                "wans": [],
+                "mappings": [{"external_address": "8.8.4.4"}],
+            },
+        )
+        record = observe_source(self.store, self.token, "8.8.4.4", now=110)
+        self.assertEqual(record["address"], "1.1.1.1")
+        self.assertEqual(source_for_family(self.store, self.token, "ipv4", now=111), "1.1.1.1")
+
+    def test_router_egress_without_remote_source_is_suppressed(self):
+        self.store.write(
+            "wan-egress-v4.json",
+            {"devices": {"pppoe-WAN": {"address": "8.8.4.4", "expires_at": 500}}},
+        )
+        record = observe_source(self.store, self.token, "8.8.4.4", now=100)
+        self.assertEqual(record["confidence"], "suppressed")
+        self.assertEqual(record["source"], "router_egress")
+        self.assertEqual(trusted_sources(self.store, self.token, now=101), {})
+
+    def test_active_gate_pins_authorized_source_past_source_ttl(self):
+        observe_source(self.store, self.token, "1.1.1.1", now=100)
+        self.store.write(
+            "agent-status.json",
+            {
+                "firewall": {
+                    "active": True,
+                    "family": "ipv4",
+                    "source_ip": "1.1.1.1",
+                }
+            },
+        )
+        record = observe_source(self.store, self.token, "8.8.8.8", now=1000)
+        self.assertEqual(record["address"], "1.1.1.1")
+        self.assertEqual(source_for_family(self.store, self.token, "ipv4", now=1000), "1.1.1.1")
+
     def test_non_public_or_special_addresses_are_rejected(self):
         for family, address in (
             ("ipv4", "10.0.0.1"),
