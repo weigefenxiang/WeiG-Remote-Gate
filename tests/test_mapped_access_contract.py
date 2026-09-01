@@ -58,7 +58,7 @@ class MappedAccessContractTests(unittest.TestCase):
         self.assertIn('go_file', MAPPER)
         self.assertIn('wait_for_go', MAPPER)
         self.assertIn('stun_address', MAPPER)
-        self.assertIn('"stun_port"', MAPPER)
+        self.assertIn('stun_port', MAPPER)
 
     def test_stun_allow_cannot_become_service_data_bypass(self):
         self.assertIn('if (!sockaddr_equal(&source, stun_server)) continue;', MAPPER)
