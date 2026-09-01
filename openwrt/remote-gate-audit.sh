@@ -47,6 +47,25 @@ if [ -r /etc/openwrt_release ]; then
 fi
 uname -a 2>/dev/null || true
 
+section 'NATIVE MAPPER ABI'
+kernel_arch="$(uname -m 2>/dev/null || true)"
+printf 'Kernel machine: %s\n' "${kernel_arch:-unknown}"
+if has opkg; then
+    package_arch="$(opkg print-architecture 2>/dev/null | awk '
+        $1 == "arch" && $2 != "all" && $2 != "noarch" {
+            priority = $3 + 0
+            if (!found || priority >= best) { value = $2; best = priority; found = 1 }
+        }
+        END { if (found) print value }
+    ')"
+    printf 'OpenWrt package ABI: %s\n' "${package_arch:-unknown}"
+    printf '%s\n' 'opkg architectures:'
+    opkg print-architecture 2>/dev/null | sed 's/^/  /' || true
+else
+    printf 'OpenWrt package ABI: unknown (opkg unavailable)\n'
+fi
+printf '%s\n' 'Mapper binaries must match the reported package ABI; Remote Gate does not guess an ABI.'
+
 section 'FIREWALL CAPABILITIES'
 for cmd in fw3 fw4 iptables ip6tables ipset nft; do
     print_cmd "$cmd"
