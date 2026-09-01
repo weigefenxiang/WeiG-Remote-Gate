@@ -189,6 +189,18 @@ status_meta() {
     "$SERVICES" validate "$STATUS_SERVICE_ID" udp "$STATUS_SERVICE_PORT" >/dev/null 2>&1 || return 1
 }
 
+status_control_tuple() {
+    status="$1"
+    status_meta "$status" || return 1
+    state="$(status_value "$status" '@.state')"
+    case "$state" in prepared|active) ;; *) return 1 ;; esac
+    ingress_port="$(status_value "$status" '@.ingress_port')"
+    stun_address="$(status_value "$status" '@.stun_address')"
+    stun_port="$(status_value "$status" '@.stun_port')"
+    valid_port "$ingress_port" && is_public_ipv4 "$stun_address" && valid_port "$stun_port" || return 1
+    printf '%s|%s|%s|%s\n' "$STATUS_DEVICE" "$ingress_port" "$stun_address" "$stun_port"
+}
+
 ingress_pairs() {
     mapper_available || return 0
     for status in "$STATE_DIR"/*.status.json; do
@@ -206,15 +218,22 @@ ingress_ports() {
     ingress_pairs | awk -F'|' '$2 ~ /^[0-9]+$/ {print $2}' | sort -nu
 }
 
+control_pairs() {
+    mapper_available || return 0
+    for status in "$STATE_DIR"/*.status.json; do
+        [ -f "$status" ] || continue
+        status_control_tuple "$status" 2>/dev/null || true
+    done | sort -u
+}
+
 activate_prepared() {
     mapper_available || return 0
     for status in "$STATE_DIR"/*.status.json; do
         [ -f "$status" ] || continue
         state="$(status_value "$status" '@.state')"
         [ "$state" = "prepared" ] || continue
-        status_meta "$status" || continue
-        port="$(status_value "$status" '@.ingress_port')"
-        valid_port "$port" || continue
+        control="$(status_control_tuple "$status" 2>/dev/null || true)"
+        [ -n "$control" ] || continue
         key="$(basename "$status" .status.json)"
         pfile="$(pid_path "$key")"
         pid="$(sed -n '1p' "$pfile" 2>/dev/null || true)"
@@ -307,6 +326,7 @@ case "${1:-status-json}" in
     sync-prepare) shift; sync_prepare "$@" ;;
     ingress-pairs) ingress_pairs ;;
     ingress-ports) ingress_ports ;;
+    control-pairs) control_pairs ;;
     activate-prepared) activate_prepared ;;
     inventory-json) inventory_json ;;
     validate-ingress)
@@ -316,5 +336,5 @@ case "${1:-status-json}" in
         ;;
     status-json) status_json ;;
     stop-all|cleanup) stop_all ;;
-    *) echo "usage: $0 available|sync-prepare [wan,device,service,port ...]|ingress-pairs|ingress-ports|activate-prepared|inventory-json|validate-ingress ...|status-json|stop-all" >&2; exit 2 ;;
+    *) echo "usage: $0 available|sync-prepare [wan,device,service,port ...]|ingress-pairs|ingress-ports|control-pairs|activate-prepared|inventory-json|validate-ingress ...|status-json|stop-all" >&2; exit 2 ;;
 esac
