@@ -1,0 +1,70 @@
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+HELPER = ROOT / "openwrt/remote-gate-wireguard-egress.sh"
+AGENT = ROOT / "openwrt/remote-gate-agent.sh"
+UPDATER = ROOT / "openwrt/update.sh"
+SERVER = ROOT / "server/remote-gate.py"
+GATE = ROOT / "server/app/static/js/gate-controls.js"
+
+
+class DualEgressRuntimeContractTests(unittest.TestCase):
+    def test_wireguard_ula_is_detected_from_interface_address(self):
+        source = HELPER.read_text(encoding="utf-8")
+        self.assertIn('ip -6 addr show dev "$device"', source)
+        self.assertIn('addr ~ /^(fc|fd)/', source)
+        self.assertNotIn('ip -6 route show dev "$device" scope link', source)
+        self.assertIn('ip -6 route show dev "$device"', source)
+
+    def test_ipv6_policy_table_drops_isp_source_specific_from_clause(self):
+        source = HELPER.read_text(encoding="utf-8")
+        self.assertIn('gateway="$(printf', source)
+        self.assertIn('if ($i=="via")', source)
+        self.assertIn('ip -6 route replace table "$table" default via "$gateway" dev "$wan_dev"', source)
+        self.assertIn('ip -6 route replace table "$table" default dev "$wan_dev"', source)
+
+    def test_dual_egress_remains_runtime_only_and_transactional(self):
+        source = HELPER.read_text(encoding="utf-8")
+        self.assertIn('RUNTIME_DIR="${REMOTE_GATE_RUNTIME_DIR:-/tmp/remote-gate}"', source)
+        self.assertIn('rollback "Cannot build IPv6 default route through $wan"', source)
+        self.assertIn('rollback "IPv6 nft NAT66 installation failed"', source)
+        self.assertIn('runtime_cleanup "${FIREWALL_BACKEND:-}"', source)
+        self.assertIn('Persistent UCI egress rules: no', source)
+        self.assertIn('AllowedIPs = 0.0.0.0/0, ::/0', source)
+
+    def test_failed_egress_state_survives_refresh_but_not_close(self):
+        helper = HELPER.read_text(encoding="utf-8")
+        agent = AGENT.read_text(encoding="utf-8")
+        self.assertIn('ERROR_FILE="$RUNTIME_DIR/wireguard-egress-error.conf"', helper)
+        self.assertIn("STATE='failed'", helper)
+        self.assertIn('\"state\":\"failed\"', helper)
+        self.assertIn('clear_error_state', helper)
+        self.assertIn('egress="$(egress_json)"', agent)
+        self.assertIn('\\"egress\\":${egress}', agent)
+        self.assertIn('keeps a short-lived failed', agent)
+
+    def test_vps_sanitizes_and_persists_agent_egress(self):
+        source = SERVER.read_text(encoding="utf-8")
+        self.assertIn('def _clean_egress(value: object) -> dict:', source)
+        self.assertIn('{"inactive", "active", "failed"}', source)
+        self.assertIn('egress = _clean_egress(data.get("egress"))', source)
+        self.assertIn('"egress": egress', source)
+
+    def test_ui_does_not_mask_exit_failure_with_gate_open(self):
+        source = GATE.read_text(encoding="utf-8")
+        self.assertIn('function reportedEgress', source)
+        self.assertIn('function egressMatchesSelection', source)
+        self.assertIn("egress.state === 'failed'", source)
+        self.assertIn('OPEN · EXIT FAILED', source)
+        self.assertIn('EXIT FAILED', source)
+        self.assertIn('EXIT ACTIVE', source)
+        self.assertIn('OPEN · EXIT OFF', source)
+
+    def test_upgrade_keeps_legacy_cleanup(self):
+        source = UPDATER.read_text(encoding="utf-8")
+        self.assertIn('remote-gate-wireguard-egress.sh" cleanup-legacy', source)
+
+
+if __name__ == "__main__":
+    unittest.main()
