@@ -30,6 +30,58 @@ def _globally_reachable_unicast(value: object, version: int | None = None) -> bo
     return True
 
 
+def _known_router_external_addresses(store: JsonStore, current: int) -> set[str]:
+    """Return current public addresses known to belong to this Remote Gate router.
+
+    These addresses can become the Cloudflare/browser source after WireGuard
+    Internet egress is enabled. They are never valid evidence for a remote
+    client source because accepting them would let the Gate authorize its own
+    WAN/CGNAT egress address.
+    """
+    result: set[str] = set()
+
+    def add(value: object) -> None:
+        try:
+            address = ipaddress.ip_address(str(value or "").strip())
+        except ValueError:
+            return
+        if _globally_reachable_unicast(address, address.version):
+            result.add(str(address))
+
+    for name in ("inventory-v3.json", "inventory-v2.json"):
+        inventory = store.read(name, {})
+        if not isinstance(inventory, dict):
+            continue
+        for wan in inventory.get("wans", []) if isinstance(inventory.get("wans"), list) else []:
+            if not isinstance(wan, dict) or not wan.get("up", True):
+                continue
+            for family in ("ipv4", "ipv6"):
+                values = wan.get(family, [])
+                if not isinstance(values, list):
+                    continue
+                for item in values:
+                    add(item.get("address") if isinstance(item, dict) else item)
+        for key in ("mappings", "natmap"):
+            values = inventory.get(key, [])
+            if not isinstance(values, list):
+                continue
+            for item in values:
+                if isinstance(item, dict):
+                    add(item.get("external_address"))
+
+    egress = store.read("wan-egress-v4.json", {})
+    devices = egress.get("devices") if isinstance(egress, dict) else None
+    if isinstance(devices, dict):
+        for item in devices.values():
+            if not isinstance(item, dict):
+                continue
+            expires_at = int(item.get("expires_at", 0) or 0)
+            if expires_at > current:
+                add(item.get("address"))
+
+    return result
+
+
 def _state(store: JsonStore, current: int) -> tuple[dict[str, Any], dict[str, Any]]:
     state = store.read("client-sources.json", {})
     if not isinstance(state, dict):
@@ -81,9 +133,26 @@ def _record(
     current = int(time.time()) if now is None else int(now)
     family = "ipv4" if address.version == 4 else "ipv6"
     state, sessions = _state(store, current)
-    record = sessions.setdefault(_session_key(session_token), {"families": {}})
+    sid = _session_key(session_token)
+    record = sessions.setdefault(sid, {"families": {}})
     families = record.setdefault("families", {})
     existing = families.get(family)
+
+    if str(address) in _known_router_external_addresses(store, current):
+        if isinstance(existing, dict) and str(existing.get("address") or "") != str(address):
+            return {"family": family, **existing}
+        families.pop(family, None)
+        if not families:
+            sessions.pop(sid, None)
+        store.write("client-sources.json", state)
+        return {
+            "family": family,
+            "address": "",
+            "observed_at": current,
+            "expires_at": current,
+            "source": "router_egress",
+            "confidence": "suppressed",
+        }
 
     # Candidate probes fill a family that the authenticated dashboard request
     # did not directly expose. A fresh Cloudflare observation is stronger and
