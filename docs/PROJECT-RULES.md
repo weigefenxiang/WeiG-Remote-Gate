@@ -145,9 +145,38 @@ Mapping/endpoint creation must be rejected or ignored when any required identity
 
 An unavailable optional mapping capability is not a dashboard error. Direct, IPv6 and existing Remote Gate features must continue to work.
 
-## Old OpenWrt compatibility
+## OpenWrt-family compatibility contract
 
-OpenWrt/ImmortalWrt 21.02-class fw3 systems remain a supported baseline.
+Remote Gate targets the **OpenWrt family**, including OpenWrt, LEDE, ImmortalWrt and compatible derivatives. Runtime support must be determined by capability detection, not by a hardcoded distribution name or release-number allowlist.
+
+Rules:
+
+- Do not reject a system merely because its branding or release number is unfamiliar.
+- Detect firewall behavior from the actually available stack: `fw4 + nft` or `fw3 + iptables + ipset`.
+- Detect package management independently. OpenWrt 25.12+ may provide `apk`; older OpenWrt/LEDE/ImmortalWrt commonly provide `opkg`. Runtime code must not assume either one exists unless the operation actually needs package metadata.
+- Detect package ABI separately from kernel machine architecture. `uname -m` is diagnostic fallback information and must not be treated as sufficient authority for selecting a native mapper binary.
+- Prefer package ABI from OpenWrt release/ubus metadata; fall back to `apk --print-arch` or the highest-priority non-`all`/non-`noarch` architecture reported by `opkg print-architecture`.
+- Keep `/bin/sh` code compatible with BusyBox `ash`; do not introduce Bash-only syntax, GNU-only command assumptions, Python, Node.js or a router-side compiler as runtime requirements.
+- Keep service management compatible with OpenWrt `rc.common` / `procd` rather than systemd-specific behavior.
+- Optional capabilities degrade independently. Missing IPv6 support disables only IPv6 Gate; missing mapper binary disables only Mapped Access; unsupported Internet Exit prerequisites disable only Internet Exit.
+- A missing **core** dependency required for safe control-plane operation may fail installation explicitly rather than silently running an unsafe partial core.
+- Installer, updater, audit and future native-binary delivery must use the shared `remote-gate-platform.sh` capability layer instead of duplicating release-specific logic.
+
+Compatibility is therefore expressed as a capability contract, not a promise that every historical firmware image contains every dependency.
+
+### Native mapper portability
+
+The router must never be required to compile the mapper locally.
+
+Native mapper delivery must:
+
+- select by exact package ABI when that ABI can be determined;
+- keep kernel machine, package ABI and libc family as separate diagnostics;
+- prefer statically linked release artifacts where practical so libc-version drift across OpenWrt/LEDE/ImmortalWrt releases is minimized;
+- never install a binary selected only from a broad guess such as `MIPS`, `ARM` or `uname -m` when a more precise ABI is unavailable;
+- fail safe to `Mapped Access: unavailable` when no matching artifact exists.
+
+Older fw3 systems, including 21.02-class systems and compatible older LEDE/OpenWrt derivatives, must not be excluded only because of age if the required runtime capabilities are present.
 
 - Do not assume Linux 5.6+ socket-sharing behavior.
 - Do not require a compiler on the router.
