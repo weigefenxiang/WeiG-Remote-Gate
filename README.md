@@ -193,6 +193,8 @@ OpenWrt/ImmortalWrt 21.02-class fw3 remains a supported baseline.
 - do not require NATMap or another third-party traversal package;
 - if no compatible Remote Gate mapper binary is available for the router architecture, only Mapped Access is unavailable; the Agent, Direct endpoints, IPv6 Gate and Internet Exit remain functional.
 
+The read-only audit reports the kernel machine, OpenWrt package ABI and `opkg print-architecture` output. Native mapper delivery must match that package ABI exactly rather than guessing from a broad MIPS/ARM label.
+
 ## Multi-WAN endpoint model
 
 The server does not assume one public IPv4 WAN. An endpoint may be:
@@ -228,7 +230,7 @@ The dashboard follows the design-system discipline documented in [`DESIGN.md`](D
 
 The browser-native endpoint `<select>` remains an internal state bridge. `EndpointPicker` provides structured WAN/method/address information, selected feedback, desktop popover/mobile sheet behavior, focus containment, ARIA selected state and reduced-motion support.
 
-The UI should present user-facing methods as `Direct`, `Mapped` and eventually `Relay`, not expose internal mapper implementation names as the primary concept.
+The UI presents user-facing methods as `Direct`, `Mapped` and eventually `Relay`; internal mapper implementation names are not exposed as the primary concept.
 
 ### DurationControl
 
@@ -287,7 +289,7 @@ Mapper availability is optional. An unsupported/missing mapper binary must not t
 
 Both VPS and OpenWrt have one-command uninstallers with dry-run support. They create local backups first, remove only resources owned by Remote Gate and perform residual checks. OpenWrt does **not** blindly restore an old whole-firewall snapshot and does not remove WireGuard by default. Cloudflare Tunnel resources are not automatically deleted.
 
-Future Mapped Access cleanup may remove only Remote Gate-owned mapper binaries/runtime state. It must never remove unrelated user NAT/firewall/service configuration.
+Mapped Access cleanup removes only Remote Gate-owned mapper binaries/runtime state. It never removes unrelated user NAT/firewall/service configuration.
 
 ## Current version and branch workflow
 
@@ -314,7 +316,7 @@ The runtime WireGuard Internet Exit path has also been exercised on real hardwar
 
 ### 0.3.17 validation requirement
 
-Mapped Access is not considered hardware validated until real CGNAT/full-cone-compatible testing confirms:
+Mapped Access is not considered hardware validated until real compatible NAT/CGNAT testing confirms:
 
 ```text
 CLOSED -> mapped ingress blocked
@@ -335,10 +337,11 @@ Read-only OpenWrt diagnostics:
 /usr/lib/remote-gate/remote-gate-audit.sh
 /usr/lib/remote-gate/remote-gate-firewall.sh detect
 /usr/lib/remote-gate/remote-gate-firewall.sh status-json
+/usr/lib/remote-gate/remote-gate-mapping.sh status-json
 /usr/lib/remote-gate/remote-gate-wireguard-egress.sh status-json
 ```
 
-0.3.17 will additionally expose sanitized Mapping Engine / Service Registry status when those components are installed.
+0.3.17 exposes sanitized Mapping Engine and Service Registry status without printing mapper payloads, service secrets, WireGuard private keys or Remote Gate credentials.
 
 For each Gate family verify CLOSED -> Activate -> actual service traffic -> TTL -> CLOSED, and separately confirm existing qBittorrent/UPnP/DNAT/FORWARD behavior remains unchanged. For Internet Exit, verify the selected WireGuard subnet uses only the selected WAN and that Close/TTL cleanup removes temporary egress state.
 
