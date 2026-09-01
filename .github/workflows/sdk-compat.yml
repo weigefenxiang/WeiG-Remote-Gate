@@ -72,7 +72,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xz-utils zstd file strace binutils
+          sudo apt-get install -y --no-install-recommends xz-utils zstd file strace binutils gdb
 
       - name: Build and smoke OpenWrt 19.07 SDK mapper
         shell: bash
@@ -94,29 +94,34 @@ jobs:
           echo '===== ELF HEADER ====='
           readelf -h "$binary"
           echo
-          echo '===== PROGRAM HEADERS ====='
-          readelf -lW "$binary"
-          echo
           echo '===== RELEVANT SYMBOLS ====='
-          readelf -sW "$binary" | grep -E '(^|[[:space:]])(main|remote_gate_mapper_main|__stack_chk_fail|printf|fprintf)$' || true
+          readelf -sW "$binary" | grep -E '(^|[[:space:]])(_start|__libc_start_main|__init_libc|main|remote_gate_mapper_main|__stack_chk_fail|printf|fprintf)$' || true
           echo
-          echo '===== VERSION DIRECT ====='
-          "$binary" --version
-          echo "version_rc=$?"
+          echo '===== STARTUP DISASSEMBLY ====='
+          objdump -d --start-address=0x401000 --stop-address=0x401180 "$binary" || true
           echo
-          echo '===== USAGE DIRECT ====='
-          "$binary"
-          echo "usage_rc=$?"
+          echo '===== GDB VERSION ====='
+          gdb -q -batch \
+            -ex 'set pagination off' \
+            -ex 'run --version' \
+            -ex 'bt' \
+            -ex 'info registers' \
+            -ex 'x/24i $pc-32' \
+            --args "$binary" --version || true
+          echo
+          echo '===== GDB USAGE ====='
+          gdb -q -batch \
+            -ex 'set pagination off' \
+            -ex 'run' \
+            -ex 'bt' \
+            -ex 'info registers' \
+            -ex 'x/24i $pc-32' \
+            --args "$binary" || true
           echo
           echo '===== STRACE VERSION ====='
           strace -f -o /tmp/remote-gate-version.strace "$binary" --version
           echo "strace_version_rc=$?"
-          tail -n 120 /tmp/remote-gate-version.strace || true
-          echo
-          echo '===== STRACE USAGE ====='
-          strace -f -o /tmp/remote-gate-usage.strace "$binary"
-          echo "strace_usage_rc=$?"
-          tail -n 120 /tmp/remote-gate-usage.strace || true
+          tail -n 40 /tmp/remote-gate-version.strace || true
           exit 0
 
       - name: Upload OpenWrt 19.07 SDK candidate
