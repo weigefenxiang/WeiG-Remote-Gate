@@ -542,6 +542,7 @@ pull_once() {
             scope="$(jsonfilter -i "$BODY" -e '@.scope' 2>/dev/null | sed -n '1p')"
             access_method="$(jsonfilter -i "$BODY" -e '@.access_method' 2>/dev/null | sed -n '1p')"
             transport="$(jsonfilter -i "$BODY" -e '@.transport' 2>/dev/null | sed -n '1p')"
+            wan="$(jsonfilter -i "$BODY" -e '@.wan' 2>/dev/null | sed -n '1p')"
             device="$(jsonfilter -i "$BODY" -e '@.device' 2>/dev/null | sed -n '1p')"
             service_id="$(jsonfilter -i "$BODY" -e '@.service_id' 2>/dev/null | sed -n '1p')"
             service_type="$(jsonfilter -i "$BODY" -e '@.service_type' 2>/dev/null | sed -n '1p')"
@@ -569,15 +570,16 @@ pull_once() {
             case "$access_method" in direct|mapped) ;; *) ack "$id" false "invalid-access-method"; return 1 ;; esac
             [ "$transport" = "udp" ] || { ack "$id" false "unsupported-transport"; return 1; }
             [ "$service_type" = "wireguard" ] || { ack "$id" false "unsupported-service"; return 1; }
-            valid_name "$wireguard" && valid_name "$service_id" && valid_port "$service_port" && valid_port "$ingress_port" || { ack "$id" false "invalid-service-registration"; return 1; }
+            valid_name "$wan" && valid_device "$device" && valid_name "$wireguard" && valid_name "$service_id" && valid_port "$service_port" || { ack "$id" false "invalid-service-registration"; return 1; }
             [ "$service_id" = "wg.$wireguard" ] || { ack "$id" false "service-wireguard-mismatch"; return 1; }
             [ -x "$SERVICES" ] && "$SERVICES" validate "$service_id" udp "$service_port" >/dev/null 2>&1 || { ack "$id" false "service-not-registered"; return 1; }
 
             if [ "$access_method" = "direct" ]; then
+                valid_port "$ingress_port" || { ack "$id" false "invalid-direct-ingress"; return 1; }
                 [ "$ingress_port" = "$service_port" ] || { ack "$id" false "direct-ingress-service-mismatch"; return 1; }
             else
-                valid_port "$external_port" && is_public_ipv4 "$external_address" || { ack "$id" false "invalid-mapped-endpoint"; return 1; }
-                [ -x "$MAPPING" ] && "$MAPPING" validate-ingress "$device" "$service_id" "$ingress_port" "$external_address" "$external_port" >/dev/null 2>&1 || { ack "$id" false "mapped-ingress-not-current"; return 1; }
+                [ "$family" = "ipv4" ] || { ack "$id" false "mapped-ipv4-required"; return 1; }
+                [ -x "$MAPPING" ] || { ack "$id" false "mapped-endpoint-unavailable"; return 1; }
             fi
 
             valid_uint "$batch_index" || batch_index=0
@@ -597,6 +599,24 @@ pull_once() {
             if [ "$batch_index" -eq 0 ] && [ -x "$EGRESS" ]; then "$EGRESS" disable >/dev/null 2>&1 || true; fi
 
             sync_firewall_policy || true
+            mapped_detail=""
+            if [ "$access_method" = "mapped" ]; then
+                mapped_record="$("$MAPPING" resolve-current "$wan" "$device" "$service_id" 2>/dev/null || true)"
+                if [ -z "$mapped_record" ]; then
+                    logger -t "$TAG" "mapped activation has no current endpoint for ${wan}/${device}/${service_id}" 2>/dev/null || true
+                    ack "$id" false "mapped-endpoint-unavailable"
+                    return 1
+                fi
+                oldifs="$IFS"; IFS='|'; set -- $mapped_record; IFS="$oldifs"
+                [ "$#" -eq 7 ] || { ack "$id" false "mapped-endpoint-invalid"; return 1; }
+                [ "$1" = "$wan" ] && [ "$2" = "$device" ] && [ "$3" = "$service_id" ] || { ack "$id" false "mapped-endpoint-mismatch"; return 1; }
+                external_address="$4"
+                external_port="$5"
+                ingress_port="$6"
+                is_public_ipv4 "$external_address" && valid_port "$external_port" && valid_port "$ingress_port" || { ack "$id" false "mapped-endpoint-invalid"; return 1; }
+                mapped_detail=" mapped-endpoint:${external_address}:${external_port}"
+            fi
+
             error_file="${TMP_BASE}.firewall-error"
             rm -f "$error_file"
             if "$FIREWALL" activate "$source_ip" "$family" "$scope" "$device" "$ingress_port" "$ttl" "$source_kind" 2>"$error_file"; then
@@ -604,7 +624,7 @@ pull_once() {
                 if [ "$batch_count" -gt 1 ] && [ "$((batch_index + 1))" -lt "$batch_count" ]; then apply_egress=0; fi
                 if [ -n "$egress_wan" ] && [ "$apply_egress" -eq 1 ]; then
                     if [ -x "$EGRESS" ] && "$EGRESS" enable "$wireguard" "$egress_wan" "$ttl" "$egress_mode" >/dev/null 2>"${TMP_BASE}.egress-error"; then
-                        ack "$id" true "web-authorization-and-${egress_mode}-egress-active"
+                        ack "$id" true "web-authorization-and-${egress_mode}-egress-active${mapped_detail}"
                     else
                         detail="$(sed -n 's/^ERROR: //p' "${TMP_BASE}.egress-error" 2>/dev/null | tail -n 1)"
                         [ -n "$detail" ] || detail="wireguard-egress-activation-failed"
@@ -612,10 +632,10 @@ pull_once() {
                         ack "$id" false "$detail"
                     fi
                 elif [ -n "$egress_wan" ]; then
-                    ack "$id" true "web-authorization-active-pending-egress"
+                    ack "$id" true "web-authorization-active-pending-egress${mapped_detail}"
                 else
                     [ -x "$EGRESS" ] && "$EGRESS" disable >/dev/null 2>&1 || true
-                    ack "$id" true "web-authorization-active"
+                    ack "$id" true "web-authorization-active${mapped_detail}"
                 fi
             else
                 [ -x "$EGRESS" ] && "$EGRESS" disable >/dev/null 2>&1 || true

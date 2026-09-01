@@ -65,10 +65,119 @@
     activate.style.textAlign = 'center';
   }
 
+  function mappedPlaceholder() {
+    return document.documentElement.dataset.lang === 'zh'
+      ? 'Endpoint 在 Activate 后确认'
+      : 'Endpoint resolved after Activate';
+  }
+
+  function rewriteMappedOptions() {
+    const select = document.getElementById('endpoint-select') || document.getElementById('wan-select');
+    if (!select) return;
+    let changed = false;
+    [...select.options].forEach((option) => {
+      const text = String(option.textContent || '');
+      const parts = text.split(' · ');
+      const mappedIndex = parts.indexOf('Mapped');
+      if (mappedIndex < 0) return;
+      const next = [...parts.slice(0, mappedIndex + 1), mappedPlaceholder()].join(' · ');
+      if (next !== text) {
+        option.textContent = next;
+        changed = true;
+      }
+    });
+    if (changed) window.RemoteGateEndpointPicker?.sync?.(select.id);
+  }
+
+  function mappedEndpointFromDashboard(data) {
+    if (!data?.agent?.firewall?.active) return '';
+    const last = data?.gate?.queue?.last;
+    if (!last || last.action !== 'activate' || last.state !== 'done') return '';
+    const match = String(last.detail || '').match(/(?:^|\s)mapped-endpoint:([0-9.]+):([0-9]{1,5})(?:\s|$)/);
+    if (!match) return '';
+    const port = Number(match[2]);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return '';
+    return `${match[1]}:${port}`;
+  }
+
+  function renderMappedEndpoint(data) {
+    const endpoint = mappedEndpointFromDashboard(data);
+    let row = document.getElementById('mapped-public-endpoint');
+    if (!endpoint) {
+      row?.remove();
+      return;
+    }
+    const substate = document.getElementById('gate-substate');
+    if (!substate) return;
+    if (!row) {
+      row = document.createElement('div');
+      row.id = 'mapped-public-endpoint';
+      row.className = 'muted small';
+      row.style.display = 'flex';
+      row.style.flexWrap = 'wrap';
+      row.style.alignItems = 'center';
+      row.style.gap = '0.45rem';
+      row.style.marginTop = '0.5rem';
+      const label = document.createElement('span');
+      label.dataset.mappedEndpointLabel = '1';
+      const value = document.createElement('button');
+      value.type = 'button';
+      value.className = 'wan-address-copy fit-single-line';
+      value.dataset.mappedEndpointValue = '1';
+      value.addEventListener('click', async () => {
+        const currentValue = String(value.textContent || '');
+        if (!currentValue) return;
+        try { await navigator.clipboard.writeText(currentValue); } catch (_) { /* no-op */ }
+      });
+      const note = document.createElement('span');
+      note.dataset.mappedEndpointNote = '1';
+      row.append(label, value, note);
+      substate.insertAdjacentElement('afterend', row);
+    }
+    const zh = document.documentElement.dataset.lang === 'zh';
+    row.querySelector('[data-mapped-endpoint-label]').textContent = zh ? 'WireGuard 公网 Endpoint' : 'WireGuard Public Endpoint';
+    const value = row.querySelector('[data-mapped-endpoint-value]');
+    value.textContent = endpoint;
+    value.title = endpoint;
+    row.querySelector('[data-mapped-endpoint-note]').textContent = zh ? 'OpenWrt 在 Activate 时确认' : 'Resolved by OpenWrt on Activate';
+  }
+
+  function observeMappedPicker() {
+    let queued = false;
+    const observer = new MutationObserver(() => {
+      if (queued) return;
+      queued = true;
+      queueMicrotask(() => {
+        queued = false;
+        rewriteMappedOptions();
+      });
+    });
+    observer.observe(document.documentElement, {subtree: true, childList: true});
+  }
+
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = async (...args) => {
+    const response = await nativeFetch(...args);
+    try {
+      const requestUrl = new URL(typeof args[0] === 'string' ? args[0] : args[0]?.url || '', location.href);
+      if (requestUrl.pathname === '/api/v1/dashboard' && response.ok) {
+        response.clone().json().then((data) => {
+          renderMappedEndpoint(data);
+          queueMicrotask(rewriteMappedOptions);
+        }).catch(() => {});
+      }
+    } catch (_) { /* preserve fetch semantics */ }
+    return response;
+  };
+
   function ready() {
     brandIcon();
     polishGateActions();
+    rewriteMappedOptions();
+    observeMappedPicker();
   }
+
+  window.addEventListener('remote-gate-language', () => queueMicrotask(rewriteMappedOptions));
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready, {once: true});
   else ready();

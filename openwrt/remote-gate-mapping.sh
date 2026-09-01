@@ -278,6 +278,24 @@ mapping_record() {
         "$STATUS_WAN" "$STATUS_DEVICE" "$STATUS_SERVICE_ID" "$external" "$external_port" "$ingress_port" "$observed_at"
 }
 
+resolve_current() {
+    [ "$#" -eq 3 ] || return 1
+    expected_wan="$1"; expected_device="$2"; expected_service="$3"
+    valid_name "$expected_wan" && mapped_wan_allowed "$expected_wan" && valid_device "$expected_device" && valid_name "$expected_service" || return 1
+    for status in "$STATE_DIR"/*.status.json; do
+        [ -f "$status" ] || continue
+        record="$(mapping_record "$status" 2>/dev/null || true)"
+        [ -n "$record" ] || continue
+        oldifs="$IFS"; IFS='|'; set -- $record; IFS="$oldifs"
+        [ "$1" = "$expected_wan" ] || continue
+        [ "$2" = "$expected_device" ] || continue
+        [ "$3" = "$expected_service" ] || continue
+        printf '%s\n' "$record"
+        return 0
+    done
+    return 1
+}
+
 inventory_json() {
     first=1
     printf '['
@@ -347,6 +365,11 @@ case "${1:-status-json}" in
     control-pairs) control_pairs ;;
     activate-prepared) activate_prepared ;;
     inventory-json) inventory_json ;;
+    resolve-current)
+        shift
+        [ "$#" -eq 3 ] || { echo "usage: $0 resolve-current <wan> <device> <service-id>" >&2; exit 2; }
+        resolve_current "$@"
+        ;;
     validate-ingress)
         shift
         [ "$#" -eq 5 ] || { echo "usage: $0 validate-ingress <device> <service-id> <ingress-port> <external-address> <external-port>" >&2; exit 2; }
@@ -354,5 +377,5 @@ case "${1:-status-json}" in
         ;;
     status-json) status_json ;;
     stop-all|cleanup) stop_all ;;
-    *) echo "usage: $0 available|sync-prepare [wan,device,service,port ...]|ingress-pairs|ingress-ports|control-pairs|activate-prepared|inventory-json|validate-ingress ...|status-json|stop-all" >&2; exit 2 ;;
+    *) echo "usage: $0 available|sync-prepare [wan,device,service,port ...]|ingress-pairs|ingress-ports|control-pairs|activate-prepared|inventory-json|resolve-current <wan> <device> <service-id>|validate-ingress ...|status-json|stop-all" >&2; exit 2 ;;
 esac

@@ -9,6 +9,7 @@ BACKENDS = (ROOT / "openwrt" / "remote-gate-firewall-backends.sh").read_text(enc
 MAPPING = (ROOT / "openwrt" / "remote-gate-mapping.sh").read_text(encoding="utf-8")
 REGISTRY = (ROOT / "openwrt" / "remote-gate-service-registry.sh").read_text(encoding="utf-8")
 APP = (ROOT / "server" / "app" / "static" / "js" / "app.js").read_text(encoding="utf-8")
+BOOTSTRAP = (ROOT / "server" / "app" / "static" / "js" / "theme-bootstrap.js").read_text(encoding="utf-8")
 MAPPER = (ROOT / "native" / "remote-gate-mapper.c").read_text(encoding="utf-8")
 
 
@@ -78,6 +79,29 @@ class MappedAccessContractTests(unittest.TestCase):
         self.assertIn("method = 'Mapped'", APP)
         self.assertNotIn("provider === 'natmap'", APP)
         self.assertNotIn("provider = 'NATMap'", APP)
+
+    def test_activate_resolves_latest_mapping_on_openwrt(self):
+        self.assertIn('resolve-current <wan> <device> <service-id>', MAPPING)
+        self.assertIn('wan="$(jsonfilter -i "$BODY" -e \'@.wan\'', AGENT)
+        self.assertIn('"$MAPPING" resolve-current "$wan" "$device" "$service_id"', AGENT)
+        self.assertIn('mapped-endpoint:${external_address}:${external_port}', AGENT)
+        activate = AGENT.split('case "$action" in', 1)[1].split('close)', 1)[0]
+        self.assertLess(activate.index('sync_firewall_policy || true'), activate.index('"$MAPPING" resolve-current'))
+        self.assertLess(activate.index('"$MAPPING" resolve-current'), activate.index('"$FIREWALL" activate'))
+
+    def test_mapped_picker_hides_runtime_endpoint_until_activate(self):
+        self.assertIn('function rewriteMappedOptions()', BOOTSTRAP)
+        self.assertIn("const mappedIndex = parts.indexOf('Mapped')", BOOTSTRAP)
+        self.assertIn('Endpoint 在 Activate 后确认', BOOTSTRAP)
+        self.assertIn('Endpoint resolved after Activate', BOOTSTRAP)
+
+    def test_active_mapped_endpoint_is_from_agent_ack_and_copyable(self):
+        self.assertIn('mappedEndpointFromDashboard', BOOTSTRAP)
+        self.assertIn('mapped-endpoint:', BOOTSTRAP)
+        self.assertIn('WireGuard 公网 Endpoint', BOOTSTRAP)
+        self.assertIn('WireGuard Public Endpoint', BOOTSTRAP)
+        self.assertIn('Resolved by OpenWrt on Activate', BOOTSTRAP)
+        self.assertIn('navigator.clipboard.writeText(currentValue)', BOOTSTRAP)
 
 
 if __name__ == "__main__":
