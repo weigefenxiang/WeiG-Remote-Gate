@@ -181,6 +181,37 @@ public mapping may remain -> ingress_port -> DROP
 
 This invariant is mandatory. A long-lived mapping is acceptable only while the Access Gate remains authoritative for source authorization.
 
+## Exact STUN control path
+
+The mapper must receive STUN replies on the same UDP socket that owns `ingress_port`. A generic mapped-ingress DROP would otherwise block the mapper's own discovery/keepalive traffic.
+
+0.3.17 therefore treats STUN as a separate **control tuple**, not as user access:
+
+```text
+WAN device
++ ingress_port
++ resolved STUN IPv4
++ STUN source port
+= exact control allow
+```
+
+The startup order is intentionally strict:
+
+```text
+resolve STUN peer
+-> bind mapper ingress
+-> publish prepared status + STUN tuple
+-> synchronize firewall
+-> install exact STUN control allow
+-> install mapped-ingress DROP
+-> create mapper go signal
+-> perform STUN discovery
+```
+
+fw3 implements the control exception as an exact `device + source IPv4 + source port + destination ingress_port` ACCEPT before the mapped DROP. fw4 uses an `ifname . inet_service . ipv4_addr . inet_service` concatenated set before the mapped-ingress set.
+
+The control exception is not a service bypass. The native mapper accepts control processing from the resolved STUN socket only, validates the current STUN transaction, and never relays packets from that STUN socket into the registered service. If the STUN tuple is missing or invalid, `prepared` never advances to `go`.
+
 ## Control-plane authorization flow
 
 The authenticated browser chooses an IP family, endpoint and registered service, but it never supplies an arbitrary `source_ip`, WAN device, ingress port or service target as authority. The VPS resolves the selected source from the signed-in session source store, validates the endpoint server-side, and queues a short-lived command.
@@ -264,7 +295,7 @@ Ambiguous WAN/device association, unknown service identity, malformed mapper sta
 
 Return-route state is maintained per authorized source, not merely per family. Each active IPv4 source can receive its own `/32` destination-specific router-local policy rule and each active IPv6 source its own `/128` rule when the selected WAN is not the ordinary reply path. Expiring one source removes only that source's route state.
 
-This router-local return routing is separate from Internet Exit policy routing. Internet Exit routes packets arriving from the selected WireGuard interface; Gate return routing keeps locally generated replies on the WAN where the authorized request arrived.
+This router-local ingress return routing is intentionally shared by Direct and Mapped access. Direct WireGuard replies and mapper-generated replies are both locally generated traffic destined for the authorized external source; the same per-source route contract keeps them on the WAN where the ingress arrived. This is separate from Internet Exit policy routing, which routes packets received from the WireGuard interface toward the selected Internet Exit WAN.
 
 ## Firewall reload recovery
 
