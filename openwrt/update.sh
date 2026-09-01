@@ -113,7 +113,6 @@ mkdir -p "$BACKUP_ROOT" "$BACKUP"; chmod 700 "$BACKUP_ROOT" "$BACKUP"
 [ -d "$LIB_DIR" ] && cp -a "$LIB_DIR" "$BACKUP/remote-gate-lib"
 [ -f "$CONFIG_FILE" ] && cp -a "$CONFIG_FILE" "$BACKUP/remote-gate.conf"
 [ -d "$STATE_DIR" ] && cp -a "$STATE_DIR" "$BACKUP/remote-gate-state"
-[ -f "$INIT_FILE" ] && cp -a "$BACKUP/remote-gate-agent.init" "$BACKUP/remote-gate-agent.init" 2>/dev/null || true
 [ -f "$INIT_FILE" ] && cp -a "$INIT_FILE" "$BACKUP/remote-gate-agent.init"
 [ -f "$HOTPLUG_FILE" ] && cp -a "$HOTPLUG_FILE" "$BACKUP/remote-gate-hotplug.sh"
 command -v iptables-save >/dev/null 2>&1 && iptables-save > "$BACKUP/iptables-save.txt" 2>/dev/null || true
