@@ -95,7 +95,6 @@ for rel in $FILES; do fetch "$rel" "$TMP_DIR/$rel"; done
 fetch_repo_path "VERSION" "$TMP_DIR/VERSION"
 for rel in $FILES; do sh -n "$TMP_DIR/$rel" || fail "Shell syntax check failed: $rel"; done
 
-# Validate the target platform with the newly downloaded capability helper.
 sh "$TMP_DIR/remote-gate-platform.sh" core-capable || fail "Required OpenWrt-family core runtime capabilities are unavailable."
 init_system="$(sh "$TMP_DIR/remote-gate-platform.sh" init 2>/dev/null || printf unknown)"
 case "$init_system" in
@@ -114,6 +113,7 @@ mkdir -p "$BACKUP_ROOT" "$BACKUP"; chmod 700 "$BACKUP_ROOT" "$BACKUP"
 [ -d "$LIB_DIR" ] && cp -a "$LIB_DIR" "$BACKUP/remote-gate-lib"
 [ -f "$CONFIG_FILE" ] && cp -a "$CONFIG_FILE" "$BACKUP/remote-gate.conf"
 [ -d "$STATE_DIR" ] && cp -a "$STATE_DIR" "$BACKUP/remote-gate-state"
+[ -f "$INIT_FILE" ] && cp -a "$BACKUP/remote-gate-agent.init" "$BACKUP/remote-gate-agent.init" 2>/dev/null || true
 [ -f "$INIT_FILE" ] && cp -a "$INIT_FILE" "$BACKUP/remote-gate-agent.init"
 [ -f "$HOTPLUG_FILE" ] && cp -a "$HOTPLUG_FILE" "$BACKUP/remote-gate-hotplug.sh"
 command -v iptables-save >/dev/null 2>&1 && iptables-save > "$BACKUP/iptables-save.txt" 2>/dev/null || true
@@ -131,21 +131,20 @@ cp "$TMP_DIR/remote-gate-hotplug.sh" "$HOTPLUG_FILE"
 cp "$TMP_DIR/VERSION" "$LIB_DIR/VERSION"
 chmod 0755 "$LIB_DIR"/*.sh "$INIT_FILE" "$HOTPLUG_FILE"; chmod 0644 "$LIB_DIR/VERSION"; NEW_FILES_INSTALLED=1
 
-# Prefer an explicitly supplied mapper during development/recovery. Otherwise
-# try the immutable GitHub Release manifest for the new VERSION. Failure is
-# non-fatal and never overwrites a previously working mapper.
 MAPPER_SOURCE="${REMOTE_GATE_MAPPER_SOURCE:-}"
 if [ -n "$MAPPER_SOURCE" ]; then
     sh "$LIB_DIR/remote-gate-mapper-install.sh" install-local "$MAPPER_SOURCE" || fail "Explicit mapper binary failed validation."
 else
-    if sh "$LIB_DIR/remote-gate-mapper-install.sh" install-release; then
-        info "Released mapper installed for the exact Package ABI."
+    mapper_channel=release
+    [ "$RAW_REF" = dev ] && mapper_channel=dev
+    if sh "$LIB_DIR/remote-gate-mapper-install.sh" "install-$mapper_channel"; then
+        info "Mapper installed from the $mapper_channel channel for the exact Package ABI."
     else
         mapper_rc=$?
         if [ "$mapper_rc" -eq 3 ]; then
-            printf 'WARN: No released mapper is available for this exact Package ABI; existing mapper, if any, was preserved.\n' >&2
+            printf 'WARN: No %s mapper is available for this exact Package ABI; existing mapper, if any, was preserved.\n' "$mapper_channel" >&2
         else
-            printf 'WARN: Released mapper validation failed; existing mapper, if any, was preserved.\n' >&2
+            printf 'WARN: %s mapper validation failed; existing mapper, if any, was preserved.\n' "$mapper_channel" >&2
         fi
     fi
 fi
@@ -154,7 +153,6 @@ append_default() { key="$1" value="$2"; grep -Eq "^${key}=" "$CONFIG_FILE" 2>/de
 append_default GATE_IPV6 disabled
 append_default CONTROL_TRANSPORT auto
 append_default MAPPED_ACCESS auto
-# 0.3.17 no longer uses NATMap as an architectural or runtime dependency.
 grep -Ev '^NATMAP_DISCOVERY=' "$CONFIG_FILE" > "$TMP_DIR/remote-gate.conf.migrated" || true
 mv "$TMP_DIR/remote-gate.conf.migrated" "$CONFIG_FILE"
 chmod 0600 "$CONFIG_FILE"
