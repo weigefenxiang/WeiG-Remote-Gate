@@ -1,5 +1,6 @@
 # sample	family	release	target	package_abi	archive	sha256	url
 lede-17.01.7-x86_64	lede	17.01.7	x86/64	x86_64	xz	dc8814263db97e563fe620774295f78bab0fb726cf39829f1b937b7b01bac5a0	https://downloads.openwrt.org/releases/17.01.7/targets/x86/64/lede-sdk-17.01.7-x86-64_gcc-5.4.0_musl-1.1.16.Linux-x86_64.tar.xz
+openwrt-19.07.0-x86_64	openwrt	19.07.0	x86/64	x86_64	xz	d3ff6db1848fedf861bc251250c150977df796d2646a71533c27bba2c8415d2a	https://downloads.openwrt.org/releases/19.07.0/targets/x86/64/openwrt-sdk-19.07.0-x86-64_gcc-7.5.0_musl.Linux-x86_64.tar.xz
 openwrt-19.07.9-armvirt-64	openwrt	19.07.9	armvirt/64	aarch64_generic	xz	ba83f860b714241355192f85c2e9714c81d0d6e2d50f6eefcc8fb2a842af55c0	https://downloads.openwrt.org/releases/19.07.9/targets/armvirt/64/openwrt-sdk-19.07.9-armvirt-64_gcc-7.5.0_musl.Linux-x86_64.tar.xz
 openwrt-19.07.9-x86_64	openwrt	19.07.9	x86/64	x86_64	xz	1e466277a72ac491cc3c1ba3ccf34f2fd9f8edd1fe5439462ac2e89cb43cd7dc	https://downloads.openwrt.org/releases/19.07.9/targets/x86/64/openwrt-sdk-19.07.9-x86-64_gcc-7.5.0_musl.Linux-x86_64.tar.xz
 openwrt-19.07.10-x86_64	openwrt	19.07.10	x86/64	x86_64	xz	db05bea54331b1f7c88033af3ae162359179132e7f52168f32651c5330abd2f5	https://downloads.openwrt.org/releases/19.07.10/targets/x86/64/openwrt-sdk-19.07.10-x86-64_gcc-7.5.0_musl.Linux-x86_64.tar.xz
