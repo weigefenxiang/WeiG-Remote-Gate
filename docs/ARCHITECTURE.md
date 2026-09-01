@@ -14,14 +14,14 @@ OpenWrt agent
       +-- Multi-WAN report
       +-- Public-WAN discovery
       +-- WireGuard discovery
-      `-- Firewall abstraction
-            +-- fw3: iptables + ipset
-            `-- fw4: nftables
+      +-- Multi-WAN control path
+      +-- router-local Gate firewall abstraction
+      `-- optional runtime WireGuard Internet Exit
 ```
 
 ## Firewall abstraction contract
 
-`remote-gate-firewall.sh` exposes the same actions on both firewall generations:
+`remote-gate-firewall.sh` exposes the same router-local Gate actions on both firewall generations:
 
 ```text
 detect
@@ -51,9 +51,23 @@ Each family may contain multiple concurrently authorized source addresses, each 
 
 To keep the firewall rule model exact, concurrent records within one family must share the same WAN device, WireGuard UDP port and access scope. Switching that profile requires closing the existing temporary access first.
 
-## Guard boundary
+## Gate and Internet Exit boundaries
 
-The abstraction is deliberately an INPUT-only guard. It is forbidden from installing Remote Gate filters in FORWARD, so router-local remote access policy is separated from forwarded applications such as qBittorrent.
+The **Access Gate** is deliberately router-local and INPUT-only. `remote-gate-firewall.sh` must not install generic FORWARD filtering or take ownership of unrelated forwarded applications.
+
+The optional **Internet Exit** is a separate runtime-only data-plane feature implemented by `remote-gate-wireguard-egress.sh`. When the user explicitly selects an Internet Exit WAN, it may temporarily install only the state required for the selected WireGuard interface and family:
+
+```text
+WireGuard client subnet
+        |
+        +-- policy routing -> selected WAN
+        +-- scoped FORWARD accept
+        `-- scoped NAT44 / NAT66 masquerade
+```
+
+The egress helper does not create persistent UCI egress policy. Close, TTL expiry, explicit disable or reboot removes its temporary route rules, routing tables and firewall/NAT state.
+
+This exception is intentionally narrow. qBittorrent, DHT/PeX, UPnP/NAT-PMP, DNAT/manual port forwards, forwarded NAS/PC services and unrelated router traffic remain under the router's existing policy.
 
 ## Related WeiG qB WebUI project
 
@@ -62,31 +76,36 @@ The abstraction is deliberately an INPUT-only guard. It is forbidden from instal
 Remote Gate does not become a qB API compatibility layer or generic application proxy simply because both projects may be exposed through Cloudflare-managed infrastructure.
 
 ```text
-Remote Gate
-Browser → Cloudflare → Remote Gate control plane ↔ OpenWrt agent
-                                      ↓
-                           router-local INPUT Gate
-                           Ping / WireGuard only
+Remote Gate control path
+Browser -> Cloudflare -> Remote Gate control plane <-> OpenWrt agent
+                                      |
+                                      `-> router-local INPUT Gate
+
+Optional WireGuard Internet Exit
+WireGuard client -> WG interface -> temporary PBR/FORWARD/NAT -> selected WAN
 
 WeiG qB WebUI
-Browser → application reverse proxy → WeiG qB WebUI → qB WebAPI → qBittorrent
+Browser -> application reverse proxy -> WeiG qB WebUI -> qB WebAPI -> qBittorrent
 ```
 
 The firewall ownership remains intentionally separate:
 
 ```text
-router-local Ping / WireGuard UDP → Remote Gate INPUT ownership
-forwarded qBittorrent traffic     → existing NAT/FORWARD ownership
+router-local Ping / WireGuard UDP -> Remote Gate Access Gate INPUT ownership
+selected WG subnet Internet Exit  -> temporary scoped PBR/FORWARD/NAT ownership
+forwarded qBittorrent traffic     -> existing router NAT/FORWARD ownership
 ```
 
 See [`QB-WEBUI-BOUNDARY.md`](QB-WEBUI-BOUNDARY.md) for the cross-project contract. qB version/capability matrices belong in the qB WebUI repository and must not be duplicated here.
 
 ## Priority and timeout
 
-The guard executes before the normal established/related shortcut. This makes expiration immediate for subsequent ICMP/WireGuard packets even if conntrack still has an older flow entry.
+The Gate guard executes before the normal established/related shortcut. This makes expiration immediate for subsequent ICMP/WireGuard packets even if conntrack still has an older flow entry.
 
 - fw3 inserts `WEIG_REMOTE_GATE` at root INPUT position 1 and uses ipset source entries with independent timeouts.
 - fw4 uses `chain-pre/input` and nftables timeout source sets.
+
+Internet Exit has its own runtime TTL and reconciliation. It is not evidence that the Access Gate is open, and Access Gate authorization alone is not evidence that Internet Exit is active.
 
 ## Public-WAN and WireGuard synchronization
 
@@ -94,11 +113,15 @@ The agent discovers active WAN devices, eligible IPv4/IPv6 paths, and local Wire
 
 ## Multi-WAN local return routing
 
-Return-route state is maintained per authorized source, not merely per family. Each active IPv4 source can receive its own `/32` router-local policy rule and each active IPv6 source its own `/128` rule when the selected WAN is not the ordinary reply path. Expiring one source removes only that source's return-route state.
+Return-route state is maintained per authorized source, not merely per family. Each active IPv4 source can receive its own `/32` destination-specific router-local policy rule and each active IPv6 source its own `/128` rule when the selected WAN is not the ordinary reply path. Expiring one source removes only that source's route state.
+
+This router-local return routing is separate from Internet Exit policy routing. Internet Exit routes packets arriving from the selected WireGuard interface; Gate return routing keeps locally generated WireGuard handshake replies on the WAN where the authorized request arrived.
 
 ## Firewall reload recovery
 
-A firewall include runs the backend `restore` action after a firewall rebuild. Protected device/port state is restored. Every still-valid authorization is restored only for its remaining absolute TTL.
+A firewall include runs the Gate backend `restore` action after a firewall rebuild. Protected device/port state is restored. Every still-valid authorization is restored only for its remaining absolute TTL.
+
+Internet Exit remains runtime-only and is reconciled from its temporary state rather than committed as persistent firewall/network UCI configuration.
 
 ## Why there is no WAN HTTP probe
 
