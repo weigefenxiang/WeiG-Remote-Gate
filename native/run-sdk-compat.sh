@@ -58,6 +58,15 @@ case "$family" in
         ;;
 esac
 
+# OpenWrt 19.07's SDK prerequisite gate still requires Python 2, which is no
+# longer provided by the Ubuntu 24 GitHub runner. The Remote Gate package is a
+# self-contained C build and does not use Python, so only this pinned sample is
+# allowed to bypass that obsolete host prerequisite. All other SDKs stay strict.
+sdk_force_prereq=0
+case "$sample" in
+    openwrt-19.07.10-x86_64) sdk_force_prereq=1 ;;
+esac
+
 for cmd in curl sha256sum tar file; do
     command -v "$cmd" >/dev/null 2>&1 || { echo "required host tool missing: $cmd" >&2; exit 1; }
 done
@@ -79,7 +88,7 @@ case "$archive" in
     zst) tar --zstd -xf "$archive_file" --strip-components=1 -C "$sdk_root" ;;
 esac
 
-sh "$BUILDER" "$sdk_root" "$abi" "$OUT_DIR"
+REMOTE_GATE_SDK_FORCE_PREREQ="$sdk_force_prereq" sh "$BUILDER" "$sdk_root" "$abi" "$OUT_DIR"
 binary="$OUT_DIR/remote-gate-mapper-$abi"
 [ -x "$binary" ] || { echo "SDK runner did not produce expected mapper: $binary" >&2; exit 1; }
 
