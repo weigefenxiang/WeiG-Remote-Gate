@@ -11,6 +11,7 @@ on:
         options:
           - all
           - openwrt-19.07.10-x86_64
+          - openwrt-19.07.10-ramips-mt76x8
           - openwrt-21.02.7-x86_64
           - openwrt-24.10.5-x86_64
           - openwrt-25.12.5-x86_64
@@ -31,7 +32,7 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        sample: ${{ fromJSON(inputs.sample == 'all' && '["openwrt-19.07.10-x86_64","openwrt-21.02.7-x86_64","openwrt-24.10.5-x86_64","openwrt-25.12.5-x86_64","immortalwrt-24.10.5-x86_64"]' || format('["{0}"]', inputs.sample)) }}
+        sample: ${{ fromJSON(inputs.sample == 'all' && '["openwrt-19.07.10-x86_64","openwrt-19.07.10-ramips-mt76x8","openwrt-21.02.7-x86_64","openwrt-24.10.5-x86_64","openwrt-25.12.5-x86_64","immortalwrt-24.10.5-x86_64"]' || format('["{0}"]', inputs.sample)) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -52,6 +53,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: remote-gate-mapper-${{ matrix.sample }}-${{ github.sha }}
-          path: native/dist-sdk/remote-gate-mapper-x86_64
+          path: native/dist-sdk/remote-gate-mapper-*
           if-no-files-found: error
           retention-days: 14
