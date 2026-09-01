@@ -3,6 +3,7 @@
   const currentUrl = new URL(current?.src || location.href, location.href);
   const assetVersion = currentUrl.searchParams.get('v') || '';
   const assetUrl = (path) => assetVersion ? `${path}?v=${encodeURIComponent(assetVersion)}` : path;
+  let latestDashboard = null;
 
   const favicon = document.createElement('link');
   favicon.rel = 'icon';
@@ -10,10 +11,17 @@
   favicon.href = '/static/Wei.G.ico';
   document.head.append(favicon);
 
-  const interaction = document.createElement('link');
-  interaction.rel = 'stylesheet';
-  interaction.href = assetUrl('/static/css/interaction.css');
-  document.head.append(interaction);
+  function loadStylesheet(path) {
+    if (document.querySelector(`link[data-remote-gate-style="${path}"]`)) return;
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = assetUrl(path);
+    link.dataset.remoteGateStyle = path;
+    document.head.append(link);
+  }
+
+  loadStylesheet('/static/css/interaction.css');
+  loadStylesheet('/static/css/gate-status.css');
 
   const key = 'weig-remote-gate:theme';
   const saved = localStorage.getItem(key);
@@ -24,9 +32,8 @@
   document.documentElement.dataset.theme = resolved;
   document.documentElement.dataset.themeChoice = choice;
 
-  // Client source discovery is loaded explicitly by dashboard.html because it
-  // is security-critical. Optional UI modules inherit the exact same build SHA
-  // from this bootstrap URL so one HTML document can never mix asset builds.
+  // Security-critical client discovery is loaded explicitly by dashboard.html.
+  // Optional UI modules inherit the immutable build SHA from this script URL.
   const modules = [
     '/static/js/motion-feedback.js',
     '/static/js/endpoint-picker.js',
@@ -41,6 +48,10 @@
     script.dataset.remoteGateModule = src;
     document.head.append(script);
   });
+
+  function zh() {
+    return document.documentElement.dataset.lang === 'zh';
+  }
 
   function brandIcon() {
     const trigger = document.getElementById('utility-trigger');
@@ -65,149 +76,6 @@
     activate.style.textAlign = 'center';
   }
 
-  function ensureGatePolishStyles() {
-    if (document.getElementById('gate-orb-polish-styles')) return;
-    const style = document.createElement('style');
-    style.id = 'gate-orb-polish-styles';
-    style.textContent = `
-      .gate-orb-wrap {
-        display: flex !important;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: .65rem;
-        min-width: 0;
-      }
-      .gate-core .gate-orb-short-state {
-        margin-top: 5px;
-        max-width: 80px;
-        overflow: hidden;
-        font-size: 14px;
-        line-height: 1;
-        letter-spacing: .04em;
-        text-align: center;
-        white-space: nowrap;
-        text-overflow: ellipsis;
-      }
-      .gate-status-copy {
-        width: 100%;
-        min-width: 0;
-        text-align: center;
-      }
-      .gate-status-copy #gate-state {
-        display: block;
-        margin: 0;
-        color: var(--ink);
-        font-size: 13px;
-        line-height: 1.25;
-        overflow-wrap: anywhere;
-      }
-      .gate-status-copy #gate-substate {
-        display: block;
-        margin-top: .28rem;
-        color: var(--ink-subtle);
-        font-size: 10px;
-        line-height: 1.4;
-        overflow-wrap: anywhere;
-      }
-      #mapped-public-endpoint {
-        width: 100%;
-        min-width: 0;
-        padding: .62rem .65rem;
-        border: 1px solid var(--hairline);
-        border-radius: 12px;
-        background: color-mix(in srgb, var(--surface-raised) 72%, transparent);
-        box-shadow: var(--highlight-control);
-        text-align: center;
-      }
-      #mapped-public-endpoint[hidden] { display: none !important; }
-      #mapped-public-endpoint [data-mapped-endpoint-label] {
-        display: block;
-        color: var(--ink-muted);
-        font-size: 10px;
-        font-weight: 700;
-        line-height: 1.3;
-      }
-      .mapped-endpoint-copy {
-        appearance: none;
-        -webkit-appearance: none;
-        width: 100%;
-        min-width: 0;
-        margin: .3rem 0 .2rem;
-        padding: .5rem .55rem;
-        border: 1px solid color-mix(in srgb, var(--primary) 24%, var(--hairline));
-        border-radius: 10px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: .5rem;
-        color: var(--ink);
-        background: color-mix(in srgb, var(--surface-1) 78%, transparent);
-        cursor: pointer;
-      }
-      .mapped-endpoint-copy [data-mapped-endpoint-value] {
-        min-width: 0;
-        font-family: var(--font-mono);
-        font-size: clamp(13px, 1.7vw, 16px);
-        font-weight: 780;
-        line-height: 1.15;
-        overflow-wrap: anywhere;
-      }
-      .mapped-endpoint-copy [data-mapped-copy-hint] {
-        flex: 0 0 auto;
-        color: var(--ink-muted);
-        font-size: 9px;
-        font-weight: 750;
-        white-space: nowrap;
-      }
-      #mapped-public-endpoint [data-mapped-endpoint-note] {
-        display: block;
-        color: var(--ink-subtle);
-        font-size: 9px;
-        line-height: 1.35;
-      }
-      @media (hover:hover) and (pointer:fine) {
-        .mapped-endpoint-copy:hover {
-          border-color: var(--border-hover);
-          background: color-mix(in srgb, var(--surface-raised) 86%, transparent);
-          transform: translateY(-1px);
-        }
-      }
-      @media (max-width: 767px) {
-        .gate-layout {
-          grid-template-columns: 1fr !important;
-          gap: 14px !important;
-        }
-        .gate-orb-wrap {
-          grid-column: 1 / -1;
-          min-height: 0 !important;
-          padding: .15rem 0 .35rem;
-        }
-        .gate-status-copy,
-        #mapped-public-endpoint {
-          width: min(100%, 34rem);
-        }
-        .gate-status-copy #gate-state { font-size: 15px; }
-        .gate-status-copy #gate-substate { font-size: 11px; }
-        .mapped-endpoint-copy [data-mapped-endpoint-value] {
-          font-size: clamp(17px, 5.2vw, 23px);
-          overflow-wrap: normal;
-          word-break: normal;
-        }
-      }
-      @media (max-width: 379px) {
-        .mapped-endpoint-copy {
-          flex-direction: column;
-          gap: .25rem;
-        }
-        .mapped-endpoint-copy [data-mapped-endpoint-value] {
-          font-size: clamp(15px, 5vw, 19px);
-        }
-      }
-    `;
-    document.head.append(style);
-  }
-
   function orbStateLabel(state) {
     if (state === 'open') return 'OPEN';
     if (state === 'authorizing') return 'WAIT';
@@ -215,20 +83,35 @@
     return 'CLOSED';
   }
 
-  function syncOrbShortState() {
-    const orb = document.getElementById('gate-orb');
-    const label = document.getElementById('gate-orb-state');
-    if (!orb || !label) return;
-    label.textContent = orbStateLabel(String(orb.dataset.state || 'closed'));
+  function sideLabels(state) {
+    if (state === 'open') return zh() ? ['WAN 入口', '临时开放'] : ['WAN INPUT', 'TEMP OPEN'];
+    if (state === 'authorizing') return zh() ? ['WAN 入口', '正在同步'] : ['WAN INPUT', 'SYNCING'];
+    if (state === 'error') return zh() ? ['WAN 入口', '需要检查'] : ['WAN INPUT', 'CHECK'];
+    return zh() ? ['WAN 入口', '保持隐藏'] : ['WAN INPUT', 'HIDDEN'];
   }
 
-  function polishGateStatusLayout() {
+  function syncGateStatusPresentation() {
+    const orb = document.getElementById('gate-orb');
+    if (!orb) return;
+    const state = String(orb.dataset.state || 'closed');
+    const shortState = document.getElementById('gate-orb-state');
+    if (shortState) shortState.textContent = orbStateLabel(state);
+    const [left, right] = sideLabels(state);
+    const leftEl = document.querySelector('[data-gate-status-side="left"]');
+    const rightEl = document.querySelector('[data-gate-status-side="right"]');
+    if (leftEl) leftEl.textContent = left;
+    if (rightEl) rightEl.textContent = right;
+    document.getElementById('gate-status-copy')?.classList.toggle('is-redundant', state === 'closed');
+  }
+
+  function ensureGateStatusStructure() {
     const wrap = document.querySelector('.gate-orb-wrap');
     const orb = document.getElementById('gate-orb');
     const core = orb?.querySelector('.gate-core');
     const state = document.getElementById('gate-state');
     const substate = document.getElementById('gate-substate');
     if (!wrap || !orb || !core || !state || !substate) return;
+    wrap.classList.add('gate-status-hero');
 
     let shortState = document.getElementById('gate-orb-state');
     if (!shortState) {
@@ -238,29 +121,44 @@
       core.append(shortState);
     }
 
+    let stage = document.getElementById('gate-status-stage');
+    if (!stage) {
+      stage = document.createElement('div');
+      stage.id = 'gate-status-stage';
+      stage.className = 'gate-status-stage';
+
+      const left = document.createElement('span');
+      left.className = 'gate-status-side gate-status-side--left';
+      left.dataset.gateStatusSide = 'left';
+      const right = document.createElement('span');
+      right.className = 'gate-status-side gate-status-side--right';
+      right.dataset.gateStatusSide = 'right';
+
+      wrap.insertBefore(stage, wrap.firstChild);
+      stage.append(left, orb, right);
+    }
+
     let copy = document.getElementById('gate-status-copy');
     if (!copy) {
       copy = document.createElement('div');
       copy.id = 'gate-status-copy';
       copy.className = 'gate-status-copy';
       copy.setAttribute('aria-live', 'polite');
-      orb.insertAdjacentElement('afterend', copy);
+      stage.insertAdjacentElement('afterend', copy);
     }
     if (state.parentElement !== copy) copy.append(state);
     if (substate.parentElement !== copy) copy.append(substate);
 
-    syncOrbShortState();
-    if (orb.dataset.shortStateObserver !== '1') {
-      const observer = new MutationObserver(syncOrbShortState);
-      observer.observe(orb, {attributes: true, attributeFilter: ['data-state']});
-      orb.dataset.shortStateObserver = '1';
+    syncGateStatusPresentation();
+    if (orb.dataset.statusPresentationObserver !== '1') {
+      new MutationObserver(syncGateStatusPresentation)
+        .observe(orb, {attributes: true, attributeFilter: ['data-state']});
+      orb.dataset.statusPresentationObserver = '1';
     }
   }
 
   function mappedPlaceholder() {
-    return document.documentElement.dataset.lang === 'zh'
-      ? 'Endpoint 在 Activate 后确认'
-      : 'Endpoint resolved after Activate';
+    return zh() ? 'Endpoint 在 Activate 后确认' : 'Endpoint resolved after Activate';
   }
 
   function rewriteMappedOptions() {
@@ -281,15 +179,50 @@
     if (changed) window.RemoteGateEndpointPicker?.sync?.(select.id);
   }
 
-  function mappedEndpointFromDashboard(data) {
-    if (!data?.agent?.firewall?.active) return '';
-    const last = data?.gate?.queue?.last;
-    if (!last || last.action !== 'activate' || last.state !== 'done') return '';
+  function ackMappedEndpoint(last) {
+    if (!last || last.action !== 'activate' || last.state !== 'done' || last.access_method !== 'mapped') return null;
     const match = String(last.detail || '').match(/(?:^|\s)mapped-endpoint:([0-9.]+):([0-9]{1,5})(?:\s|$)/);
-    if (!match) return '';
+    if (!match) return null;
     const port = Number(match[2]);
-    if (!Number.isInteger(port) || port < 1 || port > 65535) return '';
-    return `${match[1]}:${port}`;
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+    return {endpoint: `${match[1]}:${port}`, current: false};
+  }
+
+  function mappedEndpointFromDashboard(data) {
+    const inventory = data?.inventory;
+    const raw = Array.isArray(inventory?.mappings) ? inventory.mappings : [];
+    const wgName = String(document.getElementById('wg-select')?.value || '').trim();
+    const serviceId = wgName ? `wg.${wgName}` : '';
+    let mappings = raw.filter((item) => item && item.family === 'ipv4' && item.transport === 'udp');
+    if (serviceId) {
+      const serviceMatches = mappings.filter((item) => String(item.service_id || '') === serviceId);
+      if (serviceMatches.length) mappings = serviceMatches;
+    }
+
+    const last = data?.gate?.queue?.last;
+    if (last?.access_method === 'mapped') {
+      const exact = mappings.filter((item) =>
+        (!last.wan || String(item.wan || '') === String(last.wan)) &&
+        (!last.device || String(item.device || '') === String(last.device)) &&
+        (!last.service_id || String(item.service_id || '') === String(last.service_id))
+      );
+      if (exact.length) mappings = exact;
+    }
+
+    mappings.sort((a, b) => Number(b.observed_at || 0) - Number(a.observed_at || 0));
+    const mapping = mappings[0];
+    if (mapping) {
+      const address = String(mapping.external_address || '').trim();
+      const port = Number(mapping.external_port || 0);
+      if (address && Number.isInteger(port) && port >= 1 && port <= 65535) {
+        return {
+          endpoint: `${address}:${port}`,
+          current: true,
+          observedAt: Number(mapping.observed_at || 0)
+        };
+      }
+    }
+    return ackMappedEndpoint(last);
   }
 
   function copyFallback(text) {
@@ -316,67 +249,75 @@
     } catch (_) {
       copied = copyFallback(text);
     }
-    const zh = document.documentElement.dataset.lang === 'zh';
     if (copied) {
       window.RemoteGateFeedback?.notify?.(
-        zh ? `已复制 ${text}` : `Copied ${text}`,
+        zh() ? `已复制 ${text}` : `Copied ${text}`,
         'success',
-        {title: zh ? 'Endpoint 已复制' : 'Endpoint copied', duration: 2200}
+        {title: zh() ? 'Endpoint 已复制' : 'Endpoint copied', duration: 2200}
       );
     } else {
       window.RemoteGateFeedback?.notify?.(
-        zh ? '复制失败，请长按 Endpoint 手动复制。' : 'Copy failed. Long-press the endpoint to copy it manually.',
+        zh() ? '复制失败，请长按 Endpoint 手动复制。' : 'Copy failed. Long-press the endpoint to copy it manually.',
         'error',
-        {title: zh ? '复制失败' : 'Copy failed'}
+        {title: zh() ? '复制失败' : 'Copy failed'}
       );
     }
   }
 
-  function renderMappedEndpoint(data) {
-    const endpoint = mappedEndpointFromDashboard(data);
+  function ensureVerifiedEndpoint() {
     const wrap = document.querySelector('.gate-orb-wrap');
-    if (!wrap) return;
+    if (!wrap) return null;
     let row = document.getElementById('mapped-public-endpoint');
-    if (!row) {
-      row = document.createElement('div');
-      row.id = 'mapped-public-endpoint';
+    if (row) return row;
+
+    row = document.createElement('div');
+    row.id = 'mapped-public-endpoint';
+    row.className = 'verified-endpoint';
+    row.hidden = true;
+
+    const label = document.createElement('span');
+    label.className = 'verified-endpoint-label';
+    label.dataset.mappedEndpointLabel = '1';
+
+    const value = document.createElement('button');
+    value.type = 'button';
+    value.className = 'verified-endpoint-value';
+    value.dataset.mappedEndpointCopy = '1';
+    value.dataset.mappedEndpointValue = '1';
+    value.addEventListener('click', () => copyMappedEndpoint(value.textContent));
+
+    const note = document.createElement('span');
+    note.className = 'verified-endpoint-note';
+    note.dataset.mappedEndpointNote = '1';
+
+    row.append(label, value, note);
+    wrap.append(row);
+    return row;
+  }
+
+  function renderMappedEndpoint(data) {
+    latestDashboard = data || latestDashboard;
+    const row = ensureVerifiedEndpoint();
+    if (!row || !latestDashboard) return;
+    const mapped = mappedEndpointFromDashboard(latestDashboard);
+    if (!mapped?.endpoint) {
       row.hidden = true;
-
-      const label = document.createElement('span');
-      label.dataset.mappedEndpointLabel = '1';
-
-      const value = document.createElement('button');
-      value.type = 'button';
-      value.className = 'mapped-endpoint-copy';
-      value.dataset.mappedEndpointCopy = '1';
-      const valueText = document.createElement('span');
-      valueText.dataset.mappedEndpointValue = '1';
-      const copyHint = document.createElement('small');
-      copyHint.dataset.mappedCopyHint = '1';
-      value.append(valueText, copyHint);
-      value.addEventListener('click', () => copyMappedEndpoint(valueText.textContent));
-
-      const note = document.createElement('span');
-      note.dataset.mappedEndpointNote = '1';
-      row.append(label, value, note);
-      wrap.append(row);
-    }
-
-    if (!endpoint) {
-      row.hidden = true;
+      row.classList.remove('is-current');
       return;
     }
 
-    const zh = document.documentElement.dataset.lang === 'zh';
     row.hidden = false;
-    row.querySelector('[data-mapped-endpoint-label]').textContent = zh ? '当前 WireGuard 公网 Endpoint' : 'Current WireGuard Public Endpoint';
+    row.classList.toggle('is-current', Boolean(mapped.current));
+    row.querySelector('[data-mapped-endpoint-label]').textContent = zh()
+      ? '当前 WireGuard 公网 Endpoint'
+      : 'Current WireGuard Public Endpoint';
     const value = row.querySelector('[data-mapped-endpoint-value]');
-    value.textContent = endpoint;
-    const copyButton = row.querySelector('[data-mapped-endpoint-copy]');
-    copyButton.title = zh ? `点击复制 ${endpoint}` : `Click to copy ${endpoint}`;
-    copyButton.setAttribute('aria-label', copyButton.title);
-    row.querySelector('[data-mapped-copy-hint]').textContent = zh ? '点击复制' : 'Copy';
-    row.querySelector('[data-mapped-endpoint-note]').textContent = zh ? '由 OpenWrt 在 Activate 时实时确认' : 'Resolved live by OpenWrt on Activate';
+    value.textContent = mapped.endpoint;
+    value.title = zh() ? `复制 ${mapped.endpoint}` : `Copy ${mapped.endpoint}`;
+    value.setAttribute('aria-label', value.title);
+    row.querySelector('[data-mapped-endpoint-note]').textContent = mapped.current
+      ? (zh() ? 'OpenWrt 持续观测，Activate 时实时确认' : 'Continuously observed by OpenWrt and re-confirmed on Activate')
+      : (zh() ? '由 OpenWrt 在 Activate 时实时确认' : 'Resolved live by OpenWrt on Activate');
   }
 
   function observeMappedPicker() {
@@ -410,25 +351,15 @@
   function ready() {
     brandIcon();
     polishGateActions();
-    ensureGatePolishStyles();
-    polishGateStatusLayout();
+    ensureGateStatusStructure();
     rewriteMappedOptions();
     observeMappedPicker();
   }
 
   window.addEventListener('remote-gate-language', () => {
+    syncGateStatusPresentation();
     queueMicrotask(rewriteMappedOptions);
-    const row = document.getElementById('mapped-public-endpoint');
-    const endpoint = row?.querySelector('[data-mapped-endpoint-value]')?.textContent;
-    if (endpoint && !row.hidden) {
-      const zh = document.documentElement.dataset.lang === 'zh';
-      row.querySelector('[data-mapped-endpoint-label]').textContent = zh ? '当前 WireGuard 公网 Endpoint' : 'Current WireGuard Public Endpoint';
-      row.querySelector('[data-mapped-copy-hint]').textContent = zh ? '点击复制' : 'Copy';
-      row.querySelector('[data-mapped-endpoint-note]').textContent = zh ? '由 OpenWrt 在 Activate 时实时确认' : 'Resolved live by OpenWrt on Activate';
-      const copyButton = row.querySelector('[data-mapped-endpoint-copy]');
-      copyButton.title = zh ? `点击复制 ${endpoint}` : `Click to copy ${endpoint}`;
-      copyButton.setAttribute('aria-label', copyButton.title);
-    }
+    if (latestDashboard) renderMappedEndpoint(latestDashboard);
   });
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready, {once: true});
