@@ -107,30 +107,91 @@ CLOSED
 
 The CLOSED re-handshake test also produced a packet on the mapped-ingress DROP rule, proving the failure was caused by Gate enforcement rather than by a client that never transmitted.
 
-## PPPoE / mapping-change status
+## PPPoE / mapping-change hardware PASS
 
-A real `WAN` PPPoE reconnect has already shown the expected fail-closed first half:
+The current `dev` settle/reconciliation path has now passed the complete real-router PPPoE reconnect lifecycle.
+
+A representative run changed all three relevant identities:
 
 ```text
-old PPPoE session disappears
--> old Mapping disappears
--> active_mappings becomes 0
--> Gate remains CLOSED
--> no old authorization is restored
+Before reconnect:
+pppoe-WAN IPv4      172.20.53.132
+Mapped public       223.73.44.162:24948
+Mapper ingress      53835
+
+After reconnect:
+pppoe-WAN IPv4      172.20.11.27
+Mapped public       223.73.44.74:1625
+Mapper ingress      54342
 ```
 
-The initial hardware run also exposed a settle race where the new `pppoe-WAN` address was already present before the WAN/default-route inventory was ready. The current `dev` hotplug path therefore performs bounded re-sync after interface-up (`0s -> 2s -> 5s -> 10s`). Internet Exit runtime also validates that its selected WAN, L3 device, main default route and Remote Gate policy-table default route are still current; a changed/missing route clears egress instead of falling back to another main-table WAN.
-
-The **second half still requires post-update hardware confirmation**:
+After the reconnect and bounded settle window:
 
 ```text
-PPPoE reconnect
--> new WAN/default-route inventory settles
+pppoe-WAN is UP
+-> active_mappings = 1
+-> inventory contains the new current Mapping
+-> protected_mapped_ingress_v4 = 1
+-> exact STUN control ACCEPT targets the new ingress
+-> generic mapped ingress remains DROP
+-> Gate remains active=false
+-> source_count=0 / authorized_sources=[]
+-> Internet Exit remains inactive
+```
+
+The user then explicitly selected the new Mapped endpoint and activated access. A fresh external WireGuard handshake advanced from `1788280607` to `1788287352`, and the new mapped ingress rule recorded authorized packets (`match-set weig_remote_gate_auth_v4 src`) before the fallback DROP. This proves the path was the new Mapping rather than the Direct WireGuard port.
+
+The complete hardware result is therefore:
+
+```text
+PPPoE down/up
+-> old PPPoE session and Mapping disappear
+-> no old Gate authorization migrates
+-> WAN/default-route inventory settles
 -> new Mapping is created automatically
--> Gate is still CLOSED
--> UI shows the current preferred endpoint
--> user explicitly Activates
--> a fresh WireGuard handshake succeeds through the new Mapping
+-> Gate remains CLOSED
+-> user explicitly Activates the new Mapping
+-> temporary source authorization is installed on the new ingress
+-> fresh WireGuard handshake succeeds through the new public Mapping
 ```
 
-A STUN response alone is not proof of inbound reachability. A fresh externally initiated WireGuard handshake is required.
+The hotplug path performs bounded re-sync after interface-up (`0s -> 2s -> 5s -> 10s`). Internet Exit runtime independently validates that its selected WAN, L3 device, main default route and Remote Gate policy-table default route remain current; a changed/missing route clears egress instead of silently falling back to another main-table WAN.
+
+A STUN response alone is never proof of inbound reachability. A fresh externally initiated WireGuard handshake is required.
+
+## Investigation pitfalls and recurring mistakes
+
+The following mistakes occurred during 0.3.17 development and should not be repeated:
+
+1. **Do not treat a changed PPPoE address or changed mapped endpoint as a failure.** Reconnect is expected to invalidate the old session. The test is whether a new Mapping is rebuilt safely.
+2. **Do not inspect immediately after `ifup` and declare recovery broken.** PPPoE address, ubus inventory, default routes, mapper state and firewall state can settle at different times. Use the bounded settle path and inspect after it completes.
+3. **Do not equate `mapper active` with `Gate open`.** A Mapping may stay active continuously while mapped ingress remains DROP. Authorization is a separate state.
+4. **Do not equate the first post-click `active=false` sample with Activate failure.** The router agent polls commands asynchronously. Confirm the command/ACK or wait for the firewall authorization before judging the result.
+5. **Do not use the dashboard request source blindly as client authorization evidence after WireGuard Internet Exit is enabled.** The HTTP request can return through the home router and appear to come from the router's own external address. Router egress/mapped addresses must be suppressed and the currently authorized real client source pinned.
+6. **Do not interpret `source_ip` attached to a Close request as an authorization source.** For Close it can simply be the HTTP request source; Close clears authorization rather than creating it.
+7. **Do not confuse Access Endpoint with Internet Exit.** Access Endpoint selects where WireGuard enters; Internet Exit selects where authenticated WireGuard traffic leaves. They default to the same WAN per family but are separate controls.
+8. **Do not hardcode `WAN`, `WAN2`, interface numbering or a particular public IP.** Default selection is capability-based. Another router may expose the public Direct path on a different logical WAN.
+9. **Do not require Dual to use one WAN.** Same-WAN public IPv4 + global IPv6 is preferred, but split Dual is valid when the best IPv4 and IPv6 endpoints belong to different WANs. Egress must then be tracked per family.
+10. **Do not allow split Dual egress to degrade to an unspecified main-table route.** If the selected WAN/L3/policy-table route is no longer current, clear runtime egress fail-closed.
+11. **Do not migrate authorization across Mapping changes.** A new mapped ingress requires a fresh explicit Activate even when the logical WAN name is unchanged.
+12. **Do not assume the external address or port must change on every reconnect.** A reconnect may receive the same tuple again; freshness must be based on current runtime ownership/status rather than inequality alone.
+13. **Do not inspect only `server/app/main.py` and conclude an API route is missing.** The formal server entry is `server/remote-gate.py`, which extends the handler and owns some routes such as the client-source candidate endpoint.
+14. **Do not use stale mapper status as authority.** Mapper status is valid only while the corresponding managed process is alive and owned; orphan/stale runtime state must be rejected or cleaned.
+15. **Do not preserve duplicate endpoint-ranking implementations.** `endpointScore()` remains because it is the shared primitive for IPv4/IPv6/Dual ordering; avoid creating a second competing preference engine.
+16. **Do not use `npx playwright install --with-deps chromium` in the main CI.** It caused slow Ubuntu APT downloads through Azure mirrors. The browser job installs the pinned Playwright package and Chromium without OS-package installation.
+
+## Remaining real-device work
+
+IPv4 Mapped Access, CLOSED/OPEN lifecycle, Close, source pinning and PPPoE remap recovery are real-device PASS on the current fw3 MT7981 sample.
+
+Still pending as separate hardware validation:
+
+```text
+Automatic default Public Direct endpoint + matching Internet Exit on the real dashboard
+IPv6 Gate after explicitly enabling it on the router
+Same-WAN Dual data plane
+Split-WAN Dual data plane and per-family Internet Exit
+Mapped Access on a real fw4/nftables device
+```
+
+Do not report those items as hardware PASS until they have been exercised on the relevant real device.

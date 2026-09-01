@@ -24,9 +24,9 @@ Relay   (future)
 - **Mapped** — Remote Gate establishes and maintains a NAT mapping, protects the router ingress with the Access Gate, and relays authorized traffic to a locally registered service.
 - **Relay** — reserved for a future relay path when Direct and Mapped are unavailable.
 
-0.3.17 intentionally starts with **IPv4 + UDP + WireGuard**. The architecture leaves Service Adapter interfaces for future protocols such as Shadowsocks and ShadowsocksR without turning Remote Gate into an arbitrary port-forwarding platform.
+0.3.17 Mapped Access intentionally starts with **IPv4 + UDP + WireGuard**. Direct IPv6 and Dual-stack Gate operation remain supported independently. The architecture leaves Service Adapter interfaces for future protocols such as Shadowsocks and ShadowsocksR without turning Remote Gate into an arbitrary port-forwarding platform.
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/SECURITY-MODEL.md`](docs/SECURITY-MODEL.md) and [`docs/PROJECT-RULES.md`](docs/PROJECT-RULES.md).
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), [`docs/SECURITY-MODEL.md`](docs/SECURITY-MODEL.md), [`docs/PROJECT-RULES.md`](docs/PROJECT-RULES.md) and [`docs/CURRENT-DEVICE-VALIDATION.md`](docs/CURRENT-DEVICE-VALIDATION.md).
 
 ## Security and traffic ownership
 
@@ -63,7 +63,7 @@ Two access scopes are available:
 
 For IPv6, the Access Gate controls only Echo Request and registered router-local service ingress. NDP, Router Advertisement, Packet Too Big and other ICMPv6 control traffic fall through to the original firewall policy.
 
-The optional **Internet Exit** is separate from the Access Gate. When explicitly selected, it may temporarily install only the PBR, FORWARD and NAT44/NAT66 state required to send the selected WireGuard client subnet through the selected WAN. It does not take ownership of unrelated forwarded traffic, and it does not persist egress policy in UCI.
+The optional **Internet Exit** is separate from the Access Gate. When explicitly selected, it may temporarily install only the PBR, FORWARD and NAT44/NAT66 state required to send the selected WireGuard client subnet through the selected WAN **per IP family**. A split Dual plan may use one WAN for IPv4 and another for IPv6. Internet Exit does not take ownership of unrelated forwarded traffic and does not persist egress policy in UCI.
 
 ## Architecture
 
@@ -210,7 +210,18 @@ The server does not assume one public IPv4 WAN. An endpoint may be:
 - per-WAN observed IPv4 `NAT egress · Try`;
 - private/CGNAT IPv4 `Try` for manual experiments.
 
-Direct and verified Mapped paths are recommended ahead of heuristic/private paths. Private/CGNAT addresses are not falsely described as Internet-reachable.
+When the user has not made a manual choice, endpoint preference is capability-based rather than tied to WAN names:
+
+```text
+IPv4: Public Direct -> Mapped -> observed NAT egress -> Private/CGNAT Try
+IPv6: prefer the best IPv4 WAN when it also has Global IPv6,
+      otherwise use the best Global IPv6 Direct endpoint
+Dual: same-WAN Public IPv4 + Global IPv6
+      -> same-WAN Mapped IPv4 + Global IPv6
+      -> best IPv4 + best IPv6 across different WANs
+```
+
+Internet Exit defaults to the Access WAN for each family. A split Dual Access plan therefore defaults to split per-family Internet Exit as well. Explicit manual selections remain user-controlled while still valid.
 
 The OpenWrt-family agent continuously derives protected WAN devices, eligible IPv6 devices and registered local service ingress. A temporary authorization is revoked immediately if its WAN device or registered ingress leaves the current protected policy, even before its TTL expires.
 
@@ -218,14 +229,11 @@ The OpenWrt-family agent continuously derives protected WAN devices, eligible IP
 
 IPv4 and IPv6 are independent records for the authenticated browser session. Learning one family never deletes the other.
 
-Source priority:
+Source records may come from the authenticated Cloudflare request path or a short-lived family-specific browser candidate probe. The normal Activate body does not carry an arbitrary authorization address as authority; the VPS resolves the selected family from the session source store.
 
-1. **Cloudflare observation (`verified`)** — the current request's `CF-Connecting-IP`.
-2. **Network probe (`heuristic`)** — a short-lived fallback/complement when one family is missing.
+A router-owned external or Mapped address is never accepted as new client evidence. This matters after WireGuard Internet Exit is enabled: the dashboard HTTP request may return through the home router and appear to originate from the router itself. While Gate access is active, the actual authorized client source is pinned against that feedback loop.
 
-The authenticated browser posts only the probe result to a session+CSRF-protected endpoint. A later Cloudflare observation for the same family replaces the heuristic value. The normal Activate request still does not carry a raw authorization IP as authority; the VPS resolves the selected family from the session source store.
-
-When both families are usable, the UI recommends IPv4 first, but this is not a lock. After the user manually selects IPv6, refreshes preserve that selection while IPv6 remains usable.
+When both families are usable, the UI may prefer IPv4 initially, but this is not a lock. Manual family/endpoint choices are preserved while the selected intent remains available.
 
 ## Dashboard interaction system
 
@@ -250,14 +258,14 @@ Quick presets remain:
 ## Remote Gate flow
 
 1. Sign in to the Cloudflare-fronted dashboard.
-2. VPS records the current Cloudflare-observed source; the browser best-effort completes a missing IPv4/IPv6 family.
-3. Choose IP family, Access Endpoint, registered service, Access Scope, duration and optional Internet Exit.
-4. VPS resolves the selected session source and endpoint server-side and queues the short-lived command transaction.
+2. VPS records the current authenticated request source; the browser may best-effort complete a missing IPv4/IPv6 family.
+3. The dashboard automatically proposes the best current Access Endpoint and matching Internet Exit; the user may override either selection.
+4. VPS resolves the selected session source and endpoint server-side and queues the short-lived command transaction only after explicit `Activate`.
 5. The router pulls the command over outbound HTTPS.
 6. The router validates the WAN/device, registered ingress/service and TTL again.
 7. Access Gate authorizes only the selected source on the selected registered ingress.
 8. If the endpoint is Mapped, the Mapping Engine relays only through its locally registered mapping/service relationship.
-9. If Internet Exit is selected, the independent egress helper validates and installs its temporary scoped path.
+9. If Internet Exit is selected, the independent egress helper validates and installs its temporary scoped per-family path.
 10. TTL expiry or **Close access now** clears the applicable temporary authorization/runtime state.
 
 ## Optional IPv6 Gate
@@ -268,9 +276,11 @@ The outbound control transport is separate from IPv6 Gate. The agent can use hea
 
 ## Optional WireGuard Internet Exit
 
-Internet Exit is runtime-only and independent from the Access Endpoint. The initial Internet Exit choice follows the selected Access Endpoint WAN for the current IP family, while a user can manually select another eligible WAN and that manual choice is preserved for that family.
+Internet Exit is runtime-only and independent from the Access Endpoint. The initial Internet Exit choice follows the selected Access Endpoint WAN **per family**, while a user can manually select another eligible WAN and that manual choice is preserved for that family.
 
-Supported modes are IPv4, IPv6 and Dual. Dual installation is transactional. No persistent Internet Exit UCI policy is created. Disable, Close, TTL expiry, failure rollback or reboot leaves Internet Exit off.
+Supported modes are IPv4, IPv6 and Dual. Same-WAN Dual may use one logical WAN for both families; split Dual may use different IPv4 and IPv6 WANs. Dual installation is transactional: both requested families must validate and install successfully or the helper rolls back the partial runtime state. If a selected WAN/L3/default route or Remote Gate policy-table default route is no longer current, runtime egress is cleared fail-closed rather than silently falling back to another main-table WAN.
+
+No persistent Internet Exit UCI policy is created. Disable, Close, TTL expiry, failure rollback or reboot leaves Internet Exit off.
 
 ## Safe update
 
@@ -313,28 +323,45 @@ Do not create `dev/*`, `feature/*`, version branches or temporary development br
 
 ## Validation status
 
-### Hardware validated baseline
+### Hardware validated fw3 baseline
 
-The existing fw3 IPv4 Access Gate path has been validated end-to-end on a real ImmortalWrt 21.02-class router using iptables legacy + ipset, PPPoE public WAN, Cloudflare control plane and a router-local WireGuard listener. Verified behavior included CLOSED blocking, source-specific Activate, real WireGuard traffic, TTL expiry, fresh-handshake failure after expiry, and preservation of the Gate boundary.
+The fw3 IPv4 Access Gate and IPv4 UDP Mapped path have been validated end-to-end on a real ImmortalWrt 21.02-class MT7981 router using iptables legacy + ipset, PPPoE/CGNAT upstream, Cloudflare control plane and a router-local WireGuard listener.
 
-The runtime WireGuard Internet Exit path has also been exercised on real hardware with Dual client configuration, separate IPv4/IPv6 policy rules, temporary routing tables and NAT44/NAT66 state.
+Real-device validation now includes:
+
+```text
+CLOSED mapped ingress blocks a fresh external WireGuard handshake
+Activate authorizes the actual cellular source and a fresh mapped handshake succeeds
+WireGuard Internet Exit can be enabled without replacing the pinned client source with router egress
+Close removes authorization while the mapper/STUN control path may remain
+CLOSED re-handshake reaches the mapped ingress DROP and does not advance latest-handshake
+PPPoE reconnect removes the old Mapping without migrating authorization
+bounded interface settle rebuilds a new Mapping automatically
+Gate remains CLOSED on the new Mapping until a fresh explicit Activate
+fresh WireGuard handshake succeeds through the rebuilt Mapping
+```
+
+The representative PPPoE run changed the private PPPoE address, public mapped endpoint and mapper ingress, then successfully established a fresh handshake through the new mapping. Exact addresses and ports are runtime values and are not product assumptions.
+
+The runtime WireGuard Internet Exit path has also been exercised on real hardware. Current split-Dual behavior is covered by CI/browser/runtime contracts but is not yet counted as real-device PASS while IPv6 Gate remains disabled on the current router.
 
 This hardware sample establishes a validated fw3 baseline; it is not a version-number minimum for the OpenWrt-family capability contract.
 
-### 0.3.17 validation requirement
+### Remaining validation before wider promotion
 
-Mapped Access is not considered hardware validated until real compatible NAT/CGNAT testing confirms:
+Still pending as distinct hardware work:
 
 ```text
-CLOSED -> mapped ingress blocked
-Activate -> authorized external WireGuard handshake succeeds
-unauthorized source -> remains blocked
-TTL -> new access blocked while mapping may remain
-Close -> immediate block
-WAN reconnect -> mapping is safely rebuilt/removed
+real-dashboard automatic Public Direct default + matching Internet Exit
+IPv6 Gate after explicitly enabling it
+same-WAN Dual data plane
+split-WAN Dual data plane and per-family Internet Exit
+Mapped Access on a real fw4/nftables device
 ```
 
-At least one real fw3 path and one real fw4 path require Mapped Access validation before promotion to `main`. Additional historical CPU/ABI classes keep their own binary-validation status rather than inheriting support from another architecture.
+At least one real fw4 path still requires Mapped Access validation before wider promotion. Additional historical CPU/ABI classes keep their own binary-validation status rather than inheriting support from another architecture.
+
+See [`docs/CURRENT-DEVICE-VALIDATION.md`](docs/CURRENT-DEVICE-VALIDATION.md) for the exact current hardware matrix and investigation pitfalls.
 
 ## Production checks
 
@@ -351,7 +378,7 @@ Read-only router diagnostics:
 
 0.3.17 exposes sanitized Mapping Engine and Service Registry status without printing mapper payloads, service secrets, WireGuard private keys or Remote Gate credentials.
 
-For each Gate family verify CLOSED -> Activate -> actual service traffic -> TTL -> CLOSED, and separately confirm existing qBittorrent/UPnP/DNAT/FORWARD behavior remains unchanged. For Internet Exit, verify the selected WireGuard subnet uses only the selected WAN and that Close/TTL cleanup removes temporary egress state.
+For each Gate family verify CLOSED -> Activate -> actual service traffic -> TTL -> CLOSED, and separately confirm existing qBittorrent/UPnP/DNAT/FORWARD behavior remains unchanged. For Internet Exit, verify the selected WireGuard subnet uses only the selected per-family WAN and that Close/TTL cleanup removes temporary egress state.
 
 ## License
 
