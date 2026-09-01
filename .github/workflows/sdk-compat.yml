@@ -2,6 +2,19 @@ name: SDK Compatibility (manual)
 
 on:
   workflow_dispatch:
+    inputs:
+      sample:
+        description: SDK sample to validate
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - openwrt-19.07.10-x86_64
+          - openwrt-21.02.7-x86_64
+          - openwrt-24.10.5-x86_64
+          - openwrt-25.12.5-x86_64
+          - immortalwrt-24.10.5-x86_64
 
 permissions:
   contents: read
@@ -18,12 +31,7 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        sample:
-          - openwrt-19.07.10-x86_64
-          - openwrt-21.02.7-x86_64
-          - openwrt-24.10.5-x86_64
-          - openwrt-25.12.5-x86_64
-          - immortalwrt-24.10.5-x86_64
+        sample: ${{ fromJSON(inputs.sample == 'all' && '["openwrt-19.07.10-x86_64","openwrt-21.02.7-x86_64","openwrt-24.10.5-x86_64","openwrt-25.12.5-x86_64","immortalwrt-24.10.5-x86_64"]' || format('["{0}"]', inputs.sample)) }}
     steps:
       - uses: actions/checkout@v4
 
