@@ -58,20 +58,22 @@ case "$family" in
         ;;
 esac
 
-# OpenWrt 19.07 has two pinned legacy SDK quirks on current hosts:
-# 1. its prerequisite gate still requires Python 2 even though this package is
-#    a self-contained C build; and
-# 2. its old static musl/binutils combination can omit the initial PT_LOAD when
-#    no build-id note is emitted, leaving musl without a usable AT_PHDR mapping
-#    and crashing in static_init_tls before main(). Keep both workarounds scoped
-#    to this exact compatibility sample. All other SDKs stay strict/default.
+# OpenWrt 19.07 SDKs still enforce the obsolete Python 2 host prerequisite on
+# current hosts even for this self-contained C package. Validate and bypass
+# that exact prerequisite failure across the pinned 19.07.10 release only.
+#
+# The x86_64 sample has an additional old static musl/binutils startup quirk:
+# without a build-id note its ELF can omit the initial PT_LOAD containing the
+# program headers, causing static_init_tls to crash before main(). Keep that
+# linker workaround x86_64-only unless another real architecture proves it is
+# required there too. All newer SDK releases stay strict/default.
 sdk_force_prereq=0
 sdk_link_flags=''
 case "$sample" in
-    openwrt-19.07.10-x86_64)
-        sdk_force_prereq=1
-        sdk_link_flags='-Wl,--build-id=sha1'
-        ;;
+    openwrt-19.07.10-*) sdk_force_prereq=1 ;;
+esac
+case "$sample" in
+    openwrt-19.07.10-x86_64) sdk_link_flags='-Wl,--build-id=sha1' ;;
 esac
 
 for cmd in curl sha256sum tar file; do
