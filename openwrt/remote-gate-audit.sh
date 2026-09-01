@@ -41,19 +41,6 @@ safe_ubus_status() {
     printf '  IPv6 prefix: %s\n' "$p6"
 }
 
-safe_natmap_status() {
-    file="$1"
-    [ -f "$file" ] || return 0
-    pid="$(basename "$file" .json)"
-    ip="$(jsonfilter -i "$file" -e '@.ip' 2>/dev/null | sed -n '1p')"
-    port="$(jsonfilter -i "$file" -e '@.port' 2>/dev/null | sed -n '1p')"
-    inner="$(jsonfilter -i "$file" -e '@.inner_port' 2>/dev/null | sed -n '1p')"
-    proto="$(jsonfilter -i "$file" -e '@.protocol' 2>/dev/null | sed -n '1p')"
-    [ -n "$ip$port$inner$proto" ] || return 0
-    printf 'status pid=%s | protocol=%s | public=%s:%s | inner_port=%s\n' \
-        "$pid" "${proto:--}" "${ip:--}" "${port:--}" "${inner:--}"
-}
-
 section 'SYSTEM'
 if [ -r /etc/openwrt_release ]; then
     grep -E '^(DISTRIB_ID|DISTRIB_RELEASE|DISTRIB_REVISION|DISTRIB_TARGET|DISTRIB_ARCH)=' /etc/openwrt_release 2>/dev/null || true
@@ -82,7 +69,7 @@ fi
 
 section 'RELEVANT PACKAGES'
 if has opkg; then
-    opkg list-installed 2>/dev/null | grep -E '^(firewall|firewall4|iptables|ip6tables|ipset|kmod-ipt-ipset|kmod-ip6tables|kmod-nft|nftables|wireguard|kmod-wireguard|natmap)( |-|$)' || true
+    opkg list-installed 2>/dev/null | grep -E '^(firewall|firewall4|iptables|ip6tables|ipset|kmod-ipt-ipset|kmod-ip6tables|kmod-nft|nftables|wireguard|kmod-wireguard)( |-|$)' || true
 else
     printf 'opkg not found\n'
 fi
@@ -112,48 +99,48 @@ if has ip; then
     ip -6 route show default 2>/dev/null || true
 fi
 
-section 'WIREGUARD (NO PRIVATE KEYS)'
-if has wg; then
+section 'WIREGUARD SERVICES (NO PRIVATE KEYS)'
+if [ -x /usr/lib/remote-gate/remote-gate-service-registry.sh ]; then
+    services="$(/usr/lib/remote-gate/remote-gate-service-registry.sh list 2>/dev/null || true)"
+    if [ -n "$services" ]; then
+        printf '%s\n' "$services" | while IFS='|' read -r service_id service_type transport name service_port; do
+            printf '%s | type=%s | transport=%s | name=%s | service_port=%s\n' \
+                "$service_id" "$service_type" "$transport" "$name" "$service_port"
+        done
+    else
+        printf 'No registered service detected.\n'
+    fi
+elif has wg; then
     interfaces="$(wg show interfaces 2>/dev/null || true)"
     if [ -z "$interfaces" ]; then
         printf 'No live WireGuard interface\n'
     else
         for name in $interfaces; do
             printf '%s | listen_port=%s\n' "$name" "$(wg show "$name" listen-port 2>/dev/null | sed -n '1p')"
-            wg show "$name" latest-handshakes 2>/dev/null | awk '{if ($2 > latest) latest=$2} END {printf "  latest_handshake_epoch=%d\n", latest+0}'
         done
     fi
 else
-    printf 'wg not found\n'
+    printf 'Service registry and wg command not found.\n'
 fi
 
-section 'NATMAP DISCOVERY'
-print_cmd natmap
-if has natmap; then
-    printf 'natmap executable detected.\n'
+section 'MAPPED ACCESS'
+if [ -x /usr/lib/remote-gate/remote-gate-mapper ]; then
+    printf 'Mapper binary: available\n'
 else
-    printf 'natmap executable not detected.\n'
+    printf 'Mapper binary: unavailable (Mapped Access remains optional)\n'
 fi
-if has pidof && pidof natmap >/dev/null 2>&1; then
-    printf 'natmap process: running\n'
+if [ -x /usr/lib/remote-gate/remote-gate-mapping.sh ]; then
+    printf 'Mapping status: '
+    /usr/lib/remote-gate/remote-gate-mapping.sh status-json 2>/dev/null || printf '{"available":false,"state":"unavailable","active_mappings":0,"detail":"status-query-failed"}'
+    printf '\n'
+    pairs="$(/usr/lib/remote-gate/remote-gate-mapping.sh ingress-pairs 2>/dev/null || true)"
+    if [ -n "$pairs" ]; then
+        printf '%s\n' "$pairs" | while IFS='|' read -r dev port; do
+            printf '  protected mapped ingress: device=%s udp_port=%s\n' "$dev" "$port"
+        done
+    fi
 else
-    printf 'natmap process: not detected\n'
-fi
-if [ -e /etc/config/natmap ]; then
-    printf 'UCI config file: /etc/config/natmap exists (content intentionally not printed)\n'
-else
-    printf 'UCI config file: not detected\n'
-fi
-if [ -d /var/run/natmap ] && has jsonfilter; then
-    found=0
-    for file in /var/run/natmap/*.json; do
-        [ -f "$file" ] || continue
-        found=1
-        safe_natmap_status "$file"
-    done
-    [ "$found" -eq 1 ] || printf 'Runtime status: no mapping JSON detected\n'
-else
-    printf 'Runtime status directory: not detected\n'
+    printf 'Mapping helper: unavailable\n'
 fi
 
 section 'REMOTE GATE CURRENT STATE'
@@ -172,4 +159,4 @@ fi
 section 'NOTES'
 printf '%s\n' \
     'This audit performs read-only capability/status queries only.' \
-    'It does not read /etc/remote-gate.conf, WireGuard private keys, NATMap configuration contents, notify scripts, or any secret/token value.'
+    'It does not read /etc/remote-gate.conf, WireGuard private keys, service secrets, mapper payloads, or any token/credential value.'
