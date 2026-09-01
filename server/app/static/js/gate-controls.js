@@ -259,6 +259,15 @@
     return value && value !== '__lan__' ? value : '';
   }
 
+  function reportedEgress(currentData = data()) {
+    const value = currentData?.agent?.egress;
+    return value && typeof value === 'object' ? value : {active:false,state:'inactive',mode:'',wan:'',detail:'',expires_in:0};
+  }
+
+  function egressMatchesSelection(egress, wan, family) {
+    return Boolean(wan && egress && String(egress.wan || '') === wan && String(egress.mode || '') === family);
+  }
+
   function sourceFor(family) { return data()?.client_sources?.[family]?.address || ''; }
   function singleSelectable(family) {
     if (!['ipv4','ipv6'].includes(family)) return false;
@@ -505,6 +514,7 @@
     const locked = syncTransaction(currentData);
     const pending = currentData?.gate?.queue?.pending, next = currentData?.gate?.queue?.next, last = currentData?.gate?.queue?.last;
     const fw = currentData?.agent?.firewall || {}, active = activeFamilyState(fw, state.family), pendingAction = pending?.action, orb = $('gate-orb');
+    const egress = reportedEgress(currentData), selectedExit = selectedEgressWan(), selectedExitMatches = egressMatchesSelection(egress, selectedExit, state.family);
     let mode='closed', title=t('gate.closed'), subtitle=t('gate.closedSub'), badge=t('gate.closedBadge');
     if (pendingAction === 'activate' || (locked && lockAction(currentData) === 'activate')) {
       mode='authorizing'; title=t('gate.authorizing');
@@ -524,6 +534,27 @@
         : [sourceExpiresIn(fw, state.family)];
       const values=selected.map(Number).filter((x)=>x>0), ttl=values.length?Math.min(...values):Number(fw.expires_in||0);
       subtitle=t('gate.expiresIn',{value:remaining(ttl)}); badge=t('gate.authorizedBadge');
+
+      if (selectedExit) {
+        if (selectedExitMatches && egress.state === 'failed') {
+          mode='error';
+          title=zh() ? 'OPEN · 出口失败' : 'OPEN · EXIT FAILED';
+          subtitle=String(egress.detail || (zh() ? 'Internet 出口启用失败。' : 'Internet egress failed to activate.'));
+          badge='EXIT FAILED';
+        } else if (selectedExitMatches && egress.active && egress.state === 'active') {
+          mode='open';
+          title=t('gate.open');
+          const egressTtl=Number(egress.expires_in||0);
+          subtitle=zh()
+            ? `Internet 出口 ${egress.wan} · ${String(egress.mode||'').toUpperCase()} · 剩余 ${remaining(egressTtl)}`
+            : `Internet Exit ${egress.wan} · ${String(egress.mode||'').toUpperCase()} · ${remaining(egressTtl)} remaining`;
+          badge='EXIT ACTIVE';
+        } else {
+          title=zh() ? 'OPEN · 出口未生效' : 'OPEN · EXIT OFF';
+          subtitle=zh() ? 'Gate 已授权，但所选 Internet 出口当前未处于 Active。' : 'Gate access is open, but the selected Internet exit is not active.';
+          badge='EXIT OFF';
+        }
+      }
     } else if (last?.state === 'failed' || last?.state === 'expired') {
       mode='error'; title=t('gate.error');
       subtitle=last.detail || (last.state === 'expired' ? (zh() ? '请求已过期。' : 'The request expired.') : t('gate.agentFailed'));
@@ -675,6 +706,8 @@
     dualEndpointPairs,
     egressCandidates,
     selectedEgressWan,
+    reportedEgress,
+    egressMatchesSelection,
     rememberEndpointSelection,
     restoreEndpointSelection
   };
