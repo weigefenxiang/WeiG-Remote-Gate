@@ -79,6 +79,24 @@
     return endpointsFor(family).find((item) => item.id === value)?.wan || '';
   }
 
+  function selectedAccessWan() {
+    const family = context?.state?.family;
+    if (!['ipv4','ipv6','dual'].includes(family)) return '';
+    return endpointWanForSelection(family, String(endpointSelect()?.value || ''));
+  }
+
+  function egressSelectionIsManual(family = context?.state?.family) {
+    return Boolean(context?.state?.egressManualSelections?.[family]);
+  }
+
+  function recentTerminalFailure(last) {
+    if (!last || !['failed','expired'].includes(String(last.state || ''))) return false;
+    const terminalAt = Number(last.acked_at || last.expires_at || last.created_at || 0);
+    if (!terminalAt) return false;
+    const age = Math.max(0, Math.floor(Date.now() / 1000) - terminalAt);
+    return age <= 120;
+  }
+
   function rememberEndpointSelection(family = context?.state?.family) {
     if (!context || !['ipv4','ipv6','dual'].includes(family)) return;
     const select = endpointSelect();
@@ -223,9 +241,13 @@
     if (!context) return;
     const select = ensureEgressControl();
     if (!select) return;
+    const state = context.state;
+    const family = state.family;
+    if (!state.egressManualSelections || typeof state.egressManualSelections !== 'object') state.egressManualSelections = {};
     const label = document.querySelector('[data-egress-label]');
     if (label) label.textContent = zh() ? 'Internet 出口' : 'Internet Exit';
-    const prior = String(context.state.egressWan || select.value || '__lan__');
+    const remembered = String(state.egressSelections?.[family] || '');
+    const accessWan = selectedAccessWan();
     select.replaceChildren();
 
     const local = document.createElement('option');
@@ -242,9 +264,12 @@
       select.append(option);
     });
 
-    if ([...select.options].some((option) => option.value === prior)) select.value = prior;
+    const hasOption = (value) => Boolean(value && [...select.options].some((option) => option.value === value));
+    if (egressSelectionIsManual(family) && hasOption(remembered)) select.value = remembered;
+    else if (!egressSelectionIsManual(family) && hasOption(accessWan)) select.value = accessWan;
+    else if (egressSelectionIsManual(family) && remembered === '__lan__') select.value = '__lan__';
     else select.value = '__lan__';
-    context.state.egressWan = select.value;
+    state.egressWan = select.value;
     select.disabled = false;
     window.RemoteGateEndpointPicker?.bindSelect?.('egress-select', {
       eyebrow: 'INTERNET EXIT',
@@ -508,9 +533,10 @@
   function render(currentData = data()) {
     if (!context) return;
     const state = context.state, t = context.t, remaining = context.remaining;
-    syncFamily(); syncScope(); syncEgressSelect();
+    syncFamily(); syncScope();
     if (state.family === 'dual') syncDualEndpointSelect();
     else restoreEndpointSelection(state.family);
+    syncEgressSelect();
     const locked = syncTransaction(currentData);
     const pending = currentData?.gate?.queue?.pending, next = currentData?.gate?.queue?.next, last = currentData?.gate?.queue?.last;
     const fw = currentData?.agent?.firewall || {}, active = activeFamilyState(fw, state.family), pendingAction = pending?.action, orb = $('gate-orb');
@@ -555,7 +581,7 @@
           badge='EXIT OFF';
         }
       }
-    } else if (last?.state === 'failed' || last?.state === 'expired') {
+    } else if (recentTerminalFailure(last)) {
       mode='error'; title=t('gate.error');
       subtitle=last.detail || (last.state === 'expired' ? (zh() ? '请求已过期。' : 'The request expired.') : t('gate.agentFailed'));
       badge=t('gate.errorBadge');
@@ -674,6 +700,7 @@
     if (!state.scope) state.scope='wg';
     if (!state.egressWan) state.egressWan='__lan__';
     if (!state.endpointSelections || typeof state.endpointSelections !== 'object') state.endpointSelections={};
+    if (!state.egressManualSelections || typeof state.egressManualSelections !== 'object') state.egressManualSelections={};
     if (typeof state.familyManual!=='boolean') state.familyManual=false;
     ensureDualButton();
     ensureEgressControl();
@@ -686,7 +713,7 @@
     $('family-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-family]'); if(!button||transactionLocked()||button.disabled||!['ipv4','ipv6','dual'].includes(button.dataset.family))return;rememberEndpointSelection(state.family);state.familyManual=true;state.family=button.dataset.family;context.onFamilyChange?.(state.family);if(state.family==='dual')syncDualEndpointSelect();else restoreEndpointSelection(state.family);syncEgressSelect();render();});
     $('scope-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-scope]');if(!button||transactionLocked()||!['wg','wg_ping'].includes(button.dataset.scope))return;state.scope=button.dataset.scope;syncScope();});
     endpointSelect()?.addEventListener('change',()=>{if(transactionLocked())return;rememberEndpointSelection(state.family);render();});
-    egressSelect()?.addEventListener('change',()=>{if(transactionLocked())return;state.egressWan=egressSelect().value||'__lan__';render();});
+    egressSelect()?.addEventListener('change',()=>{if(transactionLocked())return;state.egressWan=egressSelect().value||'__lan__';state.egressManualSelections[state.family]=true;render();});
     $('wg-select')?.addEventListener('change',()=>{if(transactionLocked())return;context.onWireGuardChange?.();syncFamily();render();});
     $('activate-button')?.addEventListener('click',activate);
     $('gate-orb')?.addEventListener('click',toggleAccess);
