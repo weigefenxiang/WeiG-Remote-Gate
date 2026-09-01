@@ -11,11 +11,12 @@ PLATFORM = ROOT / "openwrt" / "remote-gate-platform.sh"
 INSTALL = (ROOT / "openwrt" / "install.sh").read_text(encoding="utf-8")
 UPDATE = (ROOT / "openwrt" / "update.sh").read_text(encoding="utf-8")
 AUDIT = (ROOT / "openwrt" / "remote-gate-audit.sh").read_text(encoding="utf-8")
+INIT = (ROOT / "openwrt" / "remote-gate-agent.init").read_text(encoding="utf-8")
 RULES = (ROOT / "docs" / "PROJECT-RULES.md").read_text(encoding="utf-8")
 
 
 class PlatformCompatibilityTests(unittest.TestCase):
-    def run_platform(self, action, release_text="", fake_commands=None, root_setup=None):
+    def run_platform(self, action, release_text="", fake_commands=None, root_setup=None, with_procd=True):
         fake_commands = fake_commands or {}
         with tempfile.TemporaryDirectory() as td:
             temp = Path(td)
@@ -24,9 +25,10 @@ class PlatformCompatibilityTests(unittest.TestCase):
             os_release = temp / "missing-os-release"
             rc_common = temp / "rc.common"
             rc_common.write_text("#!/bin/sh\n", encoding="utf-8")
-            procd = temp / "procd"
-            procd.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-            procd.chmod(0o755)
+            procd = temp / ("procd" if with_procd else "missing-procd")
+            if with_procd:
+                procd.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                procd.chmod(0o755)
 
             fake_bin = temp / "bin"
             fake_bin.mkdir()
@@ -148,6 +150,23 @@ DISTRIB_TARGET='ramips/mt7621'
 
                 result = self.run_platform("libc", root_setup=setup)
                 self.assertEqual(result.stdout.strip(), expected)
+
+    def test_rc_common_without_procd_is_a_supported_service_framework(self):
+        result = self.run_platform("init", with_procd=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "rc.common")
+        self.assertIn("procd|rc.common", INSTALL)
+        self.assertIn("procd|rc.common", UPDATE)
+        self.assertNotIn("currently requires OpenWrt procd", INSTALL)
+        self.assertNotIn("currently requires OpenWrt procd", UPDATE)
+
+    def test_legacy_init_fallback_checks_pid_ownership(self):
+        self.assertIn("USE_PROCD=1", INIT)
+        self.assertIn("pid_owned()", INIT)
+        self.assertIn("/proc/$pid/cmdline", INIT)
+        self.assertIn("legacy_start_one()", INIT)
+        self.assertIn("legacy_stop_one()", INIT)
+        self.assertIn("return-route-loop", INIT)
 
     def test_lifecycle_deploys_shared_platform_helper(self):
         self.assertIn('fetch_file "remote-gate-platform.sh"', INSTALL)
