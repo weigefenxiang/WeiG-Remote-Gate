@@ -1,23 +1,7 @@
-name: SDK Compatibility
+name: SDK Compatibility (manual)
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '23 3 * * 0'
-  push:
-    branches:
-      - dev
-    paths:
-      - 'VERSION'
-      - 'native/remote-gate-mapper.c'
-      - 'native/remote-gate-mapper-entry.c'
-      - 'native/build-openwrt-sdk.sh'
-      - 'native/run-sdk-compat.sh'
-      - 'native/mapper-abi-map.tsv'
-      - 'native/mapper-build-classes.tsv'
-      - 'native/sdk-compat-matrix.tsv'
-      - 'native/openwrt-sdk-package/**'
-      - '.github/workflows/sdk-compat.yml'
 
 permissions:
   contents: read

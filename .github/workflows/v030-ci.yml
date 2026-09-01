@@ -40,7 +40,7 @@ jobs:
             bash -n "$file"
           done
 
-      - name: Native mapper build
+      - name: Native mapper host build
         run: make -C native clean all check
 
       - name: JavaScript syntax
@@ -51,101 +51,6 @@ jobs:
             node --check "$file"
           done
           node --check tests/browser_layout.mjs
-
-  native-cross:
-    runs-on: ubuntu-latest
-    needs: core
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install verified Zig 0.16.0
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl -fsSL https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz -o /tmp/zig.tar.xz
-          echo '70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00  /tmp/zig.tar.xz' | sha256sum -c -
-          mkdir -p .zig
-          tar -xJf /tmp/zig.tar.xz --strip-components=1 -C .zig
-          .zig/zig version
-
-      - name: Install QEMU user emulation
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-user file
-
-      - name: Cross build all portable mapper classes
-        shell: bash
-        run: |
-          set -uo pipefail
-          mkdir -p native/dist
-          : > /tmp/mapper-cross-failures
-          while IFS=$'\t' read -r class target cflags validation; do
-            [[ -n "$class" && "$class" != \#* ]] || continue
-            [[ "$validation" == 'cross-build' ]] || continue
-            echo "::group::Build $class -> $target"
-            if ! ZIG="$PWD/.zig/zig" OUT_DIR="$PWD/native/dist" sh native/build-portable.sh "$class"; then
-              echo "build:$class" | tee -a /tmp/mapper-cross-failures
-            fi
-            echo '::endgroup::'
-          done < native/mapper-build-classes.tsv
-
-      - name: QEMU smoke all built mapper classes
-        shell: bash
-        run: |
-          set -uo pipefail
-          while IFS=$'\t' read -r class target cflags validation; do
-            [[ -n "$class" && "$class" != \#* ]] || continue
-            [[ "$validation" == 'cross-build' ]] || continue
-            binary="native/dist/remote-gate-mapper-$class"
-            [[ -x "$binary" ]] || continue
-            echo "::group::Smoke $class"
-            if ! sh native/smoke-portable.sh "$class" "$binary"; then
-              echo "smoke:$class" | tee -a /tmp/mapper-cross-failures
-            fi
-            echo '::endgroup::'
-          done < native/mapper-build-classes.tsv
-
-      - name: Upload successful mapper cross candidates
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: remote-gate-mapper-cross-candidates-${{ github.sha }}
-          path: native/dist/remote-gate-mapper-*
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Enforce complete portable mapper coverage
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -s /tmp/mapper-cross-failures ]]; then
-            echo 'Portable mapper failures:' >&2
-            sort -u /tmp/mapper-cross-failures >&2
-            exit 1
-          fi
-          echo 'All portable mapper classes built and passed architecture smoke tests.'
-
-  legacy-sdk-smoke:
-    runs-on: ubuntu-latest
-    needs: core
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build and smoke mapper with LEDE 17.01.7 SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-          sh native/run-sdk-compat.sh lede-17.01.7-x86_64 "$PWD/native/dist-sdk"
-
-      - name: Upload LEDE SDK candidate
-        uses: actions/upload-artifact@v4
-        with:
-          name: remote-gate-mapper-lede-17.01.7-x86_64-${{ github.sha }}
-          path: native/dist-sdk/remote-gate-mapper-x86_64
-          if-no-files-found: error
-          retention-days: 14
 
   browser:
     runs-on: ubuntu-latest

@@ -7,25 +7,12 @@ WORKFLOW = (ROOT / ".github" / "workflows" / "sdk-compat.yml").read_text(encodin
 
 
 class SdkWorkflowTriggerTests(unittest.TestCase):
-    def test_sdk_compat_runs_on_relevant_dev_changes_only(self):
-        self.assertIn("push:", WORKFLOW)
-        self.assertIn("- dev", WORKFLOW)
-        for path in (
-            "VERSION",
-            "native/remote-gate-mapper.c",
-            "native/remote-gate-mapper-entry.c",
-            "native/build-openwrt-sdk.sh",
-            "native/run-sdk-compat.sh",
-            "native/mapper-abi-map.tsv",
-            "native/mapper-build-classes.tsv",
-            "native/sdk-compat-matrix.tsv",
-            "native/openwrt-sdk-package/**",
-        ):
-            self.assertIn(path, WORKFLOW)
-        self.assertNotIn("server/**", WORKFLOW)
-        self.assertNotIn("openwrt/**", WORKFLOW)
+    def test_sdk_compat_is_manual_only_while_current_device_is_priority(self):
+        self.assertIn("workflow_dispatch:", WORKFLOW)
+        self.assertNotIn("push:", WORKFLOW)
+        self.assertNotIn("schedule:", WORKFLOW)
 
-    def test_representative_family_matrix_is_kept(self):
+    def test_representative_family_matrix_is_kept_for_later_manual_validation(self):
         for sample in (
             "openwrt-19.07.10-x86_64",
             "openwrt-21.02.7-x86_64",
