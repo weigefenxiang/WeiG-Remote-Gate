@@ -17,16 +17,17 @@ class ServerContractTests(unittest.TestCase):
         self.assertIn("observe_candidate", block)
         self.assertIn("invalid_source_candidate", block)
 
-    def test_http_source_is_only_a_hint_and_candidate_can_supersede_it(self):
+    def test_http_and_candidate_sources_are_session_evidence_without_handshake_gate(self):
         source = CLIENT.read_text(encoding="utf-8")
         gate = GATE.read_text(encoding="utf-8")
         self.assertIn('confidence="observed"', source)
-        self.assertIn("preserve_candidate=True", source)
+        self.assertIn("preserve_candidate=False", source)
         self.assertIn('existing.get("confidence") == "candidate"', source)
         self.assertIn('if confidence == "verified":', source)
         self.assertIn('confidence = "observed"', source)
         self.assertIn('{"verified", "observed", "candidate"}', gate)
-        self.assertIn("OpenWrt must verify a fresh WireGuard peer", source)
+        self.assertIn("fresh Cloudflare observation is stronger", source)
+        self.assertNotIn("OpenWrt must verify a fresh WireGuard peer", source)
 
     def test_legacy_probe_is_gone_and_fail_closed(self):
         runtime = RUNTIME.read_text(encoding="utf-8")
