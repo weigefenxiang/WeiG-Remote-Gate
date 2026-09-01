@@ -8,6 +8,7 @@ DEVICES_V6_FILE="$STATE_ROOT/protected-devices-v6"
 LEGACY_DEVICES_FILE="$STATE_ROOT/protected-devices"
 PORTS_FILE="$STATE_ROOT/protected-ports"
 MAPPED_INGRESS_V4_FILE="$STATE_ROOT/mapped-ingress-v4"
+MAPPED_CONTROL_V4_FILE="$STATE_ROOT/mapped-control-v4"
 LEGACY_AUTH_FILE="$STATE_ROOT/authorization"
 AUTH_FILE_V4="$STATE_ROOT/authorization-ipv4"
 AUTH_FILE_V6="$STATE_ROOT/authorization-ipv6"
@@ -133,7 +134,8 @@ ensure_state() {
     [ -f "$DEVICES_V6_FILE" ] || : > "$DEVICES_V6_FILE"
     [ -f "$PORTS_FILE" ] || : > "$PORTS_FILE"
     [ -f "$MAPPED_INGRESS_V4_FILE" ] || : > "$MAPPED_INGRESS_V4_FILE"
-    chmod 600 "$DEVICES_V4_FILE" "$DEVICES_V6_FILE" "$PORTS_FILE" "$MAPPED_INGRESS_V4_FILE" 2>/dev/null || true
+    [ -f "$MAPPED_CONTROL_V4_FILE" ] || : > "$MAPPED_CONTROL_V4_FILE"
+    chmod 600 "$DEVICES_V4_FILE" "$DEVICES_V6_FILE" "$PORTS_FILE" "$MAPPED_INGRESS_V4_FILE" "$MAPPED_CONTROL_V4_FILE" 2>/dev/null || true
     migrate_legacy_auth
 }
 
@@ -191,6 +193,6 @@ case "${1:-}" in
     clear) clear_auth "${2:-all}" ;;
     restore) restore_rules ;;
     status-json) status_json ;;
-    uninstall) uninstall_rules; rm -f "$MAPPED_INGRESS_V4_FILE" ;;
+    uninstall) uninstall_rules; rm -f "$MAPPED_INGRESS_V4_FILE" "$MAPPED_CONTROL_V4_FILE" ;;
     *) fail "usage: $0 detect|ipv6-capable|install|sync|activate|verify|verify-wireguard|verify-clear|clear|restore|status-json|uninstall" ;;
 esac
