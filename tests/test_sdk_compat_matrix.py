@@ -92,12 +92,14 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
         self.assertIn('REMOTE_GATE_SDK_FORCE_PREREQ="$sdk_force_prereq" sh "$BUILDER"', RUNNER)
         self.assertIn('SDK_FORCE_PREREQ="${REMOTE_GATE_SDK_FORCE_PREREQ:-0}"', BUILDER)
         self.assertIn('case "$SDK_FORCE_PREREQ" in 0|1)', BUILDER)
-        self.assertIn('make FORCE=1 defconfig', BUILDER)
-        self.assertIn('make FORCE=1 package/weig-remote-gate-mapper/clean', BUILDER)
-        self.assertIn('make FORCE=1 package/weig-remote-gate-mapper/compile V=s -j1', BUILDER)
-        self.assertNotIn('FORCE=1 make defconfig', BUILDER)
-        self.assertNotIn('FORCE=1 make package/weig-remote-gate-mapper/clean', BUILDER)
-        self.assertNotIn('FORCE=1 make package/weig-remote-gate-mapper/compile', BUILDER)
+        self.assertIn('prepare_legacy_prereq_stamp', BUILDER)
+        self.assertIn('make -r -s -f "$prereq_mk" prereq', BUILDER)
+        self.assertIn('failed_checks', BUILDER)
+        self.assertIn('failure_messages', BUILDER)
+        self.assertIn('Please install Python 2.x', BUILDER)
+        self.assertIn('touch "$prereq_stamp"', BUILDER)
+        self.assertNotIn('make FORCE=1', BUILDER)
+        self.assertNotIn('FORCE=1 make', BUILDER)
 
 
 if __name__ == "__main__":

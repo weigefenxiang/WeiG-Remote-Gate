@@ -20,6 +20,7 @@ EXPECTED_ABI="$2"
 OUT_DIR="${3:-$ROOT/dist-sdk}"
 PACKAGE_DIR="$SDK_ROOT/package/weig-remote-gate-mapper"
 SDK_FORCE_PREREQ="${REMOTE_GATE_SDK_FORCE_PREREQ:-0}"
+LEGACY_PREREQ_LOG=""
 
 case "$EXPECTED_ABI" in ''|*[!A-Za-z0-9_.+-]*) usage ;; esac
 case "$SDK_FORCE_PREREQ" in 0|1) ;; *) echo "invalid REMOTE_GATE_SDK_FORCE_PREREQ" >&2; exit 1 ;; esac
@@ -58,16 +59,63 @@ cleanup() {
     if [ -f "$PACKAGE_DIR/.weig-remote-gate-owned" ]; then
         rm -rf "$PACKAGE_DIR"
     fi
+    [ -z "$LEGACY_PREREQ_LOG" ] || rm -f "$LEGACY_PREREQ_LOG"
 }
 trap cleanup EXIT INT TERM
 
+prepare_legacy_prereq_stamp() {
+    prereq_mk="$SDK_ROOT/include/prereq-build.mk"
+    prereq_stamp="$SDK_ROOT/staging_dir/host/.prereq-build"
+    LEGACY_PREREQ_LOG="$SDK_ROOT/tmp/.remote-gate-prereq.log"
+
+    [ -r "$prereq_mk" ] || {
+        echo "legacy SDK prerequisite bypass refused: include/prereq-build.mk is missing" >&2
+        return 1
+    }
+
+    mkdir -p "$SDK_ROOT/tmp" "$SDK_ROOT/staging_dir/host"
+    rm -f "$SDK_ROOT/tmp/.prereq-error" "$LEGACY_PREREQ_LOG"
+
+    set +e
+    (
+        cd "$SDK_ROOT"
+        make -r -s -f "$prereq_mk" prereq
+    ) >"$LEGACY_PREREQ_LOG" 2>&1
+    prereq_status=$?
+    set -e
+
+    cat "$LEGACY_PREREQ_LOG"
+
+    if [ "$prereq_status" -eq 0 ]; then
+        touch "$prereq_stamp"
+        return 0
+    fi
+
+    failed_checks="$(sed -n "s/^Checking '\([^']*\)'\.\.\. failed\.$/\1/p" "$LEGACY_PREREQ_LOG" | LC_ALL=C sort -u)"
+    failure_messages="$(sed -n 's/^Build dependency:[[:space:]]*//p' "$LEGACY_PREREQ_LOG" | sed '/^[[:space:]]*$/d' | LC_ALL=C sort -u)"
+
+    if [ "$failed_checks" != "python" ] || [ "$failure_messages" != "Please install Python 2.x" ]; then
+        echo "legacy SDK prerequisite bypass refused: prerequisite failure is not Python 2 only" >&2
+        return 1
+    fi
+
+    # OpenWrt 19.07's defconfig path re-enters prepare-tmpinfo, which
+    # unconditionally requests this stamp even when FORCE=1 was supplied.
+    # We have just executed the full official prerequisite target and verified
+    # that its only failure is the obsolete Python 2 host check. Mark that
+    # exact check as completed so the SDK can proceed to this self-contained C
+    # package without masking any other missing host prerequisite.
+    touch "$prereq_stamp"
+    echo "OpenWrt 19.07 prerequisite gate bypassed only for missing Python 2." >&2
+}
+
+if [ "$SDK_FORCE_PREREQ" = 1 ]; then
+    prepare_legacy_prereq_stamp
+fi
+
 (
     cd "$SDK_ROOT"
-    if [ "$SDK_FORCE_PREREQ" = 1 ]; then
-        make FORCE=1 defconfig
-    else
-        make defconfig
-    fi
+    make defconfig
 )
 
 [ -r "$SDK_ROOT/.config" ] || {
@@ -92,13 +140,8 @@ fi
 
 (
     cd "$SDK_ROOT"
-    if [ "$SDK_FORCE_PREREQ" = 1 ]; then
-        make FORCE=1 package/weig-remote-gate-mapper/clean >/dev/null 2>&1 || true
-        make FORCE=1 package/weig-remote-gate-mapper/compile V=s -j1
-    else
-        make package/weig-remote-gate-mapper/clean >/dev/null 2>&1 || true
-        make package/weig-remote-gate-mapper/compile V=s -j1
-    fi
+    make package/weig-remote-gate-mapper/clean >/dev/null 2>&1 || true
+    make package/weig-remote-gate-mapper/compile V=s -j1
 )
 
 # OpenWrt's autoremove phase may remove the direct build binary after the IPK

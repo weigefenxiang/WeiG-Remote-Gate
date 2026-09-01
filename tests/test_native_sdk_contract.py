@@ -46,8 +46,29 @@ class NativeSdkContractTests(unittest.TestCase):
         make = fakebin / "make"
         make.write_text(
             "#!/bin/sh\n"
-            "if [ \"${REQUIRE_FORCE_ARG:-0}\" = 1 ]; then\n"
-            "  case \" $* \" in *' FORCE=1 '*) ;; *) echo 'missing FORCE=1 make argument' >&2; exit 9 ;; esac\n"
+            "case \" $* \" in\n"
+            "  *' prereq '*)\n"
+            "    case \"${FAKE_PREREQ_FAILURE:-none}\" in\n"
+            "      python2)\n"
+            "        echo \"Checking 'python'... failed.\"\n"
+            "        echo\n"
+            "        echo 'Build dependency: Please install Python 2.x'\n"
+            "        exit 2\n"
+            "        ;;\n"
+            "      other)\n"
+            "        echo \"Checking 'tar'... failed.\"\n"
+            "        echo\n"
+            "        echo \"Build dependency: Please install GNU 'tar'\"\n"
+            "        exit 2\n"
+            "        ;;\n"
+            "      none) exit 0 ;;\n"
+            "      *) echo 'invalid fake prerequisite mode' >&2; exit 8 ;;\n"
+            "    esac\n"
+            "    ;;\n"
+            "esac\n"
+            "if [ \"${REQUIRE_PREREQ_STAMP:-0}\" = 1 ] && [ ! -f \"$PWD/staging_dir/host/.prereq-build\" ]; then\n"
+            "  echo 'missing validated prerequisite stamp' >&2\n"
+            "  exit 9\n"
             "fi\n"
             "case \" $* \" in\n"
             "  *' package/weig-remote-gate-mapper/compile '*)\n"
@@ -72,6 +93,8 @@ class NativeSdkContractTests(unittest.TestCase):
 
         sdk.mkdir()
         (sdk / "rules.mk").write_text("# fake OpenWrt-family SDK\n", encoding="utf-8")
+        (sdk / "include").mkdir()
+        (sdk / "include" / "prereq-build.mk").write_text("# fake prerequisite target\n", encoding="utf-8")
         (sdk / ".config").write_text(
             f'CONFIG_TARGET_ARCH_PACKAGES="{expected_abi}"\n', encoding="utf-8"
         )
@@ -118,14 +141,15 @@ class NativeSdkContractTests(unittest.TestCase):
             self.assertIn("SDK ABI mismatch", result.stderr)
             self.assertFalse((sdk / "build_dir").exists())
 
-    def test_legacy_prerequisite_override_is_passed_as_make_argument(self):
+    def test_legacy_python2_only_failure_gets_validated_prerequisite_stamp(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
             sdk = base / "sdk"
             out = base / "out"
             env = self._fake_environment(sdk, "powerpc64_e5500")
             env["REMOTE_GATE_SDK_FORCE_PREREQ"] = "1"
-            env["REQUIRE_FORCE_ARG"] = "1"
+            env["FAKE_PREREQ_FAILURE"] = "python2"
+            env["REQUIRE_PREREQ_STAMP"] = "1"
             result = subprocess.run(
                 ["sh", str(BUILD_SDK), str(sdk), "powerpc64_e5500", str(out)],
                 cwd=ROOT,
@@ -137,6 +161,36 @@ class NativeSdkContractTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue((out / "remote-gate-mapper-powerpc64_e5500").is_file())
+            self.assertIn("Checking 'python'... failed.", result.stdout)
+            self.assertIn("bypassed only for missing Python 2", result.stderr)
+
+    def test_legacy_prerequisite_bypass_rejects_any_non_python2_failure(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            sdk = base / "sdk"
+            env = self._fake_environment(sdk, "powerpc64_e5500")
+            env["REMOTE_GATE_SDK_FORCE_PREREQ"] = "1"
+            env["FAKE_PREREQ_FAILURE"] = "other"
+            result = subprocess.run(
+                ["sh", str(BUILD_SDK), str(sdk), "powerpc64_e5500", str(base / "out")],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("prerequisite bypass refused", result.stderr)
+            self.assertFalse((sdk / "build_dir").exists())
+
+    def test_legacy_path_no_longer_relies_on_broken_force_make_argument(self):
+        source = BUILD_SDK.read_text(encoding="utf-8")
+        self.assertIn("prepare_legacy_prereq_stamp", source)
+        self.assertIn('make -r -s -f "$prereq_mk" prereq', source)
+        self.assertIn('touch "$prereq_stamp"', source)
+        self.assertNotIn("make FORCE=1", source)
+        self.assertNotIn("FORCE=1 make", source)
 
 
 if __name__ == "__main__":
