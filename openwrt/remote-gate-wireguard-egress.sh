@@ -31,6 +31,8 @@ write_error_state() {
 STATE='failed'
 MODE='${ATTEMPT_MODE:-}'
 WAN_INTERFACE='${ATTEMPT_WAN:-}'
+WAN_INTERFACE4='${ATTEMPT_WAN4:-}'
+WAN_INTERFACE6='${ATTEMPT_WAN6:-}'
 WG_INTERFACE='${ATTEMPT_WG:-}'
 DETAIL='$detail'
 EXPIRES_AT='${ATTEMPT_EXPIRES_AT:-0}'
@@ -48,6 +50,7 @@ usage() {
     cat <<'USAGE'
 Usage:
   remote-gate-wireguard-egress.sh enable <wireguard-interface> <wan-interface> [ttl-seconds] [ipv4|ipv6|dual]
+  remote-gate-wireguard-egress.sh enable-split <wireguard-interface> <ipv4-wan> <ipv6-wan> [ttl-seconds]
   remote-gate-wireguard-egress.sh disable
   remote-gate-wireguard-egress.sh sync
   remote-gate-wireguard-egress.sh status
@@ -57,14 +60,16 @@ Usage:
 Examples:
   remote-gate-wireguard-egress.sh enable WG_HOME WAN2 300 ipv4
   remote-gate-wireguard-egress.sh enable WG_HOME WAN2 300 dual
+  remote-gate-wireguard-egress.sh enable-split WG_HOME WAN1 WAN2 300
 
 This helper creates runtime-only forwarding, masquerading and policy routing.
 It never commits new network/firewall UCI sections. Runtime state lives under
 /tmp, so a reboot always returns Internet egress to OFF.
 
 IPv6/dual mode requires a ULA IPv6 subnet on the WireGuard interface and a
-working IPv6 default route on the selected WAN. IPv6 Internet egress uses
-runtime NAT66 so a private WireGuard ULA can leave through the selected WAN.
+working IPv6 default route on the selected IPv6 WAN. Split dual mode may use
+different WANs for IPv4 and IPv6. IPv6 Internet egress uses runtime NAT66 so
+a private WireGuard ULA can leave through the selected IPv6 WAN.
 USAGE
 }
 
@@ -93,9 +98,6 @@ wireguard_subnet6() {
     device="$(l3_device "$logical")"
     [ -n "$device" ] || device="$logical"
 
-    # The interface address is authoritative. OpenWrt/Linux commonly reports a
-    # WireGuard ULA as `scope global`, so filtering routes by `scope link`
-    # incorrectly rejects a valid fd00::/8 address.
     ula="$(ip -6 addr show dev "$device" 2>/dev/null | awk '
         $1 == "inet6" {
             cidr=$2; addr=tolower(cidr); sub(/\/.*/, "", addr)
@@ -109,8 +111,6 @@ wireguard_subnet6() {
     if [ -n "$route" ]; then
         printf '%s\n' "$route"
     else
-        # Fallback is still useful on kernels that omit the connected route;
-        # iproute2/nftables normalize a CIDR when installing the runtime rule.
         printf '%s\n' "$ula"
     fi
 }
@@ -262,10 +262,6 @@ install_route_table() {
     [ -n "$route" ] || return 1
 
     if [ "$flag" = "-6" ]; then
-        # ISP IPv6 defaults may be source-specific, for example:
-        # `default from 2408:.../64 via fe80::1`. The WG ULA source cannot
-        # match that `from` clause, so build an unqualified runtime default
-        # from the same next-hop and bind link-local gateways to the WAN dev.
         gateway="$(printf '%s\n' "$route" | awk '{for (i=1;i<=NF;i++) if ($i=="via") {print $(i+1); exit}}')"
         if [ -n "$gateway" ]; then
             ip -6 route replace table "$table" default via "$gateway" dev "$wan_dev"
@@ -348,6 +344,10 @@ WG_INTERFACE='$WG_INTERFACE'
 WG_DEVICE='$WG_DEVICE'
 WAN_INTERFACE='$WAN_INTERFACE'
 WAN_DEVICE='$WAN_DEVICE'
+WAN_INTERFACE4='$WAN_INTERFACE4'
+WAN_DEVICE4='$WAN_DEVICE4'
+WAN_INTERFACE6='$WAN_INTERFACE6'
+WAN_DEVICE6='$WAN_DEVICE6'
 WG_SUBNET4='$WG_SUBNET4'
 WG_SUBNET6='$WG_SUBNET6'
 FIREWALL_BACKEND='$FIREWALL_BACKEND'
@@ -378,18 +378,26 @@ rollback() {
     fail "$message"
 }
 
-enable_egress() {
-    [ "$#" -ge 2 ] && [ "$#" -le 4 ] || { usage >&2; exit 2; }
-    wg="$1"; wan="$2"; ttl="${3:-300}"; mode="${4:-ipv4}"
+enable_egress_plan() {
+    [ "$#" -eq 5 ] || { usage >&2; exit 2; }
+    wg="$1"; wan4="$2"; wan6="$3"; ttl="$4"; mode="$5"
     valid_name "$wg" || fail "Invalid WireGuard logical interface: $wg"
-    valid_name "$wan" || fail "Invalid WAN logical interface: $wan"
     valid_uint "$ttl" || fail "TTL must be an integer"
     valid_mode "$mode" || fail "Mode must be ipv4, ipv6 or dual"
     [ "$ttl" -ge 30 ] && [ "$ttl" -le 43200 ] || fail "TTL must be between 30 and 43200 seconds"
+    if mode_has_v4 "$mode"; then valid_name "$wan4" || fail "Invalid IPv4 WAN logical interface: $wan4"; fi
+    if mode_has_v6 "$mode"; then valid_name "$wan6" || fail "Invalid IPv6 WAN logical interface: $wan6"; fi
+
+    shared=""
+    [ -n "$wan4" ] && [ "$wan4" = "$wan6" ] && shared="$wan4"
+    [ "$mode" = ipv4 ] && shared="$wan4"
+    [ "$mode" = ipv6 ] && shared="$wan6"
 
     ATTEMPT_ACTIVE=1
     ATTEMPT_MODE="$mode"
-    ATTEMPT_WAN="$wan"
+    ATTEMPT_WAN="$shared"
+    ATTEMPT_WAN4="$wan4"
+    ATTEMPT_WAN6="$wan6"
     ATTEMPT_WG="$wg"
     ATTEMPT_EXPIRES_AT="$(( $(date +%s) + ttl ))"
     clear_error_state
@@ -397,20 +405,28 @@ enable_egress() {
     for cmd in uci ubus jsonfilter ip; do command -v "$cmd" >/dev/null 2>&1 || fail "Missing dependency: $cmd"; done
     [ "$(uci -q get "network.$wg.proto" 2>/dev/null || true)" = wireguard ] || fail "$wg is not a WireGuard interface"
     interface_up "$wg" || fail "$wg is not up"
-    interface_up "$wan" || fail "$wan is not up"
+    if mode_has_v4 "$mode"; then interface_up "$wan4" || fail "$wan4 is not up"; fi
+    if mode_has_v6 "$mode"; then interface_up "$wan6" || fail "$wan6 is not up"; fi
 
     wg_dev="$(l3_device "$wg")"; [ -n "$wg_dev" ] || wg_dev="$wg"
-    wan_dev="$(l3_device "$wan")"; [ -n "$wan_dev" ] || fail "Cannot resolve L3 device for $wan"
+    wan_dev4=""; wan_dev6=""
+    if mode_has_v4 "$mode"; then
+        wan_dev4="$(l3_device "$wan4")"; [ -n "$wan_dev4" ] || fail "Cannot resolve L3 device for $wan4"
+    fi
+    if mode_has_v6 "$mode"; then
+        wan_dev6="$(l3_device "$wan6")"; [ -n "$wan_dev6" ] || fail "Cannot resolve L3 device for $wan6"
+    fi
+
     subnet4=""; subnet6=""
     if mode_has_v4 "$mode"; then
         subnet4="$(wireguard_subnet4 "$wg")"
         [ -n "$subnet4" ] || fail "Cannot detect the IPv4 subnet of $wg"
-        ip -4 route show default dev "$wan_dev" 2>/dev/null | grep -q '^default' || fail "No IPv4 default route found on $wan"
+        ip -4 route show default dev "$wan_dev4" 2>/dev/null | grep -q '^default' || fail "No IPv4 default route found on $wan4"
     fi
     if mode_has_v6 "$mode"; then
         subnet6="$(wireguard_subnet6 "$wg")"
         [ -n "$subnet6" ] || fail "WireGuard IPv6 ULA subnet missing on $wg"
-        ip -6 route show default dev "$wan_dev" 2>/dev/null | grep -q '^default' || fail "No IPv6 default route found on $wan"
+        ip -6 route show default dev "$wan_dev6" 2>/dev/null | grep -q '^default' || fail "No IPv6 default route found on $wan6"
     fi
 
     cleanup_legacy_uci >/dev/null 2>&1 || true
@@ -429,32 +445,37 @@ enable_egress() {
         base6="$(choose_rule_base -6)" || fail "No free high-priority IPv6 rule block"
     fi
 
-    MODE="$mode"; WG_INTERFACE="$wg"; WG_DEVICE="$wg_dev"; WAN_INTERFACE="$wan"; WAN_DEVICE="$wan_dev"
+    MODE="$mode"; WG_INTERFACE="$wg"; WG_DEVICE="$wg_dev"
+    WAN_INTERFACE="$shared"
+    WAN_DEVICE=""
+    [ -n "$shared" ] && { [ "$shared" = "$wan4" ] && WAN_DEVICE="$wan_dev4" || WAN_DEVICE="$wan_dev6"; }
+    WAN_INTERFACE4="$wan4"; WAN_DEVICE4="$wan_dev4"
+    WAN_INTERFACE6="$wan6"; WAN_DEVICE6="$wan_dev6"
     WG_SUBNET4="$subnet4"; WG_SUBNET6="$subnet6"; FIREWALL_BACKEND="$backend"
     ROUTE_TABLE4="$table4"; ROUTE_TABLE6="$table6"; RULE_BASE4="$base4"; RULE_BASE6="$base6"
     EXPIRES_AT="$(( $(date +%s) + ttl ))"; TOKEN="$$-$(date +%s)"
     save_state
 
     if mode_has_v4 "$mode"; then
-        install_route_table -4 "$wan_dev" "$table4" || rollback "Cannot build IPv4 default route through $wan"
+        install_route_table -4 "$wan_dev4" "$table4" || rollback "Cannot build IPv4 default route through $wan4"
         install_rules4 "$wg_dev" "$subnet4" "$table4" "$base4" || rollback "Cannot install IPv4 policy rules"
     fi
     if mode_has_v6 "$mode"; then
-        install_route_table -6 "$wan_dev" "$table6" || rollback "Cannot build IPv6 default route through $wan"
+        install_route_table -6 "$wan_dev6" "$table6" || rollback "Cannot build IPv6 default route through $wan6"
         install_rules6 "$wg_dev" "$subnet6" "$table6" "$base6" || rollback "Cannot install IPv6 policy rules"
     fi
 
     case "$backend" in
         fw3-iptables)
-            if mode_has_v4 "$mode"; then fw3_install4 "$wg_dev" "$wan_dev" "$subnet4" || rollback "IPv4 egress firewall installation failed"; fi
-            if mode_has_v6 "$mode"; then fw3_install6 "$wg_dev" "$wan_dev" "$subnet6" || rollback "IPv6 NAT66 is unavailable in ip6tables"; fi
+            if mode_has_v4 "$mode"; then fw3_install4 "$wg_dev" "$wan_dev4" "$subnet4" || rollback "IPv4 egress firewall installation failed"; fi
+            if mode_has_v6 "$mode"; then fw3_install6 "$wg_dev" "$wan_dev6" "$subnet6" || rollback "IPv6 NAT66 is unavailable in ip6tables"; fi
             ;;
         fw4-nftables)
             nft list chain inet fw4 forward >/dev/null 2>&1 || rollback "fw4 forward chain unavailable"
             nft list chain inet fw4 srcnat >/dev/null 2>&1 || rollback "fw4 srcnat chain unavailable"
             fw4_cleanup
-            if mode_has_v4 "$mode"; then fw4_install4 "$wg_dev" "$wan_dev" "$subnet4" || rollback "IPv4 nft egress installation failed"; fi
-            if mode_has_v6 "$mode"; then fw4_install6 "$wg_dev" "$wan_dev" "$subnet6" || rollback "IPv6 nft NAT66 installation failed"; fi
+            if mode_has_v4 "$mode"; then fw4_install4 "$wg_dev" "$wan_dev4" "$subnet4" || rollback "IPv4 nft egress installation failed"; fi
+            if mode_has_v6 "$mode"; then fw4_install6 "$wg_dev" "$wan_dev6" "$subnet6" || rollback "IPv6 nft NAT66 installation failed"; fi
             ;;
         *) rollback "Unsupported firewall backend: $backend" ;;
     esac
@@ -464,9 +485,8 @@ enable_egress() {
     schedule_expiry "$TOKEN" "$ttl"
     printf '\nWireGuard home %s egress enabled (runtime only).\n' "$mode"
     printf 'WireGuard: %s\n' "$wg"
-    [ -n "$subnet4" ] && printf 'IPv4 subnet: %s\n' "$subnet4"
-    [ -n "$subnet6" ] && printf 'IPv6 subnet: %s\n' "$subnet6"
-    printf 'Selected WAN: %s (%s)\n' "$wan" "$wan_dev"
+    [ -n "$subnet4" ] && printf 'IPv4 subnet: %s\nIPv4 WAN: %s (%s)\n' "$subnet4" "$wan4" "$wan_dev4"
+    [ -n "$subnet6" ] && printf 'IPv6 subnet: %s\nIPv6 WAN: %s (%s)\n' "$subnet6" "$wan6" "$wan_dev6"
     printf 'Firewall backend: %s\n' "$backend"
     [ -n "$table4" ] && printf 'IPv4 routing table: %s · rule base %s\n' "$table4" "$base4"
     [ -n "$table6" ] && printf 'IPv6 routing table: %s · rule base %s\n' "$table6" "$base6"
@@ -477,6 +497,22 @@ enable_egress() {
         ipv6) printf '\nClient full tunnel: AllowedIPs = ::/0\n' ;;
         dual) printf '\nClient full tunnel: AllowedIPs = 0.0.0.0/0, ::/0\n' ;;
     esac
+}
+
+enable_egress() {
+    [ "$#" -ge 2 ] && [ "$#" -le 4 ] || { usage >&2; exit 2; }
+    wg="$1"; wan="$2"; ttl="${3:-300}"; mode="${4:-ipv4}"
+    case "$mode" in
+        ipv4) enable_egress_plan "$wg" "$wan" "" "$ttl" ipv4 ;;
+        ipv6) enable_egress_plan "$wg" "" "$wan" "$ttl" ipv6 ;;
+        dual) enable_egress_plan "$wg" "$wan" "$wan" "$ttl" dual ;;
+        *) fail "Mode must be ipv4, ipv6 or dual" ;;
+    esac
+}
+
+enable_split() {
+    [ "$#" -ge 3 ] && [ "$#" -le 4 ] || { usage >&2; exit 2; }
+    enable_egress_plan "$1" "$2" "$3" "${4:-300}" dual
 }
 
 disable_egress() {
@@ -499,8 +535,14 @@ sync_egress() {
         return 0
     fi
 
-    mode="${MODE:-ipv4}"; wg="${WG_INTERFACE:-}"; wan="${WAN_INTERFACE:-}"; remaining="$((expires - now))"
-    valid_mode "$mode" && [ -n "$wg" ] && [ -n "$wan" ] || { runtime_cleanup "${FIREWALL_BACKEND:-}"; return 1; }
+    mode="${MODE:-ipv4}"; wg="${WG_INTERFACE:-}"; remaining="$((expires - now))"
+    wan4="${WAN_INTERFACE4:-}"; wan6="${WAN_INTERFACE6:-}"
+    if mode_has_v4 "$mode" && [ -z "$wan4" ]; then wan4="${WAN_INTERFACE:-}"; fi
+    if mode_has_v6 "$mode" && [ -z "$wan6" ]; then wan6="${WAN_INTERFACE:-}"; fi
+    valid_mode "$mode" && [ -n "$wg" ] || { runtime_cleanup "${FIREWALL_BACKEND:-}"; return 1; }
+    if mode_has_v4 "$mode"; then valid_name "$wan4" || { runtime_cleanup "${FIREWALL_BACKEND:-}"; return 1; }; fi
+    if mode_has_v6 "$mode"; then valid_name "$wan6" || { runtime_cleanup "${FIREWALL_BACKEND:-}"; return 1; }; fi
+
     rule_ok=1
     if mode_has_v4 "$mode"; then
         valid_uint "${RULE_BASE4:-}" && valid_uint "${ROUTE_TABLE4:-}" && ip -4 rule show 2>/dev/null | grep -Eq "^$((RULE_BASE4 + 10)):.*lookup ${ROUTE_TABLE4}([[:space:]]|$)" || rule_ok=0
@@ -522,7 +564,7 @@ sync_egress() {
     [ "$rule_ok" -eq 1 ] && [ "$firewall_ok" -eq 1 ] && return 0
 
     runtime_cleanup "${FIREWALL_BACKEND:-}"
-    enable_egress "$wg" "$wan" "$remaining" "$mode"
+    enable_egress_plan "$wg" "$wan4" "$wan6" "$remaining" "$mode"
 }
 
 error_state_valid() {
@@ -543,8 +585,11 @@ status_egress() {
         case "$expires" in ''|*[!0-9]*) expires=0 ;; esac
         if [ "$expires" -le "$now" ]; then runtime_cleanup "${FIREWALL_BACKEND:-}"; else
             remaining="$((expires - now))"
-            printf 'enabled\nMode: %s\n' "${MODE:-ipv4}"
-            printf 'WireGuard: %s\nWAN: %s\nWAN device: %s\n' "${WG_INTERFACE:-unknown}" "${WAN_INTERFACE:-unknown}" "${WAN_DEVICE:-unknown}"
+            wan4="${WAN_INTERFACE4:-${WAN_INTERFACE:-}}"; dev4="${WAN_DEVICE4:-${WAN_DEVICE:-}}"
+            wan6="${WAN_INTERFACE6:-${WAN_INTERFACE:-}}"; dev6="${WAN_DEVICE6:-${WAN_DEVICE:-}}"
+            printf 'enabled\nMode: %s\nWireGuard: %s\n' "${MODE:-ipv4}" "${WG_INTERFACE:-unknown}"
+            mode_has_v4 "${MODE:-ipv4}" && printf 'IPv4 WAN: %s\nIPv4 WAN device: %s\n' "$wan4" "$dev4"
+            mode_has_v6 "${MODE:-ipv4}" && printf 'IPv6 WAN: %s\nIPv6 WAN device: %s\n' "$wan6" "$dev6"
             [ -n "${WG_SUBNET4:-}" ] && printf 'IPv4 subnet: %s\n' "$WG_SUBNET4"
             [ -n "${WG_SUBNET6:-}" ] && printf 'IPv6 subnet: %s\n' "$WG_SUBNET6"
             printf 'Expires in: %ss\nPersistent UCI egress rules: no\n' "$remaining"
@@ -552,7 +597,8 @@ status_egress() {
         fi
     fi
     if error_state_valid; then
-        printf 'failed\nMode: %s\nWAN: %s\nWireGuard: %s\nDetail: %s\n' "${MODE:-unknown}" "${WAN_INTERFACE:-unknown}" "${WG_INTERFACE:-unknown}" "${DETAIL:-unknown}"
+        printf 'failed\nMode: %s\nIPv4 WAN: %s\nIPv6 WAN: %s\nWireGuard: %s\nDetail: %s\n' \
+            "${MODE:-unknown}" "${WAN_INTERFACE4:-${WAN_INTERFACE:-unknown}}" "${WAN_INTERFACE6:-${WAN_INTERFACE:-unknown}}" "${WG_INTERFACE:-unknown}" "${DETAIL:-unknown}"
         return 0
     fi
     printf 'disabled\n'
@@ -565,23 +611,32 @@ status_json() {
         now="$(date +%s)"; expires="${EXPIRES_AT:-0}"
         case "$expires" in ''|*[!0-9]*) expires=0 ;; esac
         if [ "$expires" -gt "$now" ]; then
-            printf '{"active":true,"state":"active","mode":"%s","wan":"%s","device":"%s","wg":"%s","ipv4_subnet":"%s","ipv6_subnet":"%s","detail":"","expires_in":%s}\n' \
-                "${MODE:-ipv4}" "${WAN_INTERFACE:-}" "${WAN_DEVICE:-}" "${WG_INTERFACE:-}" "${WG_SUBNET4:-}" "${WG_SUBNET6:-}" "$((expires - now))"
+            wan4="${WAN_INTERFACE4:-}"; dev4="${WAN_DEVICE4:-}"
+            wan6="${WAN_INTERFACE6:-}"; dev6="${WAN_DEVICE6:-}"
+            if mode_has_v4 "${MODE:-ipv4}" && [ -z "$wan4" ]; then wan4="${WAN_INTERFACE:-}"; dev4="${WAN_DEVICE:-}"; fi
+            if mode_has_v6 "${MODE:-ipv4}" && [ -z "$wan6" ]; then wan6="${WAN_INTERFACE:-}"; dev6="${WAN_DEVICE:-}"; fi
+            shared=""; shared_dev=""
+            if [ "${MODE:-ipv4}" = ipv4 ]; then shared="$wan4"; shared_dev="$dev4"
+            elif [ "${MODE:-ipv4}" = ipv6 ]; then shared="$wan6"; shared_dev="$dev6"
+            elif [ -n "$wan4" ] && [ "$wan4" = "$wan6" ]; then shared="$wan4"; shared_dev="$dev4"; fi
+            printf '{"active":true,"state":"active","mode":"%s","wan":"%s","device":"%s","wan_v4":"%s","device_v4":"%s","wan_v6":"%s","device_v6":"%s","wg":"%s","ipv4_subnet":"%s","ipv6_subnet":"%s","detail":"","expires_in":%s}\n' \
+                "${MODE:-ipv4}" "$shared" "$shared_dev" "$wan4" "$dev4" "$wan6" "$dev6" "${WG_INTERFACE:-}" "${WG_SUBNET4:-}" "${WG_SUBNET6:-}" "$((expires - now))"
             return 0
         fi
         runtime_cleanup "${FIREWALL_BACKEND:-}"
     fi
     if error_state_valid; then
-        printf '{"active":false,"state":"failed","mode":"%s","wan":"%s","device":"","wg":"%s","ipv4_subnet":"","ipv6_subnet":"","detail":"%s","expires_in":%s}\n' \
-            "${MODE:-}" "${WAN_INTERFACE:-}" "${WG_INTERFACE:-}" "${DETAIL:-}" "$((EXPIRES_AT - $(date +%s)))"
+        printf '{"active":false,"state":"failed","mode":"%s","wan":"%s","device":"","wan_v4":"%s","device_v4":"","wan_v6":"%s","device_v6":"","wg":"%s","ipv4_subnet":"","ipv6_subnet":"","detail":"%s","expires_in":%s}\n' \
+            "${MODE:-}" "${WAN_INTERFACE:-}" "${WAN_INTERFACE4:-}" "${WAN_INTERFACE6:-}" "${WG_INTERFACE:-}" "${DETAIL:-}" "$((EXPIRES_AT - $(date +%s)))"
         return 0
     fi
-    printf '{"active":false,"state":"inactive","mode":"","wan":"","device":"","wg":"","ipv4_subnet":"","ipv6_subnet":"","detail":"","expires_in":0}\n'
+    printf '{"active":false,"state":"inactive","mode":"","wan":"","device":"","wan_v4":"","device_v4":"","wan_v6":"","device_v6":"","wg":"","ipv4_subnet":"","ipv6_subnet":"","detail":"","expires_in":0}\n'
 }
 
 [ "$(id -u)" -eq 0 ] || fail "Run as root"
 case "${1:-}" in
     enable) shift; enable_egress "$@" ;;
+    enable-split) shift; enable_split "$@" ;;
     disable) disable_egress ;;
     sync) sync_egress ;;
     status) status_egress ;;
