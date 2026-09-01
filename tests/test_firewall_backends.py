@@ -128,7 +128,9 @@ class FirewallBackendTests(unittest.TestCase):
         self.assertIn("v4_protected_devices", source)
         self.assertIn("v6_protected_devices", source)
         self.assertIn("wireguard_ports", source)
-        self.assertIn('"$FIREWALL" sync "$v4" "$v6" "$ports"', source)
+        self.assertIn('wg_ports="$(wireguard_ports', source)
+        self.assertIn('mapped_pairs="$(mapped_ingress_pairs', source)
+        self.assertIn('"$FIREWALL" sync "$v4" "$v6" "$wg_ports" "$mapped_pairs"', source)
         self.assertNotIn("pppoe-WAN2", source)
         self.assertNotIn("51820", source)
 
