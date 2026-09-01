@@ -90,11 +90,25 @@ fi
     make package/weig-remote-gate-mapper/compile V=s -j1
 )
 
-binary="$(find "$SDK_ROOT/build_dir" -type f -path "*/remote-gate-mapper-${version}/remote-gate-mapper" -perm -u+x 2>/dev/null | sed -n '1p')"
-[ -n "$binary" ] && [ -x "$binary" ] || {
+# OpenWrt's autoremove phase may remove the direct build binary after the IPK
+# is created. Recover the mapper from package staging when that happens.
+binary=""
+for candidate in \
+    "$(find "$SDK_ROOT/build_dir" -type f -path "*/remote-gate-mapper-${version}/remote-gate-mapper" 2>/dev/null | sed -n '1p')" \
+    "$(find "$SDK_ROOT/build_dir" -type f -path "*/remote-gate-mapper-${version}/.pkgdir/remote-gate-mapper/usr/lib/remote-gate/remote-gate-mapper" 2>/dev/null | sed -n '1p')" \
+    "$(find "$SDK_ROOT/build_dir" -type f -path "*/remote-gate-mapper-${version}/ipkg-*/remote-gate-mapper/usr/lib/remote-gate/remote-gate-mapper" 2>/dev/null | sed -n '1p')"
+do
+    [ -n "$candidate" ] || continue
+    [ -f "$candidate" ] || continue
+    binary="$candidate"
+    break
+done
+[ -n "$binary" ] || {
     echo "SDK build completed without a mapper binary" >&2
+    find "$SDK_ROOT/bin" -type f -name 'remote-gate-mapper_*' -print 2>/dev/null | sed 's/^/SDK package output: /' >&2 || true
     exit 1
 }
+chmod 0755 "$binary" 2>/dev/null || true
 
 out="$OUT_DIR/remote-gate-mapper-$EXPECTED_ABI"
 cp "$binary" "$out"
