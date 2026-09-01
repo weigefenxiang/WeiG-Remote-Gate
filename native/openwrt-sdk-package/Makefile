@@ -13,7 +13,6 @@ define Package/remote-gate-mapper
   SECTION:=net
   CATEGORY:=Network
   TITLE:=WeiG Remote Gate native mapped-access helper
-  DEPENDS:=+libc
 endef
 
 define Package/remote-gate-mapper/description

@@ -1,0 +1,51 @@
+name: SDK Compatibility
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 3 * * 0'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sdk-compat-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  sdk-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        sample:
+          - openwrt-19.07.10-x86_64
+          - openwrt-21.02.7-x86_64
+          - openwrt-24.10.5-x86_64
+          - openwrt-25.12.5-x86_64
+          - immortalwrt-24.10.5-x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SDK archive tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xz-utils zstd file
+
+      - name: Build and smoke SDK mapper
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh native/run-sdk-compat.sh "${{ matrix.sample }}" "$PWD/native/dist-sdk"
+
+      - name: Upload SDK candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-gate-mapper-${{ matrix.sample }}-${{ github.sha }}
+          path: native/dist-sdk/remote-gate-mapper-x86_64
+          if-no-files-found: error
+          retention-days: 14

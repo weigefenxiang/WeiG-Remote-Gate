@@ -133,35 +133,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download verified LEDE 17.01.7 SDK
+      - name: Build and smoke mapper with LEDE 17.01.7 SDK
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsSL \
-            https://downloads.openwrt.org/releases/17.01.7/targets/x86/64/lede-sdk-17.01.7-x86-64_gcc-5.4.0_musl-1.1.16.Linux-x86_64.tar.xz \
-            -o /tmp/lede-sdk.tar.xz
-          echo 'dc8814263db97e563fe620774295f78bab0fb726cf39829f1b937b7b01bac5a0  /tmp/lede-sdk.tar.xz' | sha256sum -c -
-          mkdir -p .lede-sdk
-          tar -xJf /tmp/lede-sdk.tar.xz --strip-components=1 -C .lede-sdk
-
-      - name: Build mapper with LEDE SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-          sh native/build-openwrt-sdk.sh "$PWD/.lede-sdk" x86_64 "$PWD/native/dist-sdk"
-          test -x native/dist-sdk/remote-gate-mapper-x86_64
-
-      - name: Smoke LEDE SDK mapper
-        shell: bash
-        run: |
-          set -euo pipefail
-          set +e
-          native/dist-sdk/remote-gate-mapper-x86_64 > /tmp/lede-sdk-mapper.log 2>&1
-          status=$?
-          set -e
-          cat /tmp/lede-sdk-mapper.log
-          test "$status" -eq 2
-          grep -q '^usage:' /tmp/lede-sdk-mapper.log
+          sh native/run-sdk-compat.sh lede-17.01.7-x86_64 "$PWD/native/dist-sdk"
 
       - name: Upload LEDE SDK candidate
         uses: actions/upload-artifact@v4

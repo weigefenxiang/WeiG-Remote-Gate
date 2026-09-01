@@ -1,0 +1,7 @@
+# sample	family	release	target	package_abi	archive	sha256	url
+lede-17.01.7-x86_64	lede	17.01.7	x86/64	x86_64	xz	dc8814263db97e563fe620774295f78bab0fb726cf39829f1b937b7b01bac5a0	https://downloads.openwrt.org/releases/17.01.7/targets/x86/64/lede-sdk-17.01.7-x86-64_gcc-5.4.0_musl-1.1.16.Linux-x86_64.tar.xz
+openwrt-19.07.10-x86_64	openwrt	19.07.10	x86/64	x86_64	xz	db05bea54331b1f7c88033af3ae162359179132e7f52168f32651c5330abd2f5	https://downloads.openwrt.org/releases/19.07.10/targets/x86/64/openwrt-sdk-19.07.10-x86-64_gcc-7.5.0_musl.Linux-x86_64.tar.xz
+openwrt-21.02.7-x86_64	openwrt	21.02.7	x86/64	x86_64	xz	21c75e4c5a429da487f8a885555cb49eee80cfc355d5dbe35d2b3ae05324a09d	https://downloads.openwrt.org/releases/21.02.7/targets/x86/64/openwrt-sdk-21.02.7-x86-64_gcc-8.4.0_musl.Linux-x86_64.tar.xz
+openwrt-24.10.5-x86_64	openwrt	24.10.5	x86/64	x86_64	zst	d3e8ea62fc1c12f93a9c808c2ef4c01b6e149ee240bcd5a74d15bebcbc385bdd	https://downloads.openwrt.org/releases/24.10.5/targets/x86/64/openwrt-sdk-24.10.5-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+openwrt-25.12.5-x86_64	openwrt	25.12.5	x86/64	x86_64	zst	0c8df0151a1e88feb7c03d694d61f6a18d51872815b7c811d76e2b77504d5e9c	https://downloads.openwrt.org/releases/25.12.5/targets/x86/64/openwrt-sdk-25.12.5-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+immortalwrt-24.10.5-x86_64	immortalwrt	24.10.5	x86/64	x86_64	zst	f52f5eeebe7f689588c4400bf429c6f795cc3ed6627542fbbfdbf8406436929e	https://downloads.immortalwrt.org/releases/24.10.5/targets/x86/64/immortalwrt-sdk-24.10.5-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst
