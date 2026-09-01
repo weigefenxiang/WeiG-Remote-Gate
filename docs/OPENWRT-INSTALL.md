@@ -8,7 +8,7 @@ Required for the control plane and agent:
 
 ```text
 /bin/sh (BusyBox ash compatible)
-rc.common + procd
+rc.common
 curl
 ubus
 jsonfilter
@@ -19,6 +19,8 @@ sed
 grep
 sort
 ```
+
+`procd` is preferred and used automatically on modern OpenWrt-family systems. If `rc.common` exists but procd is absent, Remote Gate can use its small PID-managed compatibility fallback. The fallback verifies `/proc/<pid>/cmdline` ownership before terminating a stored PID so a stale PID file cannot kill an unrelated process.
 
 `wg` from wireguard-tools is needed for WireGuard service discovery. If no WireGuard interface is currently listening, no WireGuard service endpoint is registered until one appears.
 
@@ -112,7 +114,7 @@ The installer asks for:
 - public dashboard hostname;
 - VPS-generated `WRITE_TOKEN`.
 
-It prints the detected distribution/release metadata, package manager, Package ABI, kernel machine and firewall backend.
+It prints the detected distribution/release metadata, service framework, package manager, Package ABI, kernel machine and firewall backend.
 
 ## Native mapper ABI
 
@@ -126,6 +128,15 @@ The authoritative selector is the OpenWrt **Package ABI**, obtained in this orde
 4. highest-priority real architecture from `opkg print-architecture`.
 
 `uname -m` is diagnostic information only. It is too broad to safely distinguish many OpenWrt MIPS/ARM ABI variants.
+
+The project keeps an exact ABI map rather than wildcard matching. Every mapped ABI belongs to one of two delivery tiers:
+
+```text
+portable cross candidate -> static build + architecture smoke test, then hardware validation
+SDK required              -> exact OpenWrt-family SDK/toolchain build required
+```
+
+Legacy ARMv4/ARMv5/XScale and other architectures that cannot be safely represented by the portable toolchain are deliberately routed to the SDK-required tier instead of receiving a newer-ISA binary. Unknown future ABI names are also rejected until explicitly classified.
 
 Run:
 
