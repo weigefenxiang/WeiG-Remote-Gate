@@ -44,7 +44,7 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
                 self.assertTrue(url.startswith("https://downloads.immortalwrt.org/releases/"))
             self.assertTrue(url.endswith(".tar.xz") if archive == "xz" else url.endswith(".tar.zst"))
 
-    def test_release_eras_and_forks_are_covered(self):
+    def test_release_eras_and_forks_are_kept_for_later_manual_validation(self):
         samples = {entry[0] for entry in rows(MATRIX, 8)}
         expected = {
             "lede-17.01.7-x86_64",
@@ -56,11 +56,13 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
         }
         self.assertTrue(expected.issubset(samples))
 
-    def test_main_ci_uses_centralized_legacy_sample(self):
-        self.assertIn("sh native/run-sdk-compat.sh lede-17.01.7-x86_64", MAIN_CI)
-        self.assertNotIn("lede-sdk-17.01.7-x86-64_gcc", MAIN_CI)
+    def test_main_ci_focuses_on_current_device_path(self):
+        self.assertNotIn("run-sdk-compat.sh", MAIN_CI)
+        self.assertNotIn("native-cross:", MAIN_CI)
+        self.assertIn("Native mapper host build", MAIN_CI)
+        self.assertIn("browser:", MAIN_CI)
 
-    def test_scheduled_workflow_covers_modern_samples(self):
+    def test_sdk_workflow_is_manual_and_keeps_samples_for_later(self):
         for sample in (
             "openwrt-19.07.10-x86_64",
             "openwrt-21.02.7-x86_64",
@@ -70,7 +72,8 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
         ):
             self.assertIn(sample, SDK_CI)
         self.assertIn("workflow_dispatch:", SDK_CI)
-        self.assertIn("schedule:", SDK_CI)
+        self.assertNotIn("schedule:", SDK_CI)
+        self.assertNotIn("push:", SDK_CI)
         self.assertIn("fail-fast: false", SDK_CI)
 
     def test_runner_verifies_hash_and_restricts_hosts(self):
