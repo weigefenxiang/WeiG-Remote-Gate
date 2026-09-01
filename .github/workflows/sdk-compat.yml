@@ -67,12 +67,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install SDK archive tools
+      - name: Install SDK archive and diagnostic tools
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xz-utils zstd file
+          sudo apt-get install -y --no-install-recommends xz-utils zstd file strace binutils
 
       - name: Build and smoke OpenWrt 19.07 SDK mapper
         shell: bash
@@ -80,7 +80,47 @@ jobs:
           set -euo pipefail
           sh native/run-sdk-compat.sh "openwrt-19.07.10-x86_64" "$PWD/native/dist-sdk"
 
+      - name: Diagnose OpenWrt 19.07 SDK binary
+        if: failure()
+        shell: bash
+        run: |
+          set +e
+          binary="$PWD/native/dist-sdk/remote-gate-mapper-x86_64"
+          [ -f "$binary" ] || { echo 'no exported mapper binary to diagnose'; exit 0; }
+
+          echo '===== FILE ====='
+          file "$binary"
+          echo
+          echo '===== ELF HEADER ====='
+          readelf -h "$binary"
+          echo
+          echo '===== PROGRAM HEADERS ====='
+          readelf -lW "$binary"
+          echo
+          echo '===== RELEVANT SYMBOLS ====='
+          readelf -sW "$binary" | grep -E '(^|[[:space:]])(main|remote_gate_mapper_main|__stack_chk_fail|printf|fprintf)$' || true
+          echo
+          echo '===== VERSION DIRECT ====='
+          "$binary" --version
+          echo "version_rc=$?"
+          echo
+          echo '===== USAGE DIRECT ====='
+          "$binary"
+          echo "usage_rc=$?"
+          echo
+          echo '===== STRACE VERSION ====='
+          strace -f -o /tmp/remote-gate-version.strace "$binary" --version
+          echo "strace_version_rc=$?"
+          tail -n 120 /tmp/remote-gate-version.strace || true
+          echo
+          echo '===== STRACE USAGE ====='
+          strace -f -o /tmp/remote-gate-usage.strace "$binary"
+          echo "strace_usage_rc=$?"
+          tail -n 120 /tmp/remote-gate-usage.strace || true
+          exit 0
+
       - name: Upload OpenWrt 19.07 SDK candidate
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: remote-gate-mapper-openwrt-19.07.10-x86_64-${{ github.sha }}
