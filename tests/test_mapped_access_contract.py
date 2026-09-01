@@ -9,6 +9,8 @@ BACKENDS = (ROOT / "openwrt" / "remote-gate-firewall-backends.sh").read_text(enc
 MAPPING = (ROOT / "openwrt" / "remote-gate-mapping.sh").read_text(encoding="utf-8")
 REGISTRY = (ROOT / "openwrt" / "remote-gate-service-registry.sh").read_text(encoding="utf-8")
 APP = (ROOT / "server" / "app" / "static" / "js" / "app.js").read_text(encoding="utf-8")
+GATE_CONTROLS = (ROOT / "server" / "app" / "static" / "js" / "gate-controls.js").read_text(encoding="utf-8")
+ENDPOINT_PICKER = (ROOT / "server" / "app" / "static" / "js" / "endpoint-picker.js").read_text(encoding="utf-8")
 BOOTSTRAP = (ROOT / "server" / "app" / "static" / "js" / "theme-bootstrap.js").read_text(encoding="utf-8")
 DASHBOARD_CSS = (ROOT / "server" / "app" / "static" / "css" / "dashboard.css").read_text(encoding="utf-8")
 MAPPER = (ROOT / "native" / "remote-gate-mapper.c").read_text(encoding="utf-8")
@@ -80,6 +82,13 @@ class MappedAccessContractTests(unittest.TestCase):
         self.assertIn("method = 'Mapped'", APP)
         self.assertNotIn("provider === 'natmap'", APP)
         self.assertNotIn("provider = 'NATMap'", APP)
+        self.assertIn(
+            "if (item?.access_method === 'mapped' || item?.reachability === 'mapped' || item?.provider === 'natmap') return 'Mapped';",
+            GATE_CONTROLS,
+        )
+        self.assertNotIn("return 'NATMap'", GATE_CONTROLS)
+        self.assertIn('/Direct|Mapped/', ENDPOINT_PICKER)
+        self.assertNotIn('/Direct|NATMap/', ENDPOINT_PICKER)
 
     def test_activate_resolves_latest_mapping_on_openwrt(self):
         self.assertIn('resolve-current <wan> <device> <service-id>', MAPPING)
