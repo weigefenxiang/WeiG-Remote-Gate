@@ -58,22 +58,26 @@ case "$family" in
         ;;
 esac
 
-# OpenWrt 19.07 SDKs still enforce the obsolete Python 2 host prerequisite on
-# current hosts even for this self-contained C package. Real 19.07.9 AArch64
-# and 19.07.10 x86/MIPS samples all fail that same single prerequisite. Keep
-# the exception release-series scoped, while the builder still validates that
-# Python 2 is the only failed prerequisite before creating the host stamp.
+# OpenWrt 19.07 SDKs still enforce obsolete host prerequisite checks on
+# current hosts even for this self-contained C package. Python 2 is unused.
+# Early point releases also have a GCC/g++ version regex that rejects modern
+# compilers even when their independent working-gcc/working-g++ probes pass.
+# Keep the exception release-series scoped; the builder independently verifies
+# gcc/g++ >= 4.8 and compiles/runs C and C++ probes before accepting such a
+# compiler-version false negative.
 #
 # OpenWrt 19.07 x86_64 also has an old static musl/binutils startup quirk.
-# Both 19.07.9 and 19.07.10 x86_64 build successfully without a build-id but
-# then segfault before the mapper can report its identity. A real 32-bit
-# x86/geode runtime test and both MIPS endian variants execute correctly
-# without the workaround, so keep build-id injection scoped to 19.07 x86_64.
+# 19.07.0, 19.07.9 and 19.07.10 x86_64 are covered by the same series rule;
+# later probes established that non-x86_64 19.07 targets do not need build-id.
 sdk_force_prereq=0
+sdk_allow_compiler_prereq=0
 sdk_link_flags=''
 sdk_emulator=''
 case "$sample" in
-    openwrt-19.07.*-*) sdk_force_prereq=1 ;;
+    openwrt-19.07.*-*)
+        sdk_force_prereq=1
+        sdk_allow_compiler_prereq=1
+        ;;
 esac
 case "$sample" in
     openwrt-19.07.*-x86_64) sdk_link_flags='-Wl,--build-id=sha1' ;;
@@ -109,6 +113,7 @@ case "$archive" in
 esac
 
 REMOTE_GATE_SDK_FORCE_PREREQ="$sdk_force_prereq" \
+REMOTE_GATE_SDK_ALLOW_COMPILER_PREREQ="$sdk_allow_compiler_prereq" \
 REMOTE_GATE_SDK_LINK_FLAGS="$sdk_link_flags" \
     sh "$BUILDER" "$sdk_root" "$abi" "$OUT_DIR"
 binary="$OUT_DIR/remote-gate-mapper-$abi"
