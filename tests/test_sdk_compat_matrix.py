@@ -27,7 +27,7 @@ def rows(path: Path, columns: int):
 class SdkCompatibilityMatrixTests(unittest.TestCase):
     def test_matrix_is_exact_and_trusted(self):
         entries = rows(MATRIX, 8)
-        self.assertGreaterEqual(len(entries), 7)
+        self.assertGreaterEqual(len(entries), 9)
         ids = [entry[0] for entry in entries]
         self.assertEqual(len(ids), len(set(ids)))
         known_abis = {entry[0] for entry in rows(ABI_MAP, 3)}
@@ -51,7 +51,9 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
         expected = {
             "lede-17.01.7-x86_64",
             "openwrt-19.07.10-x86_64",
+            "openwrt-19.07.10-x86-geode",
             "openwrt-19.07.10-ramips-mt76x8",
+            "openwrt-19.07.10-ar71xx-generic",
             "openwrt-21.02.7-x86_64",
             "openwrt-24.10.5-x86_64",
             "openwrt-25.12.5-x86_64",
@@ -68,7 +70,9 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
     def test_sdk_workflow_is_manual_and_keeps_samples_for_later(self):
         for sample in (
             "openwrt-19.07.10-x86_64",
+            "openwrt-19.07.10-x86-geode",
             "openwrt-19.07.10-ramips-mt76x8",
+            "openwrt-19.07.10-ar71xx-generic",
             "openwrt-21.02.7-x86_64",
             "openwrt-24.10.5-x86_64",
             "openwrt-25.12.5-x86_64",
@@ -80,6 +84,7 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
         self.assertNotIn("push:", SDK_CI)
         self.assertIn("runs-on: ubuntu-latest", SDK_CI)
         self.assertNotIn("ubuntu-22.04", SDK_CI)
+        self.assertIn("qemu-user", SDK_CI)
         self.assertIn("path: native/dist-sdk/remote-gate-mapper-*", SDK_CI)
         self.assertIn("fail-fast: false", SDK_CI)
 
@@ -117,6 +122,18 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
         self.assertNotIn('--build-id=sha1', PACKAGE)
         self.assertEqual(BUILDER.count("'-Wl,--build-id=sha1'"), 1)
         self.assertIn('REMOTE_GATE_SDK_LINK_FLAGS is restricted to the legacy SDK path', BUILDER)
+
+    def test_legacy_non_native_samples_require_real_emulator_smoke(self):
+        expected = {
+            "openwrt-19.07.10-x86-geode": "qemu-i386",
+            "openwrt-19.07.10-ramips-mt76x8": "qemu-mipsel",
+            "openwrt-19.07.10-ar71xx-generic": "qemu-mips",
+        }
+        for sample, emulator in expected.items():
+            self.assertIn(f"{sample}) sdk_emulator='{emulator}'", RUNNER)
+        self.assertIn('command -v "$sdk_emulator"', RUNNER)
+        self.assertIn('smoke_mapper "$sdk_emulator" "$binary" "$sdk_emulator"', RUNNER)
+        self.assertIn("runtime_smoke=%s", RUNNER)
 
 
 if __name__ == "__main__":
