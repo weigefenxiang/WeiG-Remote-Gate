@@ -153,11 +153,14 @@ static int parse_args(int argc, char **argv, struct config *cfg) {
             if (parse_int(next, 1, 65535, &value)) return -1;
             cfg->stun_port = (uint16_t)value; ++i;
         } else if (!strcmp(arg, "--keepalive") && next) {
-            if (parse_int(next, 5, 120, &cfg->keepalive)) return -1; ++i;
+            if (parse_int(next, 5, 120, &cfg->keepalive)) return -1;
+            ++i;
         } else if (!strcmp(arg, "--idle-timeout") && next) {
-            if (parse_int(next, 30, 3600, &cfg->idle_timeout)) return -1; ++i;
+            if (parse_int(next, 30, 3600, &cfg->idle_timeout)) return -1;
+            ++i;
         } else if (!strcmp(arg, "--max-sessions") && next) {
-            if (parse_int(next, 1, MAX_SESSIONS_LIMIT, &cfg->max_sessions)) return -1; ++i;
+            if (parse_int(next, 1, MAX_SESSIONS_LIMIT, &cfg->max_sessions)) return -1;
+            ++i;
         } else {
             return -1;
         }
@@ -237,11 +240,12 @@ static int create_mapping_socket(const struct config *cfg, uint16_t *port_out) {
     int fd;
     struct sockaddr_in local;
     socklen_t length = sizeof(local);
+    socklen_t device_length = (socklen_t)(strlen(cfg->device) + 1u);
 
     if (if_nametoindex(cfg->device) == 0) return -1;
     fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
     if (fd < 0) return -1;
-    if (setsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE, cfg->device, strlen(cfg->device) + 1) != 0) {
+    if (setsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE, cfg->device, device_length) != 0) {
         close(fd); return -1;
     }
     memset(&local, 0, sizeof(local));
