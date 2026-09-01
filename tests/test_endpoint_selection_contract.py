@@ -35,6 +35,14 @@ class EndpointSelectionContractTests(unittest.TestCase):
         self.assertIn("gateCapability('ipv6')", gate)
         self.assertIn("familyAvailable(state.family)", gate)
 
+    def test_automatic_family_keeps_ipv4_first_when_both_are_available(self):
+        gate = GATE.read_text(encoding="utf-8")
+        choose = gate.split("function chooseFamily() {", 1)[1].split("function familyReason", 1)[0]
+        ipv4_available = choose.index("if (singleAvailable('ipv4')) return 'ipv4';")
+        request_ipv6 = choose.index("if (state.requestFamily === 'ipv6' && singleReady('ipv6')) return 'ipv6';")
+        self.assertLess(ipv4_available, request_ipv6)
+        self.assertIn("if (singleAvailable('ipv6')) return 'ipv6';", choose)
+
     def test_ipv6_wireguard_is_direct_only(self):
         theme = THEME.read_text(encoding="utf-8")
         endpoints = ENDPOINTS.read_text(encoding="utf-8")
