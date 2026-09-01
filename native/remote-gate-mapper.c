@@ -36,6 +36,7 @@ struct config {
     char status_file[512];
     char go_file[512];
     char stun_host[256];
+    char stun_address[INET_ADDRSTRLEN];
     uint16_t stun_port;
     int keepalive;
     int idle_timeout;
@@ -215,9 +216,10 @@ static int write_status(
     if (fprintf(fp,
         "{\"state\":\"%s\",\"device\":\"%s\",\"service_id\":\"%s\","
         "\"ingress_port\":%u,\"external_address\":\"%s\",\"external_port\":%u,"
-        "\"observed_at\":%ld,\"pid\":%ld}\n",
+        "\"stun_address\":\"%s\",\"stun_port\":%u,\"observed_at\":%ld,\"pid\":%ld}\n",
         state, cfg->device, cfg->service_id, (unsigned)ingress_port,
         external_address ? external_address : "", (unsigned)external_port,
+        cfg->stun_address, (unsigned)cfg->stun_port,
         (long)observed_at, (long)getpid()) < 0) {
         fclose(fp); unlink(tmp); return -1;
     }
@@ -265,7 +267,7 @@ static int create_mapping_socket(const struct config *cfg, uint16_t *port_out) {
     return fd;
 }
 
-static int resolve_stun(const struct config *cfg, struct sockaddr_in *out) {
+static int resolve_stun(struct config *cfg, struct sockaddr_in *out) {
     struct addrinfo hints;
     struct addrinfo *result = NULL;
     struct addrinfo *it;
@@ -281,6 +283,10 @@ static int resolve_stun(const struct config *cfg, struct sockaddr_in *out) {
     for (it = result; it; it = it->ai_next) {
         if (it->ai_family == AF_INET && it->ai_addrlen >= sizeof(struct sockaddr_in)) {
             memcpy(out, it->ai_addr, sizeof(*out));
+            if (!inet_ntop(AF_INET, &out->sin_addr, cfg->stun_address, sizeof(cfg->stun_address))) {
+                freeaddrinfo(result);
+                return -1;
+            }
             freeaddrinfo(result);
             return 0;
         }
@@ -423,6 +429,7 @@ static int discover_initial_mapping(
                 if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
                 if (n < 0 && errno == EINTR) continue;
                 if (n <= 0) break;
+                if (!sockaddr_equal(&source, stun_server)) continue;
                 if (parse_stun_mapping(packet, (size_t)n, transaction, external_addr, external_port) == 0) return 0;
             }
         }
@@ -500,7 +507,7 @@ static int run_active(
                 if (n < 0 && errno == EINTR) continue;
                 if (n <= 0) break;
 
-                if ((size_t)n >= 20 && read_u32(packet + 4) == STUN_COOKIE) {
+                if (sockaddr_equal(&source, stun_server)) {
                     struct in_addr new_addr;
                     uint16_t new_port;
                     if (stun_pending && parse_stun_mapping(packet, (size_t)n, transaction, &new_addr, &new_port) == 0) {
@@ -567,6 +574,10 @@ int main(int argc, char **argv) {
     signal(SIGHUP, on_signal);
     umask(077);
 
+    if (resolve_stun(&cfg, &stun_server) != 0) {
+        write_status(&cfg, "failed", 0, "", 0, 0);
+        return 1;
+    }
     mapping_fd = create_mapping_socket(&cfg, &ingress_port);
     if (mapping_fd < 0) {
         write_status(&cfg, "failed", 0, "", 0, 0);
@@ -574,10 +585,6 @@ int main(int argc, char **argv) {
     }
     if (write_status(&cfg, "prepared", ingress_port, "", 0, 0) != 0) goto out;
     if (wait_for_go(&cfg, ingress_port) != 0) goto out;
-    if (resolve_stun(&cfg, &stun_server) != 0) {
-        write_status(&cfg, "failed", ingress_port, "", 0, 0);
-        goto out;
-    }
     if (discover_initial_mapping(&cfg, mapping_fd, ingress_port, &stun_server, &external_addr, &external_port, transaction) != 0) {
         write_status(&cfg, "failed", ingress_port, "", 0, 0);
         goto out;
