@@ -98,7 +98,10 @@ for rel in $FILES; do sh -n "$TMP_DIR/$rel" || fail "Shell syntax check failed: 
 # Validate the target platform with the newly downloaded capability helper.
 sh "$TMP_DIR/remote-gate-platform.sh" core-capable || fail "Required OpenWrt-family core runtime capabilities are unavailable."
 init_system="$(sh "$TMP_DIR/remote-gate-platform.sh" init 2>/dev/null || printf unknown)"
-[ "$init_system" = procd ] || fail "Remote Gate currently requires OpenWrt procd service management; detected: $init_system"
+case "$init_system" in
+    procd|rc.common) ;;
+    *) fail "Unsupported OpenWrt-family service framework: $init_system" ;;
+esac
 
 remote_version="$(sed -n '1p' "$TMP_DIR/VERSION")"
 local_version="$(cat "$LIB_DIR/VERSION" 2>/dev/null || echo unknown)"
@@ -111,6 +114,7 @@ mkdir -p "$BACKUP_ROOT" "$BACKUP"; chmod 700 "$BACKUP_ROOT" "$BACKUP"
 [ -d "$LIB_DIR" ] && cp -a "$LIB_DIR" "$BACKUP/remote-gate-lib"
 [ -f "$CONFIG_FILE" ] && cp -a "$CONFIG_FILE" "$BACKUP/remote-gate.conf"
 [ -d "$STATE_DIR" ] && cp -a "$STATE_DIR" "$BACKUP/remote-gate-state"
+[ -f "$INIT_FILE" ] && cp -a "$BACKUP/remote-gate-agent.init" "$BACKUP/remote-gate-agent.init" 2>/dev/null || true
 [ -f "$INIT_FILE" ] && cp -a "$INIT_FILE" "$BACKUP/remote-gate-agent.init"
 [ -f "$HOTPLUG_FILE" ] && cp -a "$HOTPLUG_FILE" "$BACKUP/remote-gate-hotplug.sh"
 command -v iptables-save >/dev/null 2>&1 && iptables-save > "$BACKUP/iptables-save.txt" 2>/dev/null || true
@@ -166,12 +170,13 @@ printf '%s\n' "$status" | grep -q '"ready":true' || fail "Firewall self-check di
 
 DIST="$("$PLATFORM" distribution 2>/dev/null || printf unknown)"
 RELEASE="$("$PLATFORM" release 2>/dev/null || printf unknown)"
+INIT_SYSTEM="$("$PLATFORM" init 2>/dev/null || printf unknown)"
 PKG_MANAGER="$("$PLATFORM" package-manager 2>/dev/null || printf none)"
 PKG_ARCH="$("$PLATFORM" package-arch 2>/dev/null || true)"
 
 SUCCESS=1; trap - EXIT INT TERM; rm -rf "$TMP_DIR"
 printf 'WeiG Remote Gate OpenWrt-family updated: %s -> %s\n' "$local_version" "$remote_version"
-printf 'Platform: %s %s | package=%s | ABI=%s\n' "$DIST" "$RELEASE" "$PKG_MANAGER" "${PKG_ARCH:-unknown}"
+printf 'Platform: %s %s | service=%s | package=%s | ABI=%s\n' "$DIST" "$RELEASE" "$INIT_SYSTEM" "$PKG_MANAGER" "${PKG_ARCH:-unknown}"
 printf 'Backup: %s\n' "$BACKUP"
 printf 'IPv6 Gate mode: %s\n' "$(sed -n "s/^GATE_IPV6='\([^']*\)'/\1/p" "$CONFIG_FILE" | sed -n '1p')"
 if [ -x "$LIB_DIR/remote-gate-mapper" ]; then
