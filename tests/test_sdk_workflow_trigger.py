@@ -30,12 +30,10 @@ class SdkWorkflowTriggerTests(unittest.TestCase):
         self.assertIn("fromJSON(inputs.sample == 'all'", WORKFLOW)
         self.assertIn("format('[\"{0}\"]', inputs.sample)", WORKFLOW)
 
-    def test_openwrt_1907_is_pinned_away_from_latest_runner_drift(self):
-        self.assertIn(
-            "runs-on: ${{ matrix.sample == 'openwrt-19.07.10-x86_64' && 'ubuntu-22.04' || 'ubuntu-latest' }}",
-            WORKFLOW,
-        )
-        self.assertNotIn("runs-on: ubuntu-latest\n    timeout-minutes", WORKFLOW)
+    def test_openwrt_1907_uses_current_runner_after_modern_host_verification(self):
+        self.assertIn("runs-on: ubuntu-latest", WORKFLOW)
+        self.assertNotIn("ubuntu-22.04", WORKFLOW)
+        self.assertNotIn("matrix.sample == 'openwrt-19.07.10-x86_64' &&", WORKFLOW)
 
 
 if __name__ == "__main__":
