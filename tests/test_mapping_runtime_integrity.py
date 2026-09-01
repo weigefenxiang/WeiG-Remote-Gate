@@ -8,7 +8,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 MAPPING = ROOT / "openwrt" / "remote-gate-mapping.sh"
 FIREWALL = ROOT / "openwrt" / "remote-gate-firewall.sh"
-VERIFY = ROOT / "openwrt" / "remote-gate-wireguard-verify.sh"
+BACKENDS = ROOT / "openwrt" / "remote-gate-firewall-backends.sh"
 
 
 class MappingRuntimeIntegrityTests(unittest.TestCase):
@@ -83,9 +83,9 @@ class MappingRuntimeIntegrityTests(unittest.TestCase):
 
     def test_changed_mapped_ingress_revokes_old_authorization(self):
         firewall = FIREWALL.read_text(encoding="utf-8")
-        verify = VERIFY.read_text(encoding="utf-8")
+        backends = BACKENDS.read_text(encoding="utf-8")
         protected = firewall.split("protected_ingress_current() {", 1)[1].split("fw3_ipv6_capable()", 1)[0]
-        reconcile = verify.split("reconcile_family() {", 1)[1].split("reconcile_policy()", 1)[0]
+        reconcile = backends.split("reconcile_family() {", 1)[1].split("reconcile_policy()", 1)[0]
 
         self.assertIn('grep -Fqx "${rg_dev}|${rg_port}" "$MAPPED_INGRESS_V4_FILE"', protected)
         self.assertIn('auth_record_policy_current "$rg_family" "$rg_record"', reconcile)
