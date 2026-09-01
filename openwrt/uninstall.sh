@@ -15,6 +15,7 @@ IPSET_V4="weig_remote_gate_auth_v4"
 IPSET_V6="weig_remote_gate_auth_v6"
 FW4_TABLE_INCLUDE="/usr/share/nftables.d/table-pre/90-weig-remote-gate-sets.nft"
 FW4_INPUT_INCLUDE="/usr/share/nftables.d/chain-pre/input/90-weig-remote-gate.nft"
+MAPPING_RUNTIME="/tmp/remote-gate/mapping"
 
 DRY_RUN=0
 ASSUME_YES=0
@@ -26,9 +27,9 @@ Usage: uninstall.sh [--dry-run] [--yes] [--remove-wireguard]
 
 Default behavior:
   - backs up firewall/network/application state locally
-  - removes only WeiG Remote Gate-owned firewall/application objects
+  - removes only WeiG Remote Gate-owned firewall/application/mapping objects
   - disables and removes optional Remote Gate WireGuard egress policy if enabled
-  - preserves WireGuard configuration and Cloud/network settings
+  - preserves WireGuard configuration and unrelated NAT/forwarding/service settings
   - keeps the backup under /var/backups/weig-remote-gate/
 EOF
 }
@@ -53,11 +54,13 @@ printf 'WeiG Remote Gate safe uninstall\n'
 printf 'Will remove:\n'
 printf '  Remote Gate agent/service, cron and hotplug hooks\n'
 printf '  Remote Gate INPUT chains/ipsets or nft include objects\n'
+printf '  Remote Gate-owned mapper process/binary/runtime state\n'
 printf '  Optional Remote Gate WireGuard egress UCI policy if enabled\n'
 printf '  Remote Gate application/config/state files\n'
 printf 'Will preserve:\n'
 printf '  WireGuard interface/keys/peers and pre-existing WG firewall zones\n'
 printf '  Existing FORWARD, DNAT, UPnP, NAT-PMP and qBittorrent rules\n'
+printf '  User services and unrelated NAT/mapping configuration\n'
 printf '  A local recovery backup\n'
 if [ "$REMOVE_WIREGUARD" -eq 1 ]; then
     printf 'Requested: remove WireGuard only if install manifest proves Remote Gate ownership.\n'
@@ -102,6 +105,7 @@ fi
 [ -f "$CONFIG_FILE" ] && cp -a "$CONFIG_FILE" "$backup/remote-gate.conf" || true
 [ -d "$STATE_DIR" ] && cp -a "$STATE_DIR" "$backup/remote-gate-state" || true
 [ -d "$LIB_DIR" ] && cp -a "$LIB_DIR" "$backup/remote-gate-lib" || true
+[ -d "$MAPPING_RUNTIME" ] && cp -a "$MAPPING_RUNTIME" "$backup/mapping-runtime" || true
 [ -f "$INIT_FILE" ] && cp -a "$INIT_FILE" "$backup/remote-gate-agent.init" || true
 [ -f "$HOTPLUG_FILE" ] && cp -a "$HOTPLUG_FILE" "$backup/remote-gate-hotplug.sh" || true
 printf 'Backup created: %s\n' "$backup"
@@ -109,6 +113,10 @@ printf 'Backup created: %s\n' "$backup"
 if [ -x "$INIT_FILE" ]; then
     "$INIT_FILE" disable >/dev/null 2>&1 || true
     "$INIT_FILE" stop >/dev/null 2>&1 || true
+fi
+
+if [ -x "$LIB_DIR/remote-gate-mapping.sh" ]; then
+    "$LIB_DIR/remote-gate-mapping.sh" stop-all >/dev/null 2>&1 || true
 fi
 
 if [ -x "$LIB_DIR/remote-gate-wireguard-egress.sh" ]; then
@@ -169,13 +177,15 @@ if [ "$REMOVE_WIREGUARD" -eq 1 ]; then
     manifest="$STATE_DIR/install-manifest"
     wg_owned="$(sed -n 's/^wireguard_owned=//p' "$manifest" 2>/dev/null | sed -n '1p')"
     if [ "$wg_owned" = "1" ]; then
-        printf 'WireGuard ownership is recorded, but automatic WG deletion is intentionally disabled in v0.3.0 development builds.\n'
+        printf 'WireGuard ownership is recorded, but automatic WG deletion remains intentionally disabled.\n'
         printf 'WireGuard was preserved for safety.\n'
     else
         printf 'WireGuard is not recorded as Remote Gate-owned; preserving it.\n'
     fi
 fi
 
+rm -rf "$MAPPING_RUNTIME"
+rmdir /tmp/remote-gate 2>/dev/null || true
 rm -rf "$LIB_DIR"
 rm -f "$CONFIG_FILE"
 rm -rf "$STATE_DIR"
@@ -202,6 +212,8 @@ if command -v uci >/dev/null 2>&1; then
     uci -q get network.remote_gate_wg_egress_default_rule >/dev/null 2>&1 && residue=1 || true
 fi
 ps 2>/dev/null | grep '[r]emote-gate-agent.sh' >/dev/null 2>&1 && residue=1 || true
+ps 2>/dev/null | grep '[r]emote-gate-mapper' >/dev/null 2>&1 && residue=1 || true
+[ -e "$MAPPING_RUNTIME" ] && residue=1
 
 if [ "$residue" -ne 0 ]; then
     printf 'WARNING: residual Remote Gate objects were detected. Do not delete the backup.\n' >&2
@@ -212,4 +224,5 @@ fi
 printf '\nRemote Gate removed successfully.\n'
 printf 'Backup retained at: %s\n' "$backup"
 printf 'WireGuard configuration was preserved.\n'
+printf 'User NAT/mapping/service configuration was preserved.\n'
 printf 'Original firewall ownership remains with OpenWrt; no full iptables snapshot was blindly restored.\n'
