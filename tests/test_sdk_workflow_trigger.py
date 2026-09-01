@@ -15,6 +15,9 @@ class SdkWorkflowTriggerTests(unittest.TestCase):
     def test_representative_family_matrix_is_kept_for_later_manual_validation(self):
         for sample in (
             "openwrt-19.07.10-x86_64",
+            "openwrt-19.07.10-x86-geode",
+            "openwrt-19.07.10-ramips-mt76x8",
+            "openwrt-19.07.10-ar71xx-generic",
             "openwrt-21.02.7-x86_64",
             "openwrt-24.10.5-x86_64",
             "openwrt-25.12.5-x86_64",
@@ -34,6 +37,7 @@ class SdkWorkflowTriggerTests(unittest.TestCase):
         self.assertIn("runs-on: ubuntu-latest", WORKFLOW)
         self.assertNotIn("ubuntu-22.04", WORKFLOW)
         self.assertNotIn("matrix.sample == 'openwrt-19.07.10-x86_64' &&", WORKFLOW)
+        self.assertIn("qemu-user", WORKFLOW)
 
 
 if __name__ == "__main__":
