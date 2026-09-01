@@ -38,6 +38,15 @@ class UIContractTests(unittest.TestCase):
         self.assertNotIn("createElement('script')", source)
         self.assertNotIn("/api/v1/client-source/challenge", source)
 
+    def test_candidate_api_is_production_routed_and_router_egress_fails_closed(self):
+        server = SERVER.read_text(encoding="utf-8")
+        self.assertIn('path == "/api/v1/client-source/candidate"', server)
+        self.assertIn("record = observe_candidate(STORE, session.token, address, family)", server)
+        self.assertIn('record.get("confidence") == "suppressed"', server)
+        self.assertIn('self._json(409, {"error": "router_egress_source"})', server)
+        self.assertIn('path == "/api/v1/client-source/probe"', server)
+        self.assertIn('self._json(410, {"error": "legacy_source_probe_disabled"})', server)
+
     def test_observed_family_skips_carrier_probe_and_candidate_update_never_reloads_page(self):
         source = CLIENT_SOURCES.read_text(encoding="utf-8")
         self.assertIn("source.confidence === 'observed'", source)
