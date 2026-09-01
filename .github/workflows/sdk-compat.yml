@@ -54,7 +54,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          binary="$PWD/native/dist-sdk-geode/remote-gate-mapper-i386_geode"
+          binary="$PWD/native/dist-sdk-geode/remote-gate-mapper-i386_pentium"
           file "$binary"
           readelf -h "$binary"
           readelf -lW "$binary"
@@ -103,7 +103,7 @@ jobs:
         with:
           name: remote-gate-mapper-openwrt-19.07.10-arch-${{ github.sha }}
           path: |
-            native/dist-sdk-geode/remote-gate-mapper-i386_geode
+            native/dist-sdk-geode/remote-gate-mapper-i386_pentium
             native/dist-sdk-mipsbe/remote-gate-mapper-mips_24kc
           if-no-files-found: error
           retention-days: 14
