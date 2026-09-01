@@ -55,7 +55,7 @@ jobs:
             'openwrt' \
             '19.07.9' \
             'armvirt/64' \
-            'aarch64_armv8-a' \
+            'aarch64_generic' \
             'xz' \
             'ba83f860b714241355192f85c2e9714c81d0d6e2d50f6eefcc8fb2a842af55c0' \
             'https://downloads.openwrt.org/releases/19.07.9/targets/armvirt/64/openwrt-sdk-19.07.9-armvirt-64_gcc-7.5.0_musl.Linux-x86_64.tar.xz' >> "$matrix"
