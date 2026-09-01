@@ -90,17 +90,21 @@ class MappedAccessContractTests(unittest.TestCase):
         self.assertLess(activate.index('sync_firewall_policy || true'), activate.index('"$MAPPING" resolve-current'))
         self.assertLess(activate.index('"$MAPPING" resolve-current'), activate.index('"$FIREWALL" activate'))
 
-    def test_mapped_picker_hides_runtime_endpoint_until_activate(self):
+    def test_mapped_picker_hides_runtime_endpoint_until_explicit_wan_selection(self):
         self.assertIn('function rewriteMappedOptions()', BOOTSTRAP)
         self.assertIn("const mappedIndex = parts.indexOf('Mapped')", BOOTSTRAP)
-        self.assertIn('Endpoint 在 Activate 后确认', BOOTSTRAP)
-        self.assertIn('Endpoint resolved after Activate', BOOTSTRAP)
+        self.assertIn('选择 WAN 后显示实时 Endpoint', BOOTSTRAP)
+        self.assertIn('Live endpoint shown after WAN selection', BOOTSTRAP)
+        self.assertIn("select.dataset.selectionConfirmed !== '1'", BOOTSTRAP)
 
-    def test_current_mapped_endpoint_prefers_live_inventory_and_is_copyable(self):
-        self.assertIn('function mappedEndpointFromDashboard(data)', BOOTSTRAP)
+    def test_current_mapped_endpoint_matches_selected_mapping_and_is_copyable(self):
+        self.assertIn('function selectedEndpointRecord(data)', BOOTSTRAP)
+        self.assertIn('function mappedEndpoint(data, selected)', BOOTSTRAP)
         self.assertIn('inventory?.mappings', BOOTSTRAP)
+        self.assertIn("String(item.wan || '') === String(selected.wan || '')", BOOTSTRAP)
+        self.assertIn("String(item.device || '') === String(selected.device || '')", BOOTSTRAP)
+        self.assertIn("String(item.service_id || '') === String(selected.service_id || '')", BOOTSTRAP)
         self.assertIn('Number(b.observed_at || 0) - Number(a.observed_at || 0)', BOOTSTRAP)
-        self.assertIn('mapped-endpoint:', BOOTSTRAP)
         self.assertIn('当前 WireGuard 公网 Endpoint', BOOTSTRAP)
         self.assertIn('Current WireGuard Public Endpoint', BOOTSTRAP)
         self.assertIn('OpenWrt 持续观测，Activate 时实时确认', BOOTSTRAP)
