@@ -30,6 +30,27 @@
     return Number(item.priority || 999);
   }
 
+  function endpointCompare(a, b) {
+    return endpointScore(a) - endpointScore(b)
+      || String(a?.wan || '').localeCompare(String(b?.wan || ''))
+      || String(a?.id || '').localeCompare(String(b?.id || ''));
+  }
+
+  function preferredIpv4Endpoint() {
+    return [...endpointsFor('ipv4')].sort(endpointCompare)[0] || null;
+  }
+
+  function preferredIpv6Endpoint() {
+    const endpoints = [...endpointsFor('ipv6')];
+    if (!endpoints.length) return null;
+    const preferredV4Wan = preferredIpv4Endpoint()?.wan || '';
+    return endpoints.sort((a, b) => {
+      const aSame = preferredV4Wan && a?.wan === preferredV4Wan ? 0 : 1;
+      const bSame = preferredV4Wan && b?.wan === preferredV4Wan ? 0 : 1;
+      return aSame - bSame || endpointCompare(a, b);
+    })[0] || null;
+  }
+
   function dualEndpointPairs() {
     const v4 = endpointsFor('ipv4');
     const v6 = endpointsFor('ipv6');
@@ -42,8 +63,8 @@
     const pairs = [];
     groups.forEach((group) => {
       if (!group.ipv4.length || !group.ipv6.length) return;
-      group.ipv4.sort((a, b) => endpointScore(a) - endpointScore(b));
-      group.ipv6.sort((a, b) => endpointScore(a) - endpointScore(b));
+      group.ipv4.sort(endpointCompare);
+      group.ipv6.sort(endpointCompare);
       const ipv4 = group.ipv4[0];
       const ipv6 = group.ipv6[0];
       pairs.push({
@@ -56,7 +77,19 @@
         score: endpointScore(ipv4) + endpointScore(ipv6)
       });
     });
-    return pairs.sort((a, b) => a.score - b.score || String(a.wan).localeCompare(String(b.wan)));
+    const preferredV4Wan = preferredIpv4Endpoint()?.wan || '';
+    return pairs.sort((a, b) => {
+      const aSame = preferredV4Wan && a.wan === preferredV4Wan ? 0 : 1;
+      const bSame = preferredV4Wan && b.wan === preferredV4Wan ? 0 : 1;
+      return aSame - bSame || a.score - b.score || String(a.wan).localeCompare(String(b.wan));
+    });
+  }
+
+  function preferredSelection(family) {
+    if (family === 'ipv4') return preferredIpv4Endpoint()?.id || '';
+    if (family === 'ipv6') return preferredIpv6Endpoint()?.id || '';
+    if (family === 'dual') return dualEndpointPairs()[0]?.id || '';
+    return '';
   }
 
   function endpointAddress(item) {
@@ -93,13 +126,15 @@
     if (!['ipv4','ipv6','dual'].includes(family)) return;
     const select = endpointSelect();
     const value = String(select?.value || '');
-    const confirmed = Boolean(endpointSelectionIsManual(family) && value);
+    const confirmed = Boolean(value);
+    const source = endpointSelectionIsManual(family) ? 'manual' : 'auto';
     if (select) {
       select.dataset.selectionFamily = family;
       select.dataset.selectionConfirmed = confirmed ? '1' : '0';
+      select.dataset.selectionSource = confirmed ? source : '';
     }
     window.dispatchEvent(new CustomEvent('remote-gate-endpoint-selection', {
-      detail: {family, value, confirmed}
+      detail: {family, value, confirmed, source}
     }));
   }
 
@@ -134,26 +169,29 @@
     if (!select) return;
     select.disabled = false;
     const saved = context.state.endpointSelections?.[family];
-    if (!endpointSelectionIsManual(family) || !saved) {
-      select.value = '';
-      publishEndpointSelection(family);
-      window.RemoteGateEndpointPicker?.sync?.('endpoint-select');
-      return;
-    }
     const options = [...select.options].filter((option) => option.value);
-    const exact = options.find((option) => option.value === saved.value);
-    if (exact) {
-      select.value = exact.value;
-      publishEndpointSelection(family);
-      window.RemoteGateEndpointPicker?.sync?.('endpoint-select');
-      return;
+    if (endpointSelectionIsManual(family) && saved) {
+      const exact = options.find((option) => option.value === saved.value);
+      if (exact) {
+        select.value = exact.value;
+        publishEndpointSelection(family);
+        window.RemoteGateEndpointPicker?.sync?.('endpoint-select');
+        return;
+      }
+      let fallback = null;
+      if (saved.wan) fallback = options.find((option) => endpointWanForSelection(family, option.value) === saved.wan) || null;
+      if (fallback) {
+        select.value = fallback.value;
+        context.state.endpointSelections[family] = {value: fallback.value, wan: saved.wan};
+        publishEndpointSelection(family);
+        window.RemoteGateEndpointPicker?.sync?.('endpoint-select');
+        return;
+      }
+      context.state.endpointManualSelections[family] = false;
+      delete context.state.endpointSelections[family];
     }
-    let fallback = null;
-    if (saved.wan) {
-      fallback = options.find((option) => endpointWanForSelection(family, option.value) === saved.wan) || null;
-    }
-    select.value = fallback?.value || '';
-    if (fallback) context.state.endpointSelections[family] = {value: fallback.value, wan: saved.wan};
+    const preferred = preferredSelection(family);
+    select.value = options.some((option) => option.value === preferred) ? preferred : '';
     publishEndpointSelection(family);
     window.RemoteGateEndpointPicker?.sync?.('endpoint-select');
   }
@@ -190,9 +228,15 @@
     if (exact) select.value = exact.value;
     else if (priorWan) {
       const pair = pairs.find((item) => item.wan === priorWan);
-      select.value = pair?.id || '';
-      if (pair) context.state.endpointSelections.dual = {value: pair.id, wan: pair.wan};
-    } else select.value = '';
+      if (pair) {
+        select.value = pair.id;
+        context.state.endpointSelections.dual = {value: pair.id, wan: pair.wan};
+      } else {
+        context.state.endpointManualSelections.dual = false;
+        delete context.state.endpointSelections.dual;
+        select.value = pairs[0].id;
+      }
+    } else select.value = pairs[0].id;
     publishEndpointSelection('dual');
     window.RemoteGateEndpointPicker?.sync?.('endpoint-select');
   }
@@ -371,8 +415,8 @@
       if (!sourceFor('ipv4') || !sourceFor('ipv6')) return zh() ? 'IPv4 与 IPv6 Source 都就绪后可同时授权。' : 'Both IPv4 and IPv6 sources are required for dual-stack authorization.';
       const selected = selectedDualPair() || dualEndpointPairs()[0];
       return zh()
-        ? `双栈就绪 · IPv4 + IPv6 已识别 · ${selected?.wan || '请选择 WAN'}`
-        : `Dual stack ready · IPv4 + IPv6 detected · ${selected?.wan || 'choose a WAN'}`;
+        ? `双栈就绪 · IPv4 + IPv6 已识别 · ${selected?.wan || '自动选择最佳 WAN'}`
+        : `Dual stack ready · IPv4 + IPv6 detected · ${selected?.wan || 'best WAN selected automatically'}`;
     }
     if (family === 'ipv6' && !gateCapability('ipv6')) return t('gate.ipv6Unavailable');
     const endpoints = endpointsFor(family);
@@ -468,7 +512,6 @@
     const endpointReady = state.family === 'dual' ? Boolean(selectedDualPair()) : Boolean(endpointSelect()?.value);
     return Boolean(
       !state.busy &&
-      endpointSelectionIsManual(state.family) &&
       familyAvailable(state.family) &&
       endpointReady &&
       $('wg-select')?.value
@@ -792,6 +835,9 @@
     egressMatchesSelection,
     endpointSelectionIsManual,
     rememberEndpointSelection,
-    restoreEndpointSelection
+    restoreEndpointSelection,
+    preferredIpv4Endpoint,
+    preferredIpv6Endpoint,
+    preferredSelection
   };
 })();
