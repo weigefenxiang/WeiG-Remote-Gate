@@ -68,12 +68,24 @@ class ReturnRoutingTests(unittest.TestCase):
     def test_interface_down_immediately_resyncs_gate_and_return_routes(self):
         source = HOTPLUG.read_text(encoding="utf-8")
         event_block = source.split('case "${ACTION:-}" in', 1)[1]
-        self.assertIn("ifup|ifupdate|update|ifdown)", event_block)
-        self.assertIn("remote-gate-agent.sh sync-firewall", event_block)
-        self.assertIn('"$0" return-route-sync', event_block)
+        self.assertIn("ifdown)", event_block)
+        self.assertIn("resync_gate_once", event_block)
+        self.assertIn("remote-gate-agent.sh sync-firewall", source)
+        self.assertIn('"$0" return-route-sync', source)
         self.assertNotIn("FORWARD", event_block)
         self.assertNotIn("DNAT", event_block)
         self.assertNotIn("wg set", event_block)
+
+    def test_interface_up_retries_resync_while_netifd_settles(self):
+        source = HOTPLUG.read_text(encoding="utf-8")
+        event_block = source.split('case "${ACTION:-}" in', 1)[1]
+        settle = source.split("resync_gate_after_settle() {", 1)[1].split('case "${1:-}" in', 1)[0]
+        self.assertIn("ifup|ifupdate|update)", event_block)
+        self.assertIn("interface-resync-settle", event_block)
+        self.assertEqual(settle.count("resync_gate_once"), 4)
+        self.assertIn("sleep 2", settle)
+        self.assertIn("sleep 5", settle)
+        self.assertIn("sleep 10", settle)
 
     def test_lifecycle_starts_and_clears_return_route_loop(self):
         source = INIT.read_text(encoding="utf-8")
