@@ -15,6 +15,7 @@ class SdkWorkflowTriggerTests(unittest.TestCase):
     def test_representative_family_matrix_is_kept_for_later_manual_validation(self):
         for sample in (
             "openwrt-19.07.9-armvirt-64",
+            "openwrt-19.07.9-x86_64",
             "openwrt-19.07.10-x86_64",
             "openwrt-19.07.10-x86-geode",
             "openwrt-19.07.10-ramips-mt76x8",
