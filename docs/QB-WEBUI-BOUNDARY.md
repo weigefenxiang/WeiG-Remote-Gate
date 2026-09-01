@@ -22,6 +22,12 @@ OpenWrt agent
   ↓
 router-local INPUT Gate for Ping / WireGuard
 
+Optional WireGuard Internet Exit
+WireGuard client
+  ↓
+selected WG subnet
+  ↓ temporary PBR / FORWARD / NAT
+selected WAN
 
 qBittorrent application path
 
@@ -40,7 +46,8 @@ The two projects may be deployed on infrastructure owned by the same user, but t
 - browser source observation / carrier-probe source records;
 - Multi-WAN endpoint inventory;
 - temporary source-specific Ping / WireGuard authorization;
-- fw3/fw4 INPUT firewall objects owned by Remote Gate;
+- fw3/fw4 router-local INPUT objects owned by the Access Gate;
+- optional runtime-only WireGuard Internet Exit state scoped to the selected WG subnet and WAN;
 - OpenWrt agent pull / ACK transport.
 
 Remote Gate does **not** own qBittorrent WebAPI version compatibility, qB settings, qB logs, Torrent UI state or qB feature emulation.
@@ -56,13 +63,16 @@ Remote Gate does **not** own qBittorrent WebAPI version compatibility, qB settin
 
 The qB WebUI compatibility matrix belongs in the qB WebUI repository and must not be duplicated here.
 
-## 4. Firewall boundary remains unchanged
+## 4. Firewall boundary remains unchanged for qBittorrent
 
-Remote Gate is deliberately INPUT-only. A normally forwarded qBittorrent TCP/UDP service follows the router's existing NAT/FORWARD policy and must not be captured by Remote Gate rules.
+The **Access Gate** is deliberately INPUT-only. A normally forwarded qBittorrent TCP/UDP service follows the router's existing NAT/FORWARD policy and must not be captured by Gate rules.
+
+The optional **Internet Exit** is a separate exception for authenticated traffic that arrives from the selected WireGuard interface/subnet. It may temporarily install only the PBR, FORWARD and NAT44/NAT66 state required to send that WG subnet through the selected WAN. It must not capture or rewrite qBittorrent forwarding.
 
 ```text
-router-local Ping / WireGuard UDP → Remote Gate INPUT ownership
-forwarded qBittorrent traffic     → existing NAT/FORWARD ownership
+router-local Ping / WireGuard UDP -> Remote Gate Access Gate INPUT ownership
+selected WG subnet Internet Exit  -> temporary scoped PBR/FORWARD/NAT ownership
+forwarded qBittorrent traffic     -> existing router NAT/FORWARD ownership
 ```
 
 This separation is a security invariant, not only a documentation convention.
@@ -78,4 +88,4 @@ When a change affects both projects:
 1. document qB version/API/UI behavior in `WeiG-qB-WebUI`;
 2. document only the network/security ownership boundary in `WeiG-Remote-Gate`;
 3. avoid copying qB capability tables into Remote Gate docs;
-4. preserve the INPUT-only firewall invariant.
+4. preserve the Access Gate INPUT-only invariant and the narrowly scoped, opt-in Internet Exit exception.
