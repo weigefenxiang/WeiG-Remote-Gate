@@ -33,7 +33,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for file in openwrt/*.sh openwrt/*.init; do
+          for file in openwrt/*.sh openwrt/*.init native/*.sh; do
             sh -n "$file"
           done
           for file in server/*.sh; do
@@ -51,6 +51,59 @@ jobs:
             node --check "$file"
           done
           node --check tests/browser_layout.mjs
+
+  native-cross:
+    runs-on: ubuntu-latest
+    needs: core
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install verified Zig 0.16.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz -o /tmp/zig.tar.xz
+          echo '70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00  /tmp/zig.tar.xz' | sha256sum -c -
+          mkdir -p .zig
+          tar -xJf /tmp/zig.tar.xz --strip-components=1 -C .zig
+          .zig/zig version
+
+      - name: Install QEMU user emulation
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-user file
+
+      - name: Cross build static mapper classes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p native/dist
+          while IFS=$'\t' read -r class target cflags validation; do
+            [[ -n "$class" && "$class" != \#* ]] || continue
+            [[ "$validation" == 'cross-build' ]] || continue
+            echo "Building $class -> $target"
+            ZIG="$PWD/.zig/zig" OUT_DIR="$PWD/native/dist" sh native/build-portable.sh "$class"
+          done < native/mapper-build-classes.tsv
+
+      - name: QEMU smoke portable mapper classes
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS=$'\t' read -r class target cflags validation; do
+            [[ -n "$class" && "$class" != \#* ]] || continue
+            [[ "$validation" == 'cross-build' ]] || continue
+            sh native/smoke-portable.sh "$class" "native/dist/remote-gate-mapper-$class"
+          done < native/mapper-build-classes.tsv
+
+      - name: Upload mapper cross candidates
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-gate-mapper-cross-candidates-${{ github.sha }}
+          path: native/dist/remote-gate-mapper-*
+          if-no-files-found: error
+          retention-days: 14
 
   browser:
     runs-on: ubuntu-latest
