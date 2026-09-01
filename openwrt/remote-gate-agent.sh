@@ -495,9 +495,9 @@ wireguard_json() {
 
 egress_json() {
     if [ -x "$EGRESS" ]; then
-        "$EGRESS" status-json 2>/dev/null || printf '{"active":false,"state":"inactive","mode":"","wan":"","device":"","wg":"","ipv4_subnet":"","ipv6_subnet":"","detail":"","expires_in":0}'
+        "$EGRESS" status-json 2>/dev/null || printf '{"active":false,"state":"inactive","mode":"","wan":"","device":"","wan_v4":"","device_v4":"","wan_v6":"","device_v6":"","wg":"","ipv4_subnet":"","ipv6_subnet":"","detail":"","expires_in":0}'
     else
-        printf '{"active":false,"state":"inactive","mode":"","wan":"","device":"","wg":"","ipv4_subnet":"","ipv6_subnet":"","detail":"","expires_in":0}'
+        printf '{"active":false,"state":"inactive","mode":"","wan":"","device":"","wan_v4":"","device_v4":"","wan_v6":"","device_v6":"","wg":"","ipv4_subnet":"","ipv6_subnet":"","detail":"","expires_in":0}'
     fi
 }
 
@@ -519,6 +519,14 @@ ack() {
     id="$1"; ok="$2"; detail="$(sanitize_detail "$3")"
     payload="{\"id\":\"${id}\",\"ok\":${ok},\"detail\":\"${detail}\"}"
     control_request POST "/api/v1/agent/ack" "$BODY" "$payload" >/dev/null 2>&1 || true
+}
+
+rollback_batch_access() {
+    count="$1"
+    valid_uint "$count" || count=1
+    [ "$count" -gt 1 ] || return 0
+    "$FIREWALL" clear >/dev/null 2>&1 || true
+    [ ! -x "$EGRESS" ] || "$EGRESS" disable >/dev/null 2>&1 || true
 }
 
 pull_once() {
@@ -553,6 +561,8 @@ pull_once() {
             external_address="$(jsonfilter -i "$BODY" -e '@.external_address' 2>/dev/null | sed -n '1p')"
             external_port="$(jsonfilter -i "$BODY" -e '@.external_port' 2>/dev/null | sed -n '1p')"
             egress_wan="$(jsonfilter -i "$BODY" -e '@.egress_wan' 2>/dev/null | sed -n '1p')"
+            egress_wan_ipv4="$(jsonfilter -i "$BODY" -e '@.egress_wan_ipv4' 2>/dev/null | sed -n '1p')"
+            egress_wan_ipv6="$(jsonfilter -i "$BODY" -e '@.egress_wan_ipv6' 2>/dev/null | sed -n '1p')"
             egress_mode="$(jsonfilter -i "$BODY" -e '@.egress_mode' 2>/dev/null | sed -n '1p')"
             batch_index="$(jsonfilter -i "$BODY" -e '@.batch_index' 2>/dev/null | sed -n '1p')"
             batch_count="$(jsonfilter -i "$BODY" -e '@.batch_count' 2>/dev/null | sed -n '1p')"
@@ -589,6 +599,27 @@ pull_once() {
                 if [ "$batch_count" -gt 1 ]; then egress_mode=dual; else egress_mode="$family"; fi
             fi
             case "$egress_mode" in ipv4|ipv6|dual) ;; *) ack "$id" false "invalid-egress-mode"; return 1 ;; esac
+
+            if [ -n "$egress_wan" ]; then valid_name "$egress_wan" || { ack "$id" false "invalid-egress-wan"; return 1; }; fi
+            if [ -n "$egress_wan_ipv4" ]; then valid_name "$egress_wan_ipv4" || { ack "$id" false "invalid-ipv4-egress-wan"; return 1; }; fi
+            if [ -n "$egress_wan_ipv6" ]; then valid_name "$egress_wan_ipv6" || { ack "$id" false "invalid-ipv6-egress-wan"; return 1; }; fi
+            case "$egress_mode" in
+                ipv4) [ -n "$egress_wan_ipv4" ] || egress_wan_ipv4="$egress_wan" ;;
+                ipv6) [ -n "$egress_wan_ipv6" ] || egress_wan_ipv6="$egress_wan" ;;
+                dual)
+                    [ -n "$egress_wan_ipv4" ] || egress_wan_ipv4="$egress_wan"
+                    [ -n "$egress_wan_ipv6" ] || egress_wan_ipv6="$egress_wan"
+                    if { [ -n "$egress_wan_ipv4" ] && [ -z "$egress_wan_ipv6" ]; } || { [ -z "$egress_wan_ipv4" ] && [ -n "$egress_wan_ipv6" ]; }; then
+                        ack "$id" false "incomplete-dual-egress-plan"
+                        rollback_batch_access "$batch_count"
+                        return 1
+                    fi
+                    ;;
+            esac
+            egress_requested=0
+            [ -n "$egress_wan_ipv4" ] || [ -n "$egress_wan_ipv6" ] && egress_requested=1
+            if [ -n "$egress_wan_ipv4" ] || [ -n "$egress_wan_ipv6" ]; then egress_requested=1; fi
+
             case "$source_confidence" in
                 verified) source_kind=web_verified ;;
                 observed) source_kind=web_observed ;;
@@ -604,16 +635,17 @@ pull_once() {
                 mapped_record="$("$MAPPING" resolve-current "$wan" "$device" "$service_id" 2>/dev/null || true)"
                 if [ -z "$mapped_record" ]; then
                     logger -t "$TAG" "mapped activation has no current endpoint for ${wan}/${device}/${service_id}" 2>/dev/null || true
+                    rollback_batch_access "$batch_count"
                     ack "$id" false "mapped-endpoint-unavailable"
                     return 1
                 fi
                 oldifs="$IFS"; IFS='|'; set -- $mapped_record; IFS="$oldifs"
-                [ "$#" -eq 7 ] || { ack "$id" false "mapped-endpoint-invalid"; return 1; }
-                [ "$1" = "$wan" ] && [ "$2" = "$device" ] && [ "$3" = "$service_id" ] || { ack "$id" false "mapped-endpoint-mismatch"; return 1; }
+                [ "$#" -eq 7 ] || { rollback_batch_access "$batch_count"; ack "$id" false "mapped-endpoint-invalid"; return 1; }
+                [ "$1" = "$wan" ] && [ "$2" = "$device" ] && [ "$3" = "$service_id" ] || { rollback_batch_access "$batch_count"; ack "$id" false "mapped-endpoint-mismatch"; return 1; }
                 external_address="$4"
                 external_port="$5"
                 ingress_port="$6"
-                is_public_ipv4 "$external_address" && valid_port "$external_port" && valid_port "$ingress_port" || { ack "$id" false "mapped-endpoint-invalid"; return 1; }
+                is_public_ipv4 "$external_address" && valid_port "$external_port" && valid_port "$ingress_port" || { rollback_batch_access "$batch_count"; ack "$id" false "mapped-endpoint-invalid"; return 1; }
                 mapped_detail=" mapped-endpoint:${external_address}:${external_port}"
             fi
 
@@ -622,22 +654,38 @@ pull_once() {
             if "$FIREWALL" activate "$source_ip" "$family" "$scope" "$device" "$ingress_port" "$ttl" "$source_kind" 2>"$error_file"; then
                 apply_egress=1
                 if [ "$batch_count" -gt 1 ] && [ "$((batch_index + 1))" -lt "$batch_count" ]; then apply_egress=0; fi
-                if [ -n "$egress_wan" ] && [ "$apply_egress" -eq 1 ]; then
-                    if [ -x "$EGRESS" ] && "$EGRESS" enable "$wireguard" "$egress_wan" "$ttl" "$egress_mode" >/dev/null 2>"${TMP_BASE}.egress-error"; then
+                if [ "$egress_requested" -eq 1 ] && [ "$apply_egress" -eq 1 ]; then
+                    egress_ok=false
+                    if [ -x "$EGRESS" ]; then
+                        case "$egress_mode" in
+                            dual)
+                                if [ "$egress_wan_ipv4" = "$egress_wan_ipv6" ]; then
+                                    "$EGRESS" enable "$wireguard" "$egress_wan_ipv4" "$ttl" dual >/dev/null 2>"${TMP_BASE}.egress-error" && egress_ok=true
+                                else
+                                    "$EGRESS" enable-split "$wireguard" "$egress_wan_ipv4" "$egress_wan_ipv6" "$ttl" >/dev/null 2>"${TMP_BASE}.egress-error" && egress_ok=true
+                                fi
+                                ;;
+                            ipv4) "$EGRESS" enable "$wireguard" "$egress_wan_ipv4" "$ttl" ipv4 >/dev/null 2>"${TMP_BASE}.egress-error" && egress_ok=true ;;
+                            ipv6) "$EGRESS" enable "$wireguard" "$egress_wan_ipv6" "$ttl" ipv6 >/dev/null 2>"${TMP_BASE}.egress-error" && egress_ok=true ;;
+                        esac
+                    fi
+                    if [ "$egress_ok" = true ]; then
                         ack "$id" true "web-authorization-and-${egress_mode}-egress-active${mapped_detail}"
                     else
                         detail="$(sed -n 's/^ERROR: //p' "${TMP_BASE}.egress-error" 2>/dev/null | tail -n 1)"
                         [ -n "$detail" ] || detail="wireguard-egress-activation-failed"
                         logger -t "$TAG" "egress activation failed: $detail" 2>/dev/null || true
+                        rollback_batch_access "$batch_count"
                         ack "$id" false "$detail"
                     fi
-                elif [ -n "$egress_wan" ]; then
+                elif [ "$egress_requested" -eq 1 ]; then
                     ack "$id" true "web-authorization-active-pending-egress${mapped_detail}"
                 else
                     [ -x "$EGRESS" ] && "$EGRESS" disable >/dev/null 2>&1 || true
                     ack "$id" true "web-authorization-active${mapped_detail}"
                 fi
             else
+                rollback_batch_access "$batch_count"
                 [ -x "$EGRESS" ] && "$EGRESS" disable >/dev/null 2>&1 || true
                 detail="$(sed -n 's/^ERROR: //p' "$error_file" 2>/dev/null | tail -n 1)"
                 [ -n "$detail" ] || detail="$(tail -n 1 "$error_file" 2>/dev/null || true)"
