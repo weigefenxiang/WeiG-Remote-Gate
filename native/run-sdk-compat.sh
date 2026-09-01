@@ -13,7 +13,7 @@ OUT_DIR="${2:-$ROOT/dist-sdk}"
 
 sample="$1"
 case "$sample" in ''|*[!A-Za-z0-9_.+-]*) exit 2 ;; esac
-[ -r "$MATRIX" ] && [ -x "$BUILDER" ] || exit 1
+[ -r "$MATRIX" ] && [ -r "$BUILDER" ] || exit 1
 
 row="$(awk -F '\t' -v wanted="$sample" '
     $0 !~ /^#/ && NF == 8 && $1 == wanted {

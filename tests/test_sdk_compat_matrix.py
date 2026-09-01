@@ -1,5 +1,4 @@
 from pathlib import Path
-import re
 import unittest
 
 
@@ -78,7 +77,9 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
         self.assertIn("sha256sum -c -", RUNNER)
         self.assertIn("https://downloads.openwrt.org/releases/", RUNNER)
         self.assertIn("https://downloads.immortalwrt.org/releases/", RUNNER)
-        self.assertIn("build-openwrt-sdk.sh", RUNNER)
+        self.assertIn('[ -r "$MATRIX" ] && [ -r "$BUILDER" ]', RUNNER)
+        self.assertNotIn('[ -x "$BUILDER" ]', RUNNER)
+        self.assertIn('sh "$BUILDER"', RUNNER)
         self.assertNotIn("eval ", RUNNER)
 
 
