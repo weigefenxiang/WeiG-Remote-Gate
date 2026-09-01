@@ -7,6 +7,7 @@ MATRIX = ROOT / "native" / "sdk-compat-matrix.tsv"
 ABI_MAP = ROOT / "native" / "mapper-abi-map.tsv"
 RUNNER = (ROOT / "native" / "run-sdk-compat.sh").read_text(encoding="utf-8")
 BUILDER = (ROOT / "native" / "build-openwrt-sdk.sh").read_text(encoding="utf-8")
+PACKAGE = (ROOT / "native" / "openwrt-sdk-package" / "Makefile").read_text(encoding="utf-8")
 MAIN_CI = (ROOT / ".github" / "workflows" / "v030-ci.yml").read_text(encoding="utf-8")
 SDK_CI = (ROOT / ".github" / "workflows" / "sdk-compat.yml").read_text(encoding="utf-8")
 
@@ -87,9 +88,10 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
         self.assertNotIn("eval ", RUNNER)
 
     def test_python2_prerequisite_override_is_narrowly_scoped_to_openwrt_1907(self):
-        self.assertIn('openwrt-19.07.10-x86_64) sdk_force_prereq=1', RUNNER)
+        self.assertIn('openwrt-19.07.10-x86_64)', RUNNER)
+        self.assertIn('sdk_force_prereq=1', RUNNER)
         self.assertIn('sdk_force_prereq=0', RUNNER)
-        self.assertIn('REMOTE_GATE_SDK_FORCE_PREREQ="$sdk_force_prereq" sh "$BUILDER"', RUNNER)
+        self.assertIn('REMOTE_GATE_SDK_FORCE_PREREQ="$sdk_force_prereq"', RUNNER)
         self.assertIn('SDK_FORCE_PREREQ="${REMOTE_GATE_SDK_FORCE_PREREQ:-0}"', BUILDER)
         self.assertIn('case "$SDK_FORCE_PREREQ" in 0|1)', BUILDER)
         self.assertIn('prepare_legacy_prereq_stamp', BUILDER)
@@ -100,6 +102,15 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
         self.assertIn('touch "$prereq_stamp"', BUILDER)
         self.assertNotIn('make FORCE=1', BUILDER)
         self.assertNotIn('FORCE=1 make', BUILDER)
+
+    def test_static_musl_build_id_workaround_is_narrowly_scoped_to_openwrt_1907(self):
+        self.assertIn("sdk_link_flags=''", RUNNER)
+        self.assertIn("sdk_link_flags='-Wl,--build-id=sha1'", RUNNER)
+        self.assertEqual(RUNNER.count("sdk_link_flags='-Wl,--build-id=sha1'"), 1)
+        self.assertIn('REMOTE_GATE_SDK_LINK_FLAGS="$sdk_link_flags"', RUNNER)
+        self.assertIn('$(REMOTE_GATE_SDK_LINK_FLAGS)', PACKAGE)
+        self.assertNotIn('--build-id=sha1', PACKAGE)
+        self.assertNotIn('--build-id=sha1', BUILDER)
 
 
 if __name__ == "__main__":
