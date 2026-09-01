@@ -1,0 +1,86 @@
+name: Mapper Dev AArch64
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - native/remote-gate-mapper.c
+      - native/remote-gate-mapper-entry.c
+      - native/build-portable.sh
+      - native/mapper-build-classes.tsv
+      - native/smoke-portable.sh
+      - VERSION
+      - .github/workflows/mapper-dev.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mapper-dev-aarch64
+  cancel-in-progress: true
+
+jobs:
+  publish-aarch64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install verified Zig 0.16.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz -o /tmp/zig.tar.xz
+          echo '70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00  /tmp/zig.tar.xz' | sha256sum -c -
+          mkdir -p .zig
+          tar -xJf /tmp/zig.tar.xz --strip-components=1 -C .zig
+
+      - name: Install AArch64 smoke runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-user file
+
+      - name: Build and smoke current-device mapper
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p native/dist-dev
+          ZIG="$PWD/.zig/zig" OUT_DIR="$PWD/native/dist-dev" sh native/build-portable.sh aarch64
+          sh native/smoke-portable.sh aarch64 native/dist-dev/remote-gate-mapper-aarch64
+          identity="$(qemu-aarch64 native/dist-dev/remote-gate-mapper-aarch64 --version)"
+          version="$(tr -d '\r\n' < VERSION)"
+          test "$identity" = "remote-gate-mapper $version api=1"
+          gzip -n -9 -c native/dist-dev/remote-gate-mapper-aarch64 > native/dist-dev/remote-gate-mapper-aarch64.gz
+          sha="$(sha256sum native/dist-dev/remote-gate-mapper-aarch64 | awk '{print $1}')"
+          {
+            echo '# schema=1'
+            printf '# version=%s\n' "$version"
+            echo '# mapper_api=1'
+            printf '# commit=%s\n' "$GITHUB_SHA"
+            printf '# package_abi\tbuild_class\tasset\tsha256\tstatus\n'
+            printf 'aarch64_cortex-a53\taarch64\tremote-gate-mapper-aarch64.gz\t%s\tdev-candidate\n' "$sha"
+          } > native/dist-dev/remote-gate-mapper-dev-manifest.tsv
+          file native/dist-dev/remote-gate-mapper-aarch64
+          cat native/dist-dev/remote-gate-mapper-dev-manifest.tsv
+
+      - name: Publish mutable dev prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '\r\n' < VERSION)"
+          tag="mapper-dev-v$version"
+          notes="Development-only AArch64 mapper for current MT7981 validation. Built from dev commit $GITHUB_SHA. Not a stable release."
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" native/dist-dev/remote-gate-mapper-aarch64.gz --clobber
+            gh release upload "$tag" native/dist-dev/remote-gate-mapper-dev-manifest.tsv --clobber
+            gh release edit "$tag" --prerelease --title "Mapper dev v$version (AArch64)" --notes "$notes"
+          else
+            gh release create "$tag" --target "$GITHUB_SHA" --prerelease --title "Mapper dev v$version (AArch64)" --notes "$notes"
+            gh release upload "$tag" native/dist-dev/remote-gate-mapper-aarch64.gz
+            gh release upload "$tag" native/dist-dev/remote-gate-mapper-dev-manifest.tsv
+          fi
