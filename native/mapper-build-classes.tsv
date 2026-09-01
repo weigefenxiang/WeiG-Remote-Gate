@@ -1,0 +1,16 @@
+# class	zig_target	cflags	minimum_validation
+x86_64	x86_64-linux.4.4-musl	-mcpu=x86_64	cross-build
+x86_i486	x86-linux.4.4-musl	-mcpu=i486	cross-build
+aarch64	aarch64-linux.4.4-musl	-mcpu=generic	cross-build
+armv5_le	arm-linux.4.4-musleabi	-mcpu=arm926ej_s	cross-build
+armv5_be	armeb-linux.4.4-musleabi	-mcpu=xscale	cross-build
+mips32_be	mips-linux.4.4-musl	-mcpu=mips32	cross-build
+mips32_le	mipsel-linux.4.4-musl	-mcpu=mips32	cross-build
+mips64_be	mips64-linux.4.4-musl	-mcpu=mips64r2	cross-build
+mips64_le	mips64el-linux.4.4-musl	-mcpu=mips64r2	cross-build
+powerpc32_be	powerpc-linux.4.4-musl	-mcpu=generic	cross-build
+powerpc64_be	powerpc64-linux.4.4-musl	-mcpu=generic	cross-build
+riscv64	riscv64-linux.5.4-musl	-mcpu=generic_rv64	cross-build
+loongarch64	loongarch64-linux.5.10-musl	-mcpu=generic	cross-build
+sdk_arc	-	-	openwrt-sdk-required
+sdk_armv4	-	-	openwrt-sdk-required
