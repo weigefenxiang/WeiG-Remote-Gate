@@ -82,6 +82,20 @@ def _known_router_external_addresses(store: JsonStore, current: int) -> set[str]
     return result
 
 
+def _active_authorized_source(store: JsonStore, family: str) -> str:
+    agent = store.read("agent-status.json", {})
+    firewall = agent.get("firewall") if isinstance(agent, dict) else None
+    if not isinstance(firewall, dict) or not firewall.get("active"):
+        return ""
+    if str(firewall.get("family") or "") != family:
+        return ""
+    value = str(firewall.get("source_ip") or "").strip()
+    version = 4 if family == "ipv4" else 6
+    if not _globally_reachable_unicast(value, version):
+        return ""
+    return str(ipaddress.ip_address(value))
+
+
 def _state(store: JsonStore, current: int) -> tuple[dict[str, Any], dict[str, Any]]:
     state = store.read("client-sources.json", {})
     if not isinstance(state, dict):
@@ -99,7 +113,10 @@ def _state(store: JsonStore, current: int) -> tuple[dict[str, Any], dict[str, An
             sessions.pop(sid, None)
             continue
         for family, item in list(families.items()):
-            if not isinstance(item, dict) or int(item.get("expires_at", 0) or 0) <= current:
+            active_source = _active_authorized_source(store, family)
+            expired = int(item.get("expires_at", 0) or 0) <= current if isinstance(item, dict) else True
+            pinned = isinstance(item, dict) and active_source and str(item.get("address") or "") == active_source
+            if not isinstance(item, dict) or (expired and not pinned):
                 families.pop(family, None)
         if not families:
             sessions.pop(sid, None)
@@ -137,6 +154,15 @@ def _record(
     record = sessions.setdefault(sid, {"families": {}})
     families = record.setdefault("families", {})
     existing = families.get(family)
+
+    active_source = _active_authorized_source(store, family)
+    if (
+        active_source
+        and isinstance(existing, dict)
+        and str(existing.get("address") or "") == active_source
+        and str(address) != active_source
+    ):
+        return {"family": family, **existing}
 
     if str(address) in _known_router_external_addresses(store, current):
         if isinstance(existing, dict) and str(existing.get("address") or "") != str(address):
@@ -227,7 +253,11 @@ def trusted_sources(store: JsonStore, session_token: str, *, now: int | None = N
         return result
     for family in ("ipv4", "ipv6"):
         item = families.get(family)
-        if not isinstance(item, dict) or int(item.get("expires_at", 0) or 0) <= current:
+        if not isinstance(item, dict):
+            continue
+        active_source = _active_authorized_source(store, family)
+        expired = int(item.get("expires_at", 0) or 0) <= current
+        if expired and str(item.get("address") or "") != active_source:
             continue
         try:
             address = _global_address(str(item.get("address") or ""), family)
