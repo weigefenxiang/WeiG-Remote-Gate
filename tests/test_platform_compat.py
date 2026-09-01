@@ -168,6 +168,11 @@ DISTRIB_TARGET='ramips/mt7621'
         self.assertIn("legacy_stop_one()", INIT)
         self.assertIn("return-route-loop", INIT)
 
+    def test_agent_control_polling_defaults_to_five_seconds(self):
+        self.assertIn('AGENT_INTERVAL="${REMOTE_GATE_AGENT_INTERVAL:-5}"', INIT)
+        self.assertIn('procd_set_param env AGENT_INTERVAL="$AGENT_INTERVAL"', INIT)
+        self.assertIn("export AGENT_INTERVAL", INIT)
+
     def test_lifecycle_deploys_shared_platform_helper(self):
         self.assertIn('fetch_file "remote-gate-platform.sh"', INSTALL)
         self.assertIn('FILES="remote-gate-platform.sh ', UPDATE)
