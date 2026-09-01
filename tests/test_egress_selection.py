@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from server.app.gate import GateError, egress_wan, queue_activate
+from server.app.gate import GateError, _egress_plan, egress_wan, queue_activate
 from server.app.store import JsonStore
 
 
@@ -101,6 +101,40 @@ class EgressSelectionTests(unittest.TestCase):
             egress_wan(self.store, "WAN", "dual")
         with self.assertRaisesRegex(GateError, "egress_ipv4_unavailable"):
             egress_wan(self.store, "V6ONLY", "dual")
+
+    def test_split_dual_plan_keeps_family_wans_and_clears_legacy_shared_wan(self):
+        legacy, wan4, wan6, mode = _egress_plan(
+            self.store,
+            egress_name="",
+            egress_names={"ipv4": "WAN", "ipv6": "V6ONLY"},
+            mode="dual",
+        )
+        self.assertEqual((legacy, wan4, wan6, mode), ("", "WAN", "V6ONLY", "dual"))
+
+    def test_same_wan_dual_plan_preserves_legacy_compatibility(self):
+        split = _egress_plan(
+            self.store,
+            egress_name="",
+            egress_names={"ipv4": "WAN2", "ipv6": "WAN2"},
+            mode="dual",
+        )
+        legacy = _egress_plan(
+            self.store,
+            egress_name="WAN2",
+            egress_names=None,
+            mode="dual",
+        )
+        self.assertEqual(split, ("WAN2", "WAN2", "WAN2", "dual"))
+        self.assertEqual(legacy, split)
+
+    def test_incomplete_split_dual_plan_fails_closed(self):
+        with self.assertRaisesRegex(GateError, "dual_egress_incomplete"):
+            _egress_plan(
+                self.store,
+                egress_name="",
+                egress_names={"ipv4": "WAN"},
+                mode="dual",
+            )
 
     def test_ipv6_exit_requires_default_route_and_global_ipv6(self):
         self.assertEqual(egress_wan(self.store, "WAN2", "ipv6"), "WAN2")
