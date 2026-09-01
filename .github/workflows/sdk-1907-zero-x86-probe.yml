@@ -1,0 +1,44 @@
+name: SDK 19.07.0 x86_64 probe
+
+on:
+  push:
+    branches:
+      - dev
+
+permissions:
+  contents: read
+
+jobs:
+  sdk-1907-zero-x86-probe:
+    if: contains(github.event.head_commit.message, '[sdk-1907-zero-x86-once]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SDK inspection tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xz-utils file binutils
+
+      - name: Build and smoke OpenWrt 19.07.0 x86_64
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh native/run-sdk-compat.sh openwrt-19.07.0-x86_64 "$PWD/native/dist-sdk-19070-x86"
+          binary="$PWD/native/dist-sdk-19070-x86/remote-gate-mapper-x86_64"
+          file "$binary"
+          readelf -h "$binary"
+          readelf -lW "$binary"
+          readelf -n "$binary" || true
+          sha256sum "$binary"
+
+      - name: Upload OpenWrt 19.07.0 x86_64 candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-gate-mapper-openwrt-19.07.0-x86_64-${{ github.sha }}
+          path: native/dist-sdk-19070-x86/remote-gate-mapper-x86_64
+          if-no-files-found: error
+          retention-days: 14
