@@ -1,0 +1,60 @@
+name: SDK 19.07 compiler boundary probe
+
+on:
+  push:
+    branches:
+      - dev
+
+permissions:
+  contents: read
+
+jobs:
+  sdk-1907-compiler-boundary:
+    if: contains(github.event.head_commit.message, '[sdk-1907-compiler-boundary-once]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sample: openwrt-19.07.7-x86_64
+            release: 19.07.7
+            sha256: 467c0eefc2ec47cb6e35dd419ec601738e52900fc74a6deae15bc5988b57d69c
+            url: https://downloads.openwrt.org/releases/19.07.7/targets/x86/64/openwrt-sdk-19.07.7-x86-64_gcc-7.5.0_musl.Linux-x86_64.tar.xz
+          - sample: openwrt-19.07.8-x86_64
+            release: 19.07.8
+            sha256: 81cb803929fee6738269271637cd95bfcca9be7d24c3a74eb0a17e2d312f8522
+            url: https://downloads.openwrt.org/releases/19.07.8/targets/x86/64/openwrt-sdk-19.07.8-x86-64_gcc-7.5.0_musl.Linux-x86_64.tar.xz
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SDK inspection tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xz-utils file binutils
+
+      - name: Build and smoke compiler-boundary SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          matrix="$RUNNER_TEMP/sdk-compat-boundary.tsv"
+          cp native/sdk-compat-matrix.tsv "$matrix"
+          printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+            '${{ matrix.sample }}' \
+            'openwrt' \
+            '${{ matrix.release }}' \
+            'x86/64' \
+            'x86_64' \
+            'xz' \
+            '${{ matrix.sha256 }}' \
+            '${{ matrix.url }}' >> "$matrix"
+          out="$PWD/native/dist-${{ matrix.sample }}"
+          REMOTE_GATE_SDK_COMPAT_MATRIX="$matrix" \
+            sh native/run-sdk-compat.sh '${{ matrix.sample }}' "$out"
+          binary="$out/remote-gate-mapper-x86_64"
+          file "$binary"
+          readelf -lW "$binary"
+          readelf -n "$binary" || true
+          sha256sum "$binary"
