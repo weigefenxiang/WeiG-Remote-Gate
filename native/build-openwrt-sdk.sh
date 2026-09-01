@@ -22,7 +22,6 @@ PACKAGE_DIR="$SDK_ROOT/package/weig-remote-gate-mapper"
 case "$EXPECTED_ABI" in ''|*[!A-Za-z0-9_.+-]*) usage ;; esac
 [ -d "$SDK_ROOT" ] || { echo "SDK root not found: $SDK_ROOT" >&2; exit 1; }
 [ -r "$SDK_ROOT/rules.mk" ] || { echo "not an OpenWrt-family SDK root: $SDK_ROOT" >&2; exit 1; }
-[ -r "$SDK_ROOT/.config" ] || { echo "SDK .config not found: $SDK_ROOT/.config" >&2; exit 1; }
 [ -r "$PACKAGE_TEMPLATE" ] && [ -r "$SOURCE" ] && [ -r "$VERSION_FILE" ] || exit 1
 
 resolved="$(sh "$RESOLVER" full "$EXPECTED_ABI" 2>/dev/null)" || {
@@ -34,21 +33,6 @@ delivery="$(printf '%s\n' "$resolved" | awk -F '\t' '{print $2}')"
 validation="$(printf '%s\n' "$resolved" | awk -F '\t' '{print $5}')"
 
 [ -n "$class" ] && [ -n "$delivery" ] && [ -n "$validation" ] || exit 1
-
-sdk_abi="$(sed -n 's/^CONFIG_TARGET_ARCH_PACKAGES="\([^"]*\)"/\1/p' "$SDK_ROOT/.config" | sed -n '1p')"
-if [ -z "$sdk_abi" ]; then
-    sdk_abi="$(sed -n 's/^CONFIG_TARGET_ARCH_PACKAGES=\([^[:space:]]*\)$/\1/p' "$SDK_ROOT/.config" | sed -n '1p')"
-    sdk_abi="${sdk_abi#\"}"
-    sdk_abi="${sdk_abi%\"}"
-fi
-[ -n "$sdk_abi" ] || {
-    echo "SDK does not expose CONFIG_TARGET_ARCH_PACKAGES; refusing to guess ABI" >&2
-    exit 1
-}
-[ "$sdk_abi" = "$EXPECTED_ABI" ] || {
-    echo "SDK ABI mismatch: expected $EXPECTED_ABI, SDK reports $sdk_abi" >&2
-    exit 1
-}
 
 version="$(sed -n '1p' "$VERSION_FILE" | tr -d '\r\n')"
 case "$version" in ''|*[!0-9A-Za-z._+-]*) echo "invalid VERSION" >&2; exit 1 ;; esac
@@ -76,6 +60,30 @@ trap cleanup EXIT INT TERM
 (
     cd "$SDK_ROOT"
     make defconfig
+)
+
+[ -r "$SDK_ROOT/.config" ] || {
+    echo "SDK defconfig did not create .config: $SDK_ROOT/.config" >&2
+    exit 1
+}
+
+sdk_abi="$(sed -n 's/^CONFIG_TARGET_ARCH_PACKAGES="\([^"]*\)"/\1/p' "$SDK_ROOT/.config" | sed -n '1p')"
+if [ -z "$sdk_abi" ]; then
+    sdk_abi="$(sed -n 's/^CONFIG_TARGET_ARCH_PACKAGES=\([^[:space:]]*\)$/\1/p' "$SDK_ROOT/.config" | sed -n '1p')"
+    sdk_abi="${sdk_abi#\"}"
+    sdk_abi="${sdk_abi%\"}"
+fi
+[ -n "$sdk_abi" ] || {
+    echo "SDK does not expose CONFIG_TARGET_ARCH_PACKAGES after defconfig; refusing to guess ABI" >&2
+    exit 1
+}
+[ "$sdk_abi" = "$EXPECTED_ABI" ] || {
+    echo "SDK ABI mismatch: expected $EXPECTED_ABI, SDK reports $sdk_abi" >&2
+    exit 1
+}
+
+(
+    cd "$SDK_ROOT"
     make package/weig-remote-gate-mapper/clean >/dev/null 2>&1 || true
     make package/weig-remote-gate-mapper/compile V=s -j1
 )
