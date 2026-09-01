@@ -150,12 +150,26 @@ def _clean_egress(value: object) -> dict:
     mode = str(item.get("mode") or "").strip()
     if mode not in {"", "ipv4", "ipv6", "dual"}:
         mode = ""
-    wan = str(item.get("wan") or "").strip()
-    if wan and not NAME_RE.fullmatch(wan):
-        wan = ""
-    device = str(item.get("device") or "").strip()
-    if device and not DEVICE_RE.fullmatch(device):
-        device = ""
+
+    def clean_name(key: str) -> str:
+        text = str(item.get(key) or "").strip()
+        return text if not text or NAME_RE.fullmatch(text) else ""
+
+    def clean_device(key: str) -> str:
+        text = str(item.get(key) or "").strip()
+        return text if not text or DEVICE_RE.fullmatch(text) else ""
+
+    wan = clean_name("wan")
+    device = clean_device("device")
+    wan_v4 = clean_name("wan_v4")
+    device_v4 = clean_device("device_v4")
+    wan_v6 = clean_name("wan_v6")
+    device_v6 = clean_device("device_v6")
+    if mode in {"ipv4", "dual"} and not wan_v4:
+        wan_v4, device_v4 = wan, device
+    if mode in {"ipv6", "dual"} and not wan_v6:
+        wan_v6, device_v6 = wan, device
+
     wg = str(item.get("wg") or "").strip()
     if wg and not NAME_RE.fullmatch(wg):
         wg = ""
@@ -173,6 +187,10 @@ def _clean_egress(value: object) -> dict:
         "mode": mode,
         "wan": wan,
         "device": device,
+        "wan_v4": wan_v4,
+        "device_v4": device_v4,
+        "wan_v6": wan_v6,
+        "device_v6": device_v6,
         "wg": wg,
         "ipv4_subnet": _clean_network(item.get("ipv4_subnet"), 4),
         "ipv6_subnet": _clean_network(item.get("ipv6_subnet"), 6),
@@ -282,6 +300,16 @@ class Handler(BaseHandler):
             scope = str(data.get("scope") or "wg")
             egress_raw = str(data.get("egress_wan") or "").strip()
             egress_name = _safe_name(egress_raw) if egress_raw else ""
+            egress_names = None
+            egress_map = data.get("egress_wans")
+            if egress_map is not None:
+                if not isinstance(egress_map, dict) or any(key not in {"ipv4", "ipv6"} for key in egress_map):
+                    raise ValueError("invalid_egress_wans")
+                egress_names = {}
+                for egress_family in ("ipv4", "ipv6"):
+                    raw = str(egress_map.get(egress_family) or "").strip()
+                    if raw:
+                        egress_names[egress_family] = _safe_name(raw)
             families_raw = data.get("families")
             if isinstance(families_raw, list):
                 families = [_family(value) for value in families_raw]
@@ -299,7 +327,14 @@ class Handler(BaseHandler):
                         "source_confidence": source.get("confidence", "verified"),
                         "endpoint_id": _endpoint_id(endpoint_ids.get(family)),
                     })
-                batch = queue_activate_many(STORE, requests, scope=scope, ttl=ttl, egress_name=egress_name)
+                batch = queue_activate_many(
+                    STORE,
+                    requests,
+                    scope=scope,
+                    ttl=ttl,
+                    egress_name=egress_name,
+                    egress_names=egress_names,
+                )
                 self._json(202, {
                     "batch_id": batch["batch_id"],
                     "command_id": batch["pending"]["id"],
@@ -469,7 +504,7 @@ class Handler(BaseHandler):
 
 def run() -> None:
     server = ThreadingHTTPServer((SETTINGS.bind_host, SETTINGS.bind_port), Handler)
-    print(f"WeiG-Remote-Gate listening on {SETTINGS.bind_host}:{SETTINGS.bind_port} for {SETTINGS.public_hostname}")
+    print(f"WeiG-Remote-Gate listening on {SETTINGS.bind_host}:{SETTINGS.public_hostname}")
     server.serve_forever()
 
 
