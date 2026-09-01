@@ -4,6 +4,7 @@ umask 077
 
 RUNTIME_DIR="${REMOTE_GATE_RUNTIME_DIR:-/tmp/remote-gate}"
 STATE_FILE="$RUNTIME_DIR/wireguard-egress.conf"
+ERROR_FILE="$RUNTIME_DIR/wireguard-egress-error.conf"
 LEGACY_STATE_FILE="${REMOTE_GATE_STATE_DIR:-/etc/remote-gate-state}/wireguard-egress.conf"
 FIREWALL="/usr/lib/remote-gate/remote-gate-firewall.sh"
 FW3_FILTER_CHAIN="WEIG_WG_EGRESS"
@@ -12,7 +13,32 @@ FW3_FILTER_CHAIN6="WEIG_WG_EGRESS6"
 FW3_NAT_CHAIN6="WEIG_WG_EGRESS_NAT6"
 NFT_COMMENT="WeiG Remote Gate WG egress"
 
-fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+sanitize_detail() {
+    printf '%s' "$1" | tr '\r\n' '  ' | sed 's/[^A-Za-z0-9 ._:/(),+-]/_/g' | cut -c1-200
+}
+
+clear_error_state() { rm -f "$ERROR_FILE"; }
+
+write_error_state() {
+    [ "${ATTEMPT_ACTIVE:-0}" = 1 ] || return 0
+    mkdir -p "$RUNTIME_DIR"
+    detail="$(sanitize_detail "$1")"
+    cat > "$ERROR_FILE" <<EOF_ERROR
+STATE='failed'
+MODE='${ATTEMPT_MODE:-}'
+WAN_INTERFACE='${ATTEMPT_WAN:-}'
+WG_INTERFACE='${ATTEMPT_WG:-}'
+DETAIL='$detail'
+EXPIRES_AT='${ATTEMPT_EXPIRES_AT:-0}'
+EOF_ERROR
+    chmod 600 "$ERROR_FILE"
+}
+
+fail() {
+    write_error_state "$*"
+    printf 'ERROR: %s\n' "$*" >&2
+    exit 1
+}
 
 usage() {
     cat <<'USAGE'
@@ -60,8 +86,27 @@ wireguard_subnet6() {
     logical="$1"
     device="$(l3_device "$logical")"
     [ -n "$device" ] || device="$logical"
-    ip -6 route show dev "$device" scope link 2>/dev/null |
-        awk 'tolower($1) ~ /^(fc|fd)[0-9a-f:]*\/[0-9]+$/ { print $1; exit }'
+
+    # The interface address is authoritative. OpenWrt/Linux commonly reports a
+    # WireGuard ULA as `scope global`, so filtering routes by `scope link`
+    # incorrectly rejects a valid fd00::/8 address.
+    ula="$(ip -6 addr show dev "$device" 2>/dev/null | awk '
+        $1 == "inet6" {
+            cidr=$2; addr=tolower(cidr); sub(/\/.*/, "", addr)
+            if (addr ~ /^(fc|fd)/) { print cidr; exit }
+        }')"
+    [ -n "$ula" ] || return 1
+
+    prefix="${ula#*/}"
+    route="$(ip -6 route show dev "$device" 2>/dev/null | awk -v suffix="/$prefix" '
+        tolower($1) ~ /^(fc|fd)/ && index($1, suffix) { print $1; exit }')"
+    if [ -n "$route" ]; then
+        printf '%s\n' "$route"
+    else
+        # Fallback is still useful on kernels that omit the connected route;
+        # iproute2/nftables normalize a CIDR when installing the runtime rule.
+        printf '%s\n' "$ula"
+    fi
 }
 
 detect_backend() {
@@ -209,6 +254,21 @@ install_route_table() {
     flag="$1"; wan_dev="$2"; table="$3"
     route="$(ip "$flag" route show default dev "$wan_dev" 2>/dev/null | sed -n '1p')"
     [ -n "$route" ] || return 1
+
+    if [ "$flag" = "-6" ]; then
+        # ISP IPv6 defaults may be source-specific, for example:
+        # `default from 2408:.../64 via fe80::1`. The WG ULA source cannot
+        # match that `from` clause, so build an unqualified runtime default
+        # from the same next-hop and bind link-local gateways to the WAN dev.
+        gateway="$(printf '%s\n' "$route" | awk '{for (i=1;i<=NF;i++) if ($i=="via") {print $(i+1); exit}}')"
+        if [ -n "$gateway" ]; then
+            ip -6 route replace table "$table" default via "$gateway" dev "$wan_dev"
+        else
+            ip -6 route replace table "$table" default dev "$wan_dev"
+        fi
+        return $?
+    fi
+
     args="${route#default }"
     # shellcheck disable=SC2086
     ip "$flag" route replace table "$table" default $args
@@ -321,6 +381,13 @@ enable_egress() {
     valid_mode "$mode" || fail "Mode must be ipv4, ipv6 or dual"
     [ "$ttl" -ge 30 ] && [ "$ttl" -le 43200 ] || fail "TTL must be between 30 and 43200 seconds"
 
+    ATTEMPT_ACTIVE=1
+    ATTEMPT_MODE="$mode"
+    ATTEMPT_WAN="$wan"
+    ATTEMPT_WG="$wg"
+    ATTEMPT_EXPIRES_AT="$(( $(date +%s) + ttl ))"
+    clear_error_state
+
     for cmd in uci ubus jsonfilter ip; do command -v "$cmd" >/dev/null 2>&1 || fail "Missing dependency: $cmd"; done
     [ "$(uci -q get "network.$wg.proto" 2>/dev/null || true)" = wireguard ] || fail "$wg is not a WireGuard interface"
     interface_up "$wg" || fail "$wg is not up"
@@ -386,6 +453,8 @@ enable_egress() {
         *) rollback "Unsupported firewall backend: $backend" ;;
     esac
 
+    ATTEMPT_ACTIVE=0
+    clear_error_state
     schedule_expiry "$TOKEN" "$ttl"
     printf '\nWireGuard home %s egress enabled (runtime only).\n' "$mode"
     printf 'WireGuard: %s\n' "$wg"
@@ -408,6 +477,7 @@ disable_egress() {
     backend=""
     [ ! -r "$STATE_FILE" ] || backend="$(sed -n "s/^FIREWALL_BACKEND='\([^']*\)'/\1/p" "$STATE_FILE" | sed -n '1p')"
     runtime_cleanup "$backend"
+    clear_error_state
     printf 'WireGuard home Internet egress disabled.\n'
 }
 
@@ -449,30 +519,58 @@ sync_egress() {
     enable_egress "$wg" "$wan" "$remaining" "$mode"
 }
 
-status_egress() {
-    if [ ! -r "$STATE_FILE" ]; then printf 'disabled\n'; exit 0; fi
+error_state_valid() {
+    [ -r "$ERROR_FILE" ] || return 1
     # shellcheck disable=SC1090
-    . "$STATE_FILE"
+    . "$ERROR_FILE"
     now="$(date +%s)"; expires="${EXPIRES_AT:-0}"
     case "$expires" in ''|*[!0-9]*) expires=0 ;; esac
-    if [ "$expires" -le "$now" ]; then runtime_cleanup "${FIREWALL_BACKEND:-}"; printf 'disabled\n'; exit 0; fi
-    remaining="$((expires - now))"
-    printf 'enabled\nMode: %s\n' "${MODE:-ipv4}"
-    printf 'WireGuard: %s\nWAN: %s\nWAN device: %s\n' "${WG_INTERFACE:-unknown}" "${WAN_INTERFACE:-unknown}" "${WAN_DEVICE:-unknown}"
-    [ -n "${WG_SUBNET4:-}" ] && printf 'IPv4 subnet: %s\n' "$WG_SUBNET4"
-    [ -n "${WG_SUBNET6:-}" ] && printf 'IPv6 subnet: %s\n' "$WG_SUBNET6"
-    printf 'Expires in: %ss\nPersistent UCI egress rules: no\n' "$remaining"
+    if [ "$expires" -le "$now" ]; then clear_error_state; return 1; fi
+    return 0
+}
+
+status_egress() {
+    if [ -r "$STATE_FILE" ]; then
+        # shellcheck disable=SC1090
+        . "$STATE_FILE"
+        now="$(date +%s)"; expires="${EXPIRES_AT:-0}"
+        case "$expires" in ''|*[!0-9]*) expires=0 ;; esac
+        if [ "$expires" -le "$now" ]; then runtime_cleanup "${FIREWALL_BACKEND:-}"; else
+            remaining="$((expires - now))"
+            printf 'enabled\nMode: %s\n' "${MODE:-ipv4}"
+            printf 'WireGuard: %s\nWAN: %s\nWAN device: %s\n' "${WG_INTERFACE:-unknown}" "${WAN_INTERFACE:-unknown}" "${WAN_DEVICE:-unknown}"
+            [ -n "${WG_SUBNET4:-}" ] && printf 'IPv4 subnet: %s\n' "$WG_SUBNET4"
+            [ -n "${WG_SUBNET6:-}" ] && printf 'IPv6 subnet: %s\n' "$WG_SUBNET6"
+            printf 'Expires in: %ss\nPersistent UCI egress rules: no\n' "$remaining"
+            return 0
+        fi
+    fi
+    if error_state_valid; then
+        printf 'failed\nMode: %s\nWAN: %s\nWireGuard: %s\nDetail: %s\n' "${MODE:-unknown}" "${WAN_INTERFACE:-unknown}" "${WG_INTERFACE:-unknown}" "${DETAIL:-unknown}"
+        return 0
+    fi
+    printf 'disabled\n'
 }
 
 status_json() {
-    if [ ! -r "$STATE_FILE" ]; then printf '{"active":false,"mode":"","wan":"","expires_in":0}\n'; return 0; fi
-    # shellcheck disable=SC1090
-    . "$STATE_FILE"
-    now="$(date +%s)"; expires="${EXPIRES_AT:-0}"
-    case "$expires" in ''|*[!0-9]*) expires=0 ;; esac
-    if [ "$expires" -le "$now" ]; then runtime_cleanup "${FIREWALL_BACKEND:-}"; printf '{"active":false,"mode":"","wan":"","expires_in":0}\n'; return 0; fi
-    printf '{"active":true,"mode":"%s","wan":"%s","device":"%s","wg":"%s","ipv4_subnet":"%s","ipv6_subnet":"%s","expires_in":%s}\n' \
-        "${MODE:-ipv4}" "${WAN_INTERFACE:-}" "${WAN_DEVICE:-}" "${WG_INTERFACE:-}" "${WG_SUBNET4:-}" "${WG_SUBNET6:-}" "$((expires - now))"
+    if [ -r "$STATE_FILE" ]; then
+        # shellcheck disable=SC1090
+        . "$STATE_FILE"
+        now="$(date +%s)"; expires="${EXPIRES_AT:-0}"
+        case "$expires" in ''|*[!0-9]*) expires=0 ;; esac
+        if [ "$expires" -gt "$now" ]; then
+            printf '{"active":true,"state":"active","mode":"%s","wan":"%s","device":"%s","wg":"%s","ipv4_subnet":"%s","ipv6_subnet":"%s","detail":"","expires_in":%s}\n' \
+                "${MODE:-ipv4}" "${WAN_INTERFACE:-}" "${WAN_DEVICE:-}" "${WG_INTERFACE:-}" "${WG_SUBNET4:-}" "${WG_SUBNET6:-}" "$((expires - now))"
+            return 0
+        fi
+        runtime_cleanup "${FIREWALL_BACKEND:-}"
+    fi
+    if error_state_valid; then
+        printf '{"active":false,"state":"failed","mode":"%s","wan":"%s","device":"","wg":"%s","ipv4_subnet":"","ipv6_subnet":"","detail":"%s","expires_in":%s}\n' \
+            "${MODE:-}" "${WAN_INTERFACE:-}" "${WG_INTERFACE:-}" "${DETAIL:-}" "$((EXPIRES_AT - $(date +%s)))"
+        return 0
+    fi
+    printf '{"active":false,"state":"inactive","mode":"","wan":"","device":"","wg":"","ipv4_subnet":"","ipv6_subnet":"","detail":"","expires_in":0}\n'
 }
 
 [ "$(id -u)" -eq 0 ] || fail "Run as root"
