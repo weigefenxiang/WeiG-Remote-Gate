@@ -617,7 +617,6 @@ pull_once() {
                     ;;
             esac
             egress_requested=0
-            [ -n "$egress_wan_ipv4" ] || [ -n "$egress_wan_ipv6" ] && egress_requested=1
             if [ -n "$egress_wan_ipv4" ] || [ -n "$egress_wan_ipv6" ]; then egress_requested=1; fi
 
             case "$source_confidence" in
