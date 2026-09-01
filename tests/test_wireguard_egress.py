@@ -38,6 +38,18 @@ class WireGuardEgressTests(unittest.TestCase):
         self.assertIn('to fc00::/7 lookup main', source)
         self.assertIn('to fe80::/10 lookup main', source)
 
+    def test_fw3_waits_for_xtables_lock_everywhere(self):
+        source = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn('XTABLES_WAIT_SECONDS="${REMOTE_GATE_XTABLES_WAIT_SECONDS:-15}"', source)
+        self.assertIn('xtables4() { iptables -w "$XTABLES_WAIT_SECONDS" "$@"; }', source)
+        self.assertIn('xtables6() { ip6tables -w "$XTABLES_WAIT_SECONDS" "$@"; }', source)
+        self.assertIn('xtables4 -N "$FW3_FILTER_CHAIN"', source)
+        self.assertIn('xtables4 -t nat -A "$FW3_NAT_CHAIN"', source)
+        self.assertIn('xtables6 -t nat -L POSTROUTING', source)
+        self.assertIn('xtables6 -N "$FW3_FILTER_CHAIN6"', source)
+        self.assertIn('xtables4 -C FORWARD -j "$FW3_FILTER_CHAIN"', source)
+        self.assertIn('xtables6 -C FORWARD -j "$FW3_FILTER_CHAIN6"', source)
+
     def test_remote_gate_input_firewall_is_not_reused_for_egress(self):
         source = SCRIPT.read_text(encoding="utf-8")
         self.assertIn('"$FIREWALL" detect', source)
