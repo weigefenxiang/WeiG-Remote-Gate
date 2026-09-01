@@ -9,7 +9,9 @@ These rules are the hard engineering contract for WeiG-Remote-Gate. New features
 - Do not create `dev/*`, `feature/*`, version-number branches or temporary long-lived development branches.
 - The software version lives in `VERSION` and in software-visible version metadata, not in branch names.
 - Commit messages are written in English.
-- Promotion to `main` happens only after Core CI, Browser CI and required hardware validation pass.
+- Promotion to `main` happens only after Core CI and required hardware validation pass.
+- Routine `dev` pushes, pull requests and ordinary `main` updates do not run the full cross-platform Browser Matrix.
+- Before creating a stable tag/release, run the release browser validation manually from `main`; both Linux and Windows Browser Matrix jobs must pass.
 - Never force-overwrite an unknown `main`-only commit.
 
 ## 0.3.17 product direction
