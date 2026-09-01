@@ -135,7 +135,7 @@ class FirewallBackendTests(unittest.TestCase):
     def test_agent_drops_non_global_ipv6_before_inventory_upload(self):
         source = AGENT.read_text(encoding="utf-8")
         collect = source.split("collect_wans() {", 1)[1].split("wireguard_ports() {", 1)[0]
-        self.assertIn("Internet Global Unicast lives in 2000::/3", source)
+        self.assertIn("is_global_ipv6()", source)
         self.assertIn("2*|3*", source)
         self.assertIn("jsonfilter -e '@[\"ipv6-address\"][*].address'", collect)
         self.assertIn('is_global_ipv6 "$address" && printf', collect)
