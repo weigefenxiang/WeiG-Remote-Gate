@@ -10,8 +10,8 @@ mips64_be	mips64-linux.4.4-muslabi64	-mcpu=mips64r2 -fPIC	cross-build
 mips64_le	mips64el-linux.4.4-muslabi64	-mcpu=mips64r2 -fPIC	cross-build
 powerpc32_be	powerpc-linux.4.4-musleabi	-mcpu=generic	cross-build
 powerpc64_be	-	-	openwrt-sdk-required
-riscv64	riscv64-linux.5.4-musl	-march=rv64gc -mabi=lp64d	cross-build
-loongarch64	loongarch64-linux.5.10-musl	-mcpu=generic_la64	cross-build
+riscv64	-	-	openwrt-sdk-required
+loongarch64	-	-	openwrt-sdk-required
 sdk_arc	-	-	openwrt-sdk-required
 sdk_armv4	-	-	openwrt-sdk-required
 sdk_armv5_le	-	-	openwrt-sdk-required
