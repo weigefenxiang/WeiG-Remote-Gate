@@ -75,6 +75,36 @@ mapping may still exist -> router ingress -> DROP
 
 A long-lived NAT mapping is therefore not equivalent to long-lived access.
 
+## Exact STUN control exception
+
+The mapper performs STUN discovery and keepalive on the same UDP socket that owns `ingress_port`. The Access Gate therefore needs one narrow control-plane exception before the normal Mapped ingress DROP.
+
+The allowed tuple is exactly:
+
+```text
+validated WAN device
++ mapper ingress_port
++ resolved STUN IPv4 address
++ configured STUN source port
+```
+
+The startup order is security-sensitive:
+
+```text
+resolve STUN peer
+-> bind mapper ingress
+-> publish prepared state including STUN tuple
+-> synchronize firewall
+-> install exact STUN control allow
+-> install exact Mapped ingress DROP
+-> create mapper go signal
+-> begin STUN discovery
+```
+
+The exception must never become a service bypass. The native mapper treats packets from the resolved STUN socket as control traffic only, requires a matching STUN transaction for mapping updates, and does not relay packets from that STUN peer into the registered local service.
+
+Missing or malformed STUN control metadata is fail-closed: the prepared mapper does not receive a go signal.
+
 ## Mapping Engine trust boundary
 
 The 0.3.17 Mapping Engine is intentionally limited to IPv4 UDP traversal and relay for registered services.
@@ -93,6 +123,22 @@ It must:
 Malformed, stale or ambiguous mapper state is fail-closed: the mapped endpoint is omitted.
 
 Mapped Access is optional. If no compatible mapper binary is available for a router architecture, Direct endpoints, IPv6 Gate and existing Remote Gate behavior continue normally.
+
+## Native mapper supply-chain boundary
+
+A router must not compile the mapper locally as part of normal installation or upgrade.
+
+Native mapper selection is based on the exact OpenWrt-family **Package ABI**, not on a broad CPU guess. Kernel machine architecture from `uname -m` remains diagnostic information only.
+
+The project maintains an explicit Package ABI map. Unknown ABIs fail closed; wildcard or prefix fallback is not allowed. Historical/current ABIs that cannot safely share a portable static build class are marked for an exact OpenWrt SDK build instead of being forced into a guessed class.
+
+Portable cross-build candidates must pass three distinct stages before they may be described as hardware-supported:
+
+1. strict native/cross compilation;
+2. architecture/ELF startup smoke validation, normally through QEMU user emulation;
+3. real OpenWrt/LEDE/ImmortalWrt hardware validation for the mapped data path.
+
+A CI artifact is not automatically a production release artifact. Automatic router installation must eventually consume a published manifest with an exact Package ABI entry and cryptographic checksum; no matching entry means Mapped Access remains unavailable.
 
 ## Concurrent sources
 
@@ -129,6 +175,7 @@ The Access Gate owns only router-local policy for:
 - ICMP/ICMPv6 Echo Request when the selected scope includes Ping;
 - locally registered Direct service ingress such as discovered WireGuard UDP listen ports;
 - locally registered Mapped Access ingress ports owned by the Remote Gate Mapping Engine;
+- exact Mapped STUN control tuples required for mapping discovery/keepalive;
 - optional short diagnostic verification windows.
 
 The Access Gate must not install generic FORWARD rules, rewrite unrelated DNAT/SNAT, or take ownership of qBittorrent, UPnP, NAT-PMP or unrelated application traffic.
@@ -158,18 +205,34 @@ Every endpoint must resolve to one validated logical WAN and one l3 device. Ambi
 
 When an authorized external source reaches a non-default WAN, Remote Gate installs only a destination-specific router-local policy route so locally generated replies leave through the same WAN. Each source is tracked independently and its route disappears when that source expires or all access is closed.
 
-This Gate return path is distinct from Internet Exit PBR. The former routes locally generated/mapper-related service replies toward the authorized external source; the latter routes packets received from the WireGuard interface toward the explicitly selected Internet Exit WAN.
+This Gate return path is distinct from Internet Exit PBR. The former routes locally generated Direct or mapper-related replies toward the authorized external source; the latter routes packets received from the WireGuard interface toward the explicitly selected Internet Exit WAN.
 
-## Old OpenWrt baseline
+## OpenWrt-family compatibility boundary
 
-OpenWrt/ImmortalWrt 21.02-class fw3 systems remain supported.
+OpenWrt, LEDE, ImmortalWrt and compatible derivatives share one capability contract. Distribution name and release number are not security decisions.
 
-Security and compatibility rules for that baseline are:
+Core compatibility is determined by the runtime interfaces Remote Gate actually uses. Firewall compatibility is determined by the detected firewall stack (`fw3 + iptables + ipset` or `fw4 + nft`). Package management (`opkg` versus `apk`) is independent metadata and must not silently change firewall semantics.
+
+Optional capabilities degrade independently:
+
+- missing IPv6 firewall capability disables only IPv6 Gate;
+- missing matching mapper artifact disables only Mapped Access;
+- missing Internet Exit prerequisites disables only Internet Exit;
+- unknown branding/version alone never enables or disables a security boundary.
+
+Shell code remains BusyBox `ash`/POSIX compatible. Modern systems use procd; the service layer may use a minimal traditional `rc.common` PID fallback when procd is absent but all other required capabilities are present. PID ownership must be verified from `/proc/<pid>/cmdline` before termination so legacy compatibility cannot kill unrelated processes.
+
+## Older OpenWrt / LEDE baseline
+
+Older fw3 systems remain first-class targets when their actual capabilities satisfy the contract. This includes LEDE-era and OpenWrt/ImmortalWrt fw3 derivatives; support is not tied to a single 21.02 release number.
+
+Security and compatibility rules are:
 
 - do not assume Linux 5.6+ cross-process socket reuse;
 - use a dedicated mapper ingress port rather than requiring the mapper to share the WireGuard listen socket;
 - do not require a compiler on the router;
 - do not require NATMap or another third-party traversal package;
+- do not select a native mapper from `uname -m` alone;
 - absence of a compatible mapper binary must disable only Mapped Access, not the rest of Remote Gate.
 
 ## Project hard rules
