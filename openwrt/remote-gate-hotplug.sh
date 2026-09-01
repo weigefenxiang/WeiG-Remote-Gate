@@ -181,7 +181,7 @@ sync_return_route_record() {
         clear_return_route_state_file "$rg_family" "$rg_state"
     fi
     rg_priority="$(choose_priority "$rg_flag")" || return 1
-    if [ "$rg_mode" = owned ]; then install_owned_route "$rg_flag" "$rg_source" "$rg_target" "$rg_wanted" "$rg_table" || { logger -t "$TAG" "cannot build $rg_family return route to $rg_source through $rg_device" 2>/dev/null || true; return 1; }; fi
+    if [ "$rg_mode" = owned ]; then install_owned_route "$rg_flag" "$rg_source" "$rg_target" "$rg_device" "$rg_table" || { logger -t "$TAG" "cannot build $rg_family return route to $rg_source through $rg_device" 2>/dev/null || true; return 1; }; fi
     ip "$rg_flag" rule add priority "$rg_priority" iif lo to "$rg_target" lookup "$rg_table" || { [ "$rg_mode" != owned ] || ip "$rg_flag" route del table "$rg_table" "$rg_target" >/dev/null 2>&1 || true; return 1; }
     { printf '%s\n' "$rg_family"; printf '%s\n' "$rg_source"; printf '%s\n' "$rg_device"; printf '%s\n' "$rg_port"; printf '%s\n' "$rg_table"; printf '%s\n' "$rg_priority"; printf '%s\n' "$rg_mode"; printf '%s\n' "$rg_signature"; } > "$rg_state"; chmod 600 "$rg_state" 2>/dev/null || true
 }
