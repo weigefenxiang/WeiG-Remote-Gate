@@ -68,7 +68,7 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
         self.assertNotIn("run-sdk-compat.sh", MAIN_CI)
         self.assertNotIn("native-cross:", MAIN_CI)
         self.assertIn("Native mapper host build", MAIN_CI)
-        self.assertIn("browser:", MAIN_CI)
+        self.assertNotIn("browser:", MAIN_CI)
 
     def test_sdk_workflow_is_manual_and_keeps_samples_for_later(self):
         for sample in (
