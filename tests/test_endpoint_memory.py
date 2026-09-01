@@ -7,26 +7,29 @@ GATE = ROOT / "server/app/static/js/gate-controls.js"
 
 
 class EndpointMemoryTests(unittest.TestCase):
-    def test_each_ip_family_keeps_only_explicit_endpoint_choice(self):
+    def test_each_ip_family_uses_auto_default_until_user_overrides_it(self):
         source = GATE.read_text(encoding="utf-8")
         self.assertIn("state.endpointSelections={}", source)
         self.assertIn("state.endpointManualSelections={}", source)
         self.assertIn("function endpointSelectionIsManual", source)
+        self.assertIn("function preferredSelection", source)
         self.assertIn("function rememberEndpointSelection", source)
         self.assertIn("function restoreEndpointSelection", source)
         self.assertIn("context.state.endpointSelections[family] = {value, wan: endpointWanForSelection(family, value)}", source)
         self.assertIn("rememberEndpointSelection(state.family)", source)
         self.assertIn("restoreEndpointSelection(state.family)", source)
-        self.assertIn("endpointWanForSelection", source)
-        self.assertIn("select.value = ''", source)
-        self.assertIn("selectionConfirmed", source)
+        self.assertIn("const preferred = preferredSelection(family)", source)
+        self.assertIn("select.dataset.selectionSource = confirmed ? source : ''", source)
+        self.assertIn("const source = endpointSelectionIsManual(family) ? 'manual' : 'auto'", source)
 
-    def test_dynamic_endpoint_id_can_fall_back_to_same_wan(self):
+    def test_dynamic_endpoint_id_preserves_same_wan_intent_then_returns_to_auto(self):
         source = GATE.read_text(encoding="utf-8")
-        self.assertIn("if (saved.wan)", source)
-        self.assertIn("endpointWanForSelection(family, option.value) === saved.wan", source)
-        self.assertIn("saved?.wan", source)
-        self.assertIn("pairs.find((item) => item.wan === priorWan)", source)
+        restore = source.split("function restoreEndpointSelection", 1)[1].split("function syncDualEndpointSelect", 1)[0]
+        self.assertIn("if (saved.wan)", restore)
+        self.assertIn("endpointWanForSelection(family, option.value) === saved.wan", restore)
+        self.assertIn("context.state.endpointManualSelections[family] = false", restore)
+        self.assertIn("delete context.state.endpointSelections[family]", restore)
+        self.assertIn("const preferred = preferredSelection(family)", restore)
 
     def test_each_ip_family_keeps_its_internet_exit_choice(self):
         source = APP.read_text(encoding="utf-8")
