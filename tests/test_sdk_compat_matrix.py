@@ -93,8 +93,10 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
         self.assertIn('SDK_FORCE_PREREQ="${REMOTE_GATE_SDK_FORCE_PREREQ:-0}"', BUILDER)
         self.assertIn('case "$SDK_FORCE_PREREQ" in 0|1)', BUILDER)
         self.assertIn('make FORCE=1 defconfig', BUILDER)
+        self.assertIn('make FORCE=1 package/weig-remote-gate-mapper/clean', BUILDER)
         self.assertIn('make FORCE=1 package/weig-remote-gate-mapper/compile V=s -j1', BUILDER)
         self.assertNotIn('FORCE=1 make defconfig', BUILDER)
+        self.assertNotIn('FORCE=1 make package/weig-remote-gate-mapper/clean', BUILDER)
         self.assertNotIn('FORCE=1 make package/weig-remote-gate-mapper/compile', BUILDER)
 
 
