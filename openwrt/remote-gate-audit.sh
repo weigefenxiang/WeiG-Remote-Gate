@@ -2,6 +2,7 @@
 set -u
 
 PLATFORM="${REMOTE_GATE_PLATFORM_HELPER:-/usr/lib/remote-gate/remote-gate-platform.sh}"
+MAPPER_INSTALLER="${REMOTE_GATE_MAPPER_INSTALLER:-/usr/lib/remote-gate/remote-gate-mapper-install.sh}"
 
 section() {
     printf '\n===== %s =====\n' "$1"
@@ -167,10 +168,19 @@ else
 fi
 
 section 'MAPPED ACCESS'
-if [ -x /usr/lib/remote-gate/remote-gate-mapper ]; then
-    printf 'Mapper binary: available\n'
+if [ -r "$MAPPER_INSTALLER" ]; then
+    printf 'Mapper delivery integrity: '
+    sh "$MAPPER_INSTALLER" status-json 2>/dev/null || printf '{"ready":false,"version":"","mapper_api":"","package_abi":"","source":""}'
+    printf '\n'
+    if sh "$MAPPER_INSTALLER" current >/dev/null 2>&1; then
+        printf 'Mapper runtime authority: current\n'
+    elif [ -e /usr/lib/remote-gate/remote-gate-mapper ]; then
+        printf 'Mapper runtime authority: NOT CURRENT (Mapped Access must remain unavailable)\n'
+    else
+        printf 'Mapper runtime authority: unavailable (Mapped Access remains optional)\n'
+    fi
 else
-    printf 'Mapper binary: unavailable (Mapped Access remains optional)\n'
+    printf 'Mapper delivery helper: unavailable\n'
 fi
 if [ -x /usr/lib/remote-gate/remote-gate-mapping.sh ]; then
     printf 'Mapping status: '

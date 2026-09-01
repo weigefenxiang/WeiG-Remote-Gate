@@ -141,9 +141,9 @@ esac
 IPV6_CAPABLE=no
 if "$LIB_DIR/remote-gate-firewall.sh" ipv6-capable >/dev/null 2>&1; then IPV6_CAPABLE=yes; fi
 MAPPER_AVAILABLE=no
-if [ -x "$LIB_DIR/remote-gate-mapper" ]; then MAPPER_AVAILABLE=yes; fi
+if sh "$MAPPER_INSTALLER" current >/dev/null 2>&1; then MAPPER_AVAILABLE=yes; fi
 printf 'IPv6 Gate firewall capability: %s\n' "$IPV6_CAPABLE"
-printf 'Mapped Access mapper binary: %s\n' "$MAPPER_AVAILABLE"
+printf 'Mapped Access mapper integrity current: %s\n' "$MAPPER_AVAILABLE"
 printf 'Remote Gate controls only registered router INPUT ingress and optional Ping Echo on protected WAN endpoints.\n'
 printf 'FORWARD, DNAT, UPnP, NAT-PMP, qBittorrent and unrelated ports are not filtered by the Access Gate.\n\n'
 
@@ -191,7 +191,7 @@ printf '\nWeiG Remote Gate OpenWrt-family components installed.\n'
 printf 'Platform: %s %s | service=%s | package=%s | ABI=%s\n' "$DIST" "$RELEASE" "$INIT_SYSTEM" "$PKG_MANAGER" "${PKG_ARCH:-unknown}"
 printf 'Firewall backend: %s\n' "$BACKEND"
 printf 'IPv6 Gate: auto (%s firewall capability)\n' "$IPV6_CAPABLE"
-printf 'Mapped Access: %s\n' "$([ "$MAPPER_AVAILABLE" = yes ] && printf 'available when NAT behavior permits UDP mapping' || printf 'unavailable until a compatible Remote Gate mapper binary is released')"
+printf 'Mapped Access: %s\n' "$([ "$MAPPER_AVAILABLE" = yes ] && printf 'available when NAT behavior permits UDP mapping' || printf 'unavailable until a current exact-ABI Remote Gate mapper passes integrity validation')"
 printf 'Control transport: automatic IPv4/IPv6 Multi-WAN health fallback\n'
 printf 'Private/CGNAT WAN IPv4 egress: best-effort per-WAN probe enabled\n'
 printf 'The WAN has no HTTP/HTTPS listener from this project.\n'
