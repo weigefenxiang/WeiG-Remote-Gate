@@ -81,7 +81,10 @@ done
 
 "$PLATFORM" core-capable || fail "Required OpenWrt-family core runtime capabilities are unavailable."
 INIT_SYSTEM="$("$PLATFORM" init 2>/dev/null || printf unknown)"
-[ "$INIT_SYSTEM" = procd ] || fail "Remote Gate currently requires OpenWrt procd service management; detected: $INIT_SYSTEM"
+case "$INIT_SYSTEM" in
+    procd|rc.common) ;;
+    *) fail "Unsupported OpenWrt-family service framework: $INIT_SYSTEM" ;;
+esac
 DIST="$("$PLATFORM" distribution 2>/dev/null || printf unknown)"
 RELEASE="$("$PLATFORM" release 2>/dev/null || printf unknown)"
 PKG_MANAGER="$("$PLATFORM" package-manager 2>/dev/null || printf none)"
@@ -90,6 +93,7 @@ KERNEL_ARCH="$("$PLATFORM" kernel-arch 2>/dev/null || printf unknown)"
 LIBC_FAMILY="$("$PLATFORM" libc 2>/dev/null || printf unknown)"
 
 printf 'Platform: %s %s\n' "$DIST" "$RELEASE"
+printf 'Service framework: %s\n' "$INIT_SYSTEM"
 printf 'Package manager: %s\n' "$PKG_MANAGER"
 printf 'Package ABI: %s\n' "${PKG_ARCH:-unknown}"
 printf 'Kernel machine: %s\n' "$KERNEL_ARCH"
@@ -169,7 +173,7 @@ if [ -x /etc/init.d/cron ]; then /etc/init.d/cron restart >/dev/null 2>&1 || tru
 "$LIB_DIR/remote-gate-agent.sh" report || true
 
 printf '\nWeiG Remote Gate OpenWrt-family components installed.\n'
-printf 'Platform: %s %s | package=%s | ABI=%s\n' "$DIST" "$RELEASE" "$PKG_MANAGER" "${PKG_ARCH:-unknown}"
+printf 'Platform: %s %s | service=%s | package=%s | ABI=%s\n' "$DIST" "$RELEASE" "$INIT_SYSTEM" "$PKG_MANAGER" "${PKG_ARCH:-unknown}"
 printf 'Firewall backend: %s\n' "$BACKEND"
 printf 'IPv6 Gate: auto (%s firewall capability)\n' "$IPV6_CAPABLE"
 printf 'Mapped Access: %s\n' "$([ "$MAPPER_AVAILABLE" = yes ] && printf 'available when NAT behavior permits UDP mapping' || printf 'unavailable until a compatible Remote Gate mapper binary is installed')"
