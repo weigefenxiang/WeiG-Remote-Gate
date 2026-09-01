@@ -65,6 +65,16 @@ class ReturnRoutingTests(unittest.TestCase):
         self.assertIn("family_verify_route_file", source)
         self.assertIn("return_route_sync_family \"$rg_family\"", source)
 
+    def test_interface_down_immediately_resyncs_gate_and_return_routes(self):
+        source = HOTPLUG.read_text(encoding="utf-8")
+        event_block = source.split('case "${ACTION:-}" in', 1)[1]
+        self.assertIn("ifup|ifupdate|update|ifdown)", event_block)
+        self.assertIn("remote-gate-agent.sh sync-firewall", event_block)
+        self.assertIn('"$0" return-route-sync', event_block)
+        self.assertNotIn("FORWARD", event_block)
+        self.assertNotIn("DNAT", event_block)
+        self.assertNotIn("wg set", event_block)
+
     def test_lifecycle_starts_and_clears_return_route_loop(self):
         source = INIT.read_text(encoding="utf-8")
         self.assertIn("return-route-loop", source)
