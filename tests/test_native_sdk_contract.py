@@ -75,6 +75,10 @@ class NativeSdkContractTests(unittest.TestCase):
             "fi\n"
             "case \" $* \" in\n"
             "  *' package/weig-remote-gate-mapper/compile '*)\n"
+            "    if [ \"${REQUIRE_BUILD_ID_FLAG:-0}\" = 1 ] && [ \"${REMOTE_GATE_SDK_LINK_FLAGS:-}\" != '-Wl,--build-id=sha1' ]; then\n"
+            "      echo 'missing validated build-id link flag' >&2\n"
+            "      exit 11\n"
+            "    fi\n"
             f"    out=\"$PWD/build_dir/target-test/remote-gate-mapper-{version}/remote-gate-mapper\"\n"
             "    mkdir -p \"$(dirname \"$out\")\"\n"
             "    printf '#!/bin/sh\\nexit 0\\n' > \"$out\"\n"
@@ -151,9 +155,11 @@ class NativeSdkContractTests(unittest.TestCase):
             out = base / "out"
             env = self._fake_environment(sdk, "powerpc64_e5500")
             env["REMOTE_GATE_SDK_FORCE_PREREQ"] = "1"
+            env["REMOTE_GATE_SDK_LINK_FLAGS"] = "-Wl,--build-id=sha1"
             env["FAKE_PREREQ_FAILURE"] = "python2"
             env["REQUIRE_PREREQ_STAMP"] = "1"
             env["REQUIRE_TOPDIR_ARG"] = "1"
+            env["REQUIRE_BUILD_ID_FLAG"] = "1"
             result = subprocess.run(
                 ["sh", str(BUILD_SDK), str(sdk), "powerpc64_e5500", str(out)],
                 cwd=ROOT,
@@ -188,11 +194,52 @@ class NativeSdkContractTests(unittest.TestCase):
             self.assertIn("prerequisite bypass refused", result.stderr)
             self.assertFalse((sdk / "build_dir").exists())
 
+    def test_non_legacy_path_rejects_build_id_workaround(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            sdk = base / "sdk"
+            env = self._fake_environment(sdk, "powerpc64_e5500")
+            env["REMOTE_GATE_SDK_LINK_FLAGS"] = "-Wl,--build-id=sha1"
+            result = subprocess.run(
+                ["sh", str(BUILD_SDK), str(sdk), "powerpc64_e5500", str(base / "out")],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("restricted to the legacy SDK path", result.stderr)
+            self.assertFalse((sdk / "build_dir").exists())
+
+    def test_legacy_path_rejects_arbitrary_link_flags(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            sdk = base / "sdk"
+            env = self._fake_environment(sdk, "powerpc64_e5500")
+            env["REMOTE_GATE_SDK_FORCE_PREREQ"] = "1"
+            env["REMOTE_GATE_SDK_LINK_FLAGS"] = "-Wl,--gc-sections"
+            result = subprocess.run(
+                ["sh", str(BUILD_SDK), str(sdk), "powerpc64_e5500", str(base / "out")],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("invalid REMOTE_GATE_SDK_LINK_FLAGS", result.stderr)
+            self.assertFalse((sdk / "build_dir").exists())
+
     def test_legacy_path_binds_sdk_topdir_and_no_longer_relies_on_force(self):
         source = BUILD_SDK.read_text(encoding="utf-8")
         self.assertIn("prepare_legacy_prereq_stamp", source)
         self.assertIn('make TOPDIR="$SDK_ROOT/" -r -s -f "$prereq_mk" prereq', source)
         self.assertIn('touch "$prereq_stamp"', source)
+        self.assertIn("'-Wl,--build-id=sha1'", source)
+        self.assertIn("restricted to the legacy SDK path", source)
         self.assertNotIn("make FORCE=1", source)
         self.assertNotIn("FORCE=1 make", source)
 
