@@ -118,7 +118,7 @@
     if (!pair?.sameWan) return 'Split WAN';
     const item = pair?.ipv4;
     if (item?.reachability === 'direct') return 'Direct';
-    if (item?.provider === 'natmap' || item?.reachability === 'mapped') return 'NATMap';
+    if (item?.access_method === 'mapped' || item?.reachability === 'mapped' || item?.provider === 'natmap') return 'Mapped';
     if (item?.provider === 'egress_probe' || item?.reachability === 'egress_probe') return 'NAT egress · Try';
     return 'Private/CGNAT · Try';
   }
