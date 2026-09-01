@@ -218,7 +218,38 @@ The authenticated browser chooses an IP family, endpoint and registered service,
 
 OpenWrt independently validates the family, selected WAN/device, registered ingress, local service identity, scope and TTL before creating temporary authorization.
 
-IPv4 and IPv6 can be activated independently or queued together as a Dual transaction. If one family in a Dual batch fails, the remaining family is cancelled so a later success cannot mask the failure.
+IPv4 and IPv6 can be activated independently or queued together as a Dual transaction. A Dual request carries one validated endpoint per family. Both endpoints must resolve to the same registered WireGuard service, but they do not have to use the same WAN. If one family in a Dual batch fails, the remaining family is cancelled and any partial access is rolled back so a later success cannot mask the failure.
+
+## Endpoint preference and Dual plans
+
+The browser derives an automatic default from current endpoint capability; it must never hard-code a literal `WAN`, `WAN2`, interface address or device identity as the preferred path.
+
+The default ordering is:
+
+```text
+IPv4
+Public Direct -> Mapped -> observed NAT egress -> Private/CGNAT Try
+
+IPv6
+Global Direct on the preferred IPv4 WAN when available
+-> otherwise the best Global Direct IPv6 endpoint
+
+Dual
+same-WAN Public IPv4 + Global IPv6
+-> same-WAN Mapped IPv4 + Global IPv6
+-> best IPv4 + best IPv6 across different WANs
+```
+
+A same-WAN Dual plan remains preferred when one WAN genuinely offers the best pair. When no suitable same-WAN pair exists, a split plan is valid, for example:
+
+```text
+IPv4 Access -> WAN-A
+IPv6 Access -> WAN-B
+```
+
+Automatic endpoint state is marked `auto`. A user's explicit change is marked `manual` and is preserved while the selected intent is still available. If a dynamic endpoint disappears, the UI may re-resolve the same WAN intent or fall back to the current preferred endpoint, but it never creates a Gate authorization by itself.
+
+Automatic selection is therefore convenience only. `Activate` remains the authority boundary.
 
 ## Concurrent sources
 
@@ -230,17 +261,20 @@ To keep the firewall rule model exact, concurrent records within one family must
 
 The **Access Gate** is deliberately router-local. It owns only Remote Gate registered ingress traffic and optional Ping scope. It must not install generic FORWARD filtering or take ownership of unrelated forwarded applications.
 
-The optional **Internet Exit** is a separate runtime-only data-plane feature implemented by `remote-gate-wireguard-egress.sh`. When the user explicitly selects an Internet Exit WAN, it may temporarily install only the state required for the selected WireGuard interface and family:
+The optional **Internet Exit** is a separate runtime-only data-plane feature implemented by `remote-gate-wireguard-egress.sh`. When the user enables Internet Exit, each active family has one explicitly validated egress WAN. A single-stack request therefore has one WAN; same-WAN Dual can share one WAN; split Dual can use different WANs for IPv4 and IPv6.
 
 ```text
 WireGuard client subnet
         |
-        +-- policy routing -> selected WAN
+        +-- IPv4 policy routing -> selected IPv4 WAN
+        +-- IPv6 policy routing -> selected IPv6 WAN
         +-- scoped FORWARD accept
         `-- scoped NAT44 / NAT66 masquerade
 ```
 
-The egress helper does not create persistent UCI egress policy. Close, TTL expiry, explicit disable or reboot removes its temporary route rules, routing tables and firewall/NAT state.
+By default the browser aligns each Internet Exit family with the corresponding Access WAN. A manual exit choice remains possible where the selected WAN satisfies that family's egress requirements.
+
+The egress helper does not create persistent UCI egress policy. Close, TTL expiry, explicit disable or reboot removes its temporary route rules, routing tables and firewall/NAT state. The helper also treats WAN/policy-route identity as runtime authority: if the selected WAN is no longer up/current, its L3 device changes, or the Remote Gate policy-table default route disappears, egress is cleared rather than silently falling back to a different main-table WAN.
 
 This exception is intentionally narrow. qBittorrent, DHT/PeX, UPnP/NAT-PMP, DNAT/manual port forwards, forwarded NAS/PC services and unrelated router traffic remain under the router's existing policy.
 
@@ -260,7 +294,7 @@ Mapped Access data path
 Internet -> NAT mapping -> registered router ingress -> Access Gate -> Service Adapter
 
 Optional WireGuard Internet Exit
-WireGuard client -> WG interface -> temporary PBR/FORWARD/NAT -> selected WAN
+WireGuard client -> WG interface -> temporary per-family PBR/FORWARD/NAT -> selected WAN(s)
 
 WeiG qB WebUI
 Browser -> application reverse proxy -> WeiG qB WebUI -> qB WebAPI -> qBittorrent
@@ -291,11 +325,13 @@ The agent discovers active WAN devices and eligible IPv4/IPv6 paths. The Service
 
 Ambiguous WAN/device association, unknown service identity, malformed mapper state or invalid ingress is fail-closed: that endpoint is omitted rather than guessed.
 
+Interface-down re-synchronizes the protected Gate state immediately. Interface-up/update performs bounded settle re-synchronization so PPPoE/default-route inventory can converge without keeping an unbounded second state machine. A new Mapping may be discovered after the new WAN state settles, but old Gate authorization and Internet Exit authority are never migrated to a changed WAN/session automatically.
+
 ## Multi-WAN local return routing
 
 Return-route state is maintained per authorized source, not merely per family. Each active IPv4 source can receive its own `/32` destination-specific router-local policy rule and each active IPv6 source its own `/128` rule when the selected WAN is not the ordinary reply path. Expiring one source removes only that source's route state.
 
-This router-local ingress return routing is intentionally shared by Direct and Mapped access. Direct WireGuard replies and mapper-generated replies are both locally generated traffic destined for the authorized external source; the same per-source route contract keeps them on the WAN where the ingress arrived. This is separate from Internet Exit policy routing, which routes packets received from the WireGuard interface toward the selected Internet Exit WAN.
+This router-local ingress return routing is intentionally shared by Direct and Mapped access. Direct WireGuard replies and mapper-generated replies are both locally generated traffic destined for the authorized external source; the same per-source route contract keeps them on the WAN where the ingress arrived. This is separate from Internet Exit policy routing, which routes packets received from the WireGuard interface toward the selected Internet Exit WAN for that family.
 
 ## Firewall reload recovery
 
