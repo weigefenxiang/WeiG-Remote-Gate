@@ -192,7 +192,7 @@
 
   function badgeText(parsed, index, option) {
     if (option?.value === '__lan__') return zh() ? '私有' : 'Private';
-    if (index === 0 && /Direct|NATMap/.test(parsed.provider)) return zh() ? '推荐' : 'Primary';
+    if (index === 0 && /Direct|Mapped/.test(parsed.provider)) return zh() ? '推荐' : 'Primary';
     if (/Try|Private|CGNAT|egress|Observed/i.test(parsed.provider)) return zh() ? '可用' : 'Available';
     return parsed.provider || (zh() ? '可用' : 'Available');
   }
