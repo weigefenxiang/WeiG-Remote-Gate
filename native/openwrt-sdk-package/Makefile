@@ -31,7 +31,8 @@ define Build/Compile
 		$(TARGET_CFLAGS) \
 		$(TARGET_CPPFLAGS) \
 		-O2 -static \
-		-Wall -Wextra -Werror -Wformat=2 -Wshadow -Wconversion -Wstrict-prototypes \
+		-Wall -Wextra -Werror -Wformat=2 -Wno-error=format-nonliteral \
+		-Wshadow -Wconversion -Wstrict-prototypes \
 		-std=c11 \
 		-o $(PKG_BUILD_DIR)/remote-gate-mapper \
 		$(PKG_BUILD_DIR)/remote-gate-mapper.c \
