@@ -7,6 +7,8 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 MAPPING = ROOT / "openwrt" / "remote-gate-mapping.sh"
+FIREWALL = ROOT / "openwrt" / "remote-gate-firewall.sh"
+VERIFY = ROOT / "openwrt" / "remote-gate-wireguard-verify.sh"
 
 
 class MappingRuntimeIntegrityTests(unittest.TestCase):
@@ -78,6 +80,18 @@ class MappingRuntimeIntegrityTests(unittest.TestCase):
         source = MAPPING.read_text(encoding="utf-8")
         self.assertIn('MAPPER_INSTALLER="${REMOTE_GATE_MAPPER_INSTALLER:-$LIB_DIR/remote-gate-mapper-install.sh}"', source)
         self.assertIn('REMOTE_GATE_MAPPER_DEST="$MAPPER_BIN" sh "$MAPPER_INSTALLER" current', source)
+
+    def test_changed_mapped_ingress_revokes_old_authorization(self):
+        firewall = FIREWALL.read_text(encoding="utf-8")
+        verify = VERIFY.read_text(encoding="utf-8")
+        protected = firewall.split("protected_ingress_current() {", 1)[1].split("fw3_ipv6_capable()", 1)[0]
+        reconcile = verify.split("reconcile_family() {", 1)[1].split("reconcile_policy()", 1)[0]
+
+        self.assertIn('grep -Fqx "${rg_dev}|${rg_port}" "$MAPPED_INGRESS_V4_FILE"', protected)
+        self.assertIn('auth_record_policy_current "$rg_family" "$rg_record"', reconcile)
+        self.assertIn('authorization revoked because protected WAN/ingress policy changed', reconcile)
+        self.assertIn('rm -f "$rg_file"', reconcile)
+        self.assertNotIn("resolve-current", reconcile)
 
 
 if __name__ == "__main__":
