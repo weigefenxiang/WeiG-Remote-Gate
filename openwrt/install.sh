@@ -56,6 +56,8 @@ fetch_file "remote-gate-report.sh" "$LIB_DIR/remote-gate-report.sh"
 fetch_file "remote-gate-agent.sh" "$LIB_DIR/remote-gate-agent.sh"
 fetch_file "remote-gate-egress-probe.sh" "$LIB_DIR/remote-gate-egress-probe.sh"
 fetch_file "remote-gate-wireguard-egress.sh" "$LIB_DIR/remote-gate-wireguard-egress.sh"
+fetch_file "remote-gate-service-registry.sh" "$LIB_DIR/remote-gate-service-registry.sh"
+fetch_file "remote-gate-mapping.sh" "$LIB_DIR/remote-gate-mapping.sh"
 fetch_file "remote-gate-firewall.sh" "$LIB_DIR/remote-gate-firewall.sh"
 fetch_file "remote-gate-firewall-backends.sh" "$LIB_DIR/remote-gate-firewall-backends.sh"
 fetch_file "remote-gate-wireguard-verify.sh" "$LIB_DIR/remote-gate-wireguard-verify.sh"
@@ -66,6 +68,14 @@ fetch_file "update.sh" "$LIB_DIR/update.sh"
 fetch_file "remote-gate-agent.init" "$INIT_FILE"
 fetch_file "remote-gate-hotplug.sh" "$HOTPLUG_FILE"
 chmod 0755 "$LIB_DIR"/*.sh "$INIT_FILE" "$HOTPLUG_FILE"
+
+# A router compiler is never required. A prebuilt mapper may be shipped beside
+# a local source checkout/package; otherwise Mapped Access remains optional.
+MAPPER_SOURCE="${REMOTE_GATE_MAPPER_SOURCE:-$SCRIPT_DIR/../native/remote-gate-mapper}"
+if [ -f "$MAPPER_SOURCE" ] && [ -x "$MAPPER_SOURCE" ]; then
+    cp "$MAPPER_SOURCE" "$LIB_DIR/remote-gate-mapper"
+    chmod 0755 "$LIB_DIR/remote-gate-mapper"
+fi
 
 if [ -f "$SCRIPT_DIR/../VERSION" ]; then
     cp "$SCRIPT_DIR/../VERSION" "$LIB_DIR/VERSION"
@@ -87,9 +97,12 @@ esac
 
 IPV6_CAPABLE=no
 if "$LIB_DIR/remote-gate-firewall.sh" ipv6-capable >/dev/null 2>&1; then IPV6_CAPABLE=yes; fi
+MAPPER_AVAILABLE=no
+if [ -x "$LIB_DIR/remote-gate-mapper" ]; then MAPPER_AVAILABLE=yes; fi
 printf 'IPv6 Gate firewall capability: %s\n' "$IPV6_CAPABLE"
-printf 'Remote Gate controls only router INPUT for WireGuard UDP and optional Ping Echo on protected WAN endpoints.\n'
-printf 'FORWARD, DNAT, UPnP, NAT-PMP, qBittorrent and unrelated ports are not filtered by Remote Gate.\n\n'
+printf 'Mapped Access mapper binary: %s\n' "$MAPPER_AVAILABLE"
+printf 'Remote Gate controls only registered router INPUT ingress and optional Ping Echo on protected WAN endpoints.\n'
+printf 'FORWARD, DNAT, UPnP, NAT-PMP, qBittorrent and unrelated ports are not filtered by the Access Gate.\n\n'
 
 cat > "$CONFIG_FILE" <<CFGEOF
 HOSTNAME='$HOSTNAME'
@@ -98,21 +111,22 @@ AGENT_INTERFACE=''
 AGENT_INTERVAL='10'
 GATE_IPV6='auto'
 CONTROL_TRANSPORT='auto'
-NATMAP_DISCOVERY='auto'
+MAPPED_ACCESS='auto'
 CFGEOF
 chmod 0600 "$CONFIG_FILE"
 unset WRITE_TOKEN
 
 cat > "$STATE_DIR/install-manifest" <<'MANIFEST'
-schema=1
+schema=2
 wireguard_owned=0
 firewall_include_owned=1
 agent_owned=1
+mapper_owned=1
 MANIFEST
 chmod 0600 "$STATE_DIR/install-manifest"
 
 "$LIB_DIR/remote-gate-firewall.sh" install >/dev/null
-"$LIB_DIR/remote-gate-agent.sh" sync-firewall || fail "Initial Multi-WAN/WireGuard firewall policy sync failed."
+"$LIB_DIR/remote-gate-agent.sh" sync-firewall || fail "Initial Multi-WAN/service firewall policy sync failed."
 
 if [ "$BACKEND" = "fw3-iptables" ]; then
     printf '\nIPv4 INPUT head:\n'; iptables -S INPUT | sed -n '1,4p'
@@ -133,12 +147,14 @@ if [ -x /etc/init.d/cron ]; then /etc/init.d/cron restart >/dev/null 2>&1 || tru
 printf '\nWeiG Remote Gate OpenWrt components installed.\n'
 printf 'Firewall backend: %s\n' "$BACKEND"
 printf 'IPv6 Gate: auto (%s firewall capability)\n' "$IPV6_CAPABLE"
+printf 'Mapped Access: %s\n' "$([ "$MAPPER_AVAILABLE" = yes ] && printf 'available when NAT behavior permits UDP mapping' || printf 'unavailable until a compatible Remote Gate mapper binary is installed')"
 printf 'Control transport: automatic IPv4/IPv6 Multi-WAN health fallback\n'
 printf 'Private/CGNAT WAN IPv4 egress: best-effort per-WAN probe enabled\n'
 printf 'The WAN has no HTTP/HTTPS listener from this project.\n'
 printf 'qBittorrent/BT port forwarding remains under the original firewall and is unaffected.\n'
 printf 'Safe update: %s/update.sh\n' "$LIB_DIR"
 printf 'Read-only audit: %s/remote-gate-audit.sh\n' "$LIB_DIR"
-printf 'Optional WG home IPv4 egress: %s/remote-gate-wireguard-egress.sh status\n' "$LIB_DIR"
+printf 'Mapped Access status: %s/remote-gate-mapping.sh status-json\n' "$LIB_DIR"
+printf 'Optional WG home Internet egress: %s/remote-gate-wireguard-egress.sh status-json\n' "$LIB_DIR"
 printf 'Safe uninstall: %s/uninstall.sh --dry-run\n' "$LIB_DIR"
 printf 'Firewall status: %s/remote-gate-firewall.sh status-json\n' "$LIB_DIR"
