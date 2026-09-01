@@ -93,6 +93,22 @@ class MappingRuntimeIntegrityTests(unittest.TestCase):
         self.assertIn('rm -f "$rg_file"', reconcile)
         self.assertNotIn("resolve-current", reconcile)
 
+    def test_current_mapping_requires_live_owned_mapper_process(self):
+        source = MAPPING.read_text(encoding="utf-8")
+        helper = source.split("status_process_current() {", 1)[1].split("stop_key()", 1)[0]
+        control = source.split("status_control_tuple() {", 1)[1].split("ingress_pairs()", 1)[0]
+        ingress = source.split("ingress_pairs() {", 1)[1].split("ingress_ports()", 1)[0]
+        record = source.split("mapping_record() {", 1)[1].split("resolve_current()", 1)[0]
+        status = source.split("status_json() {", 1)[1].split('case "${1:-status-json}"', 1)[0]
+
+        self.assertIn('owned_pid "$pid" "$status"', helper)
+        self.assertIn('status_process_current "$status" || return 1', control)
+        self.assertIn('status_process_current "$status" || continue', ingress)
+        self.assertIn('status_process_current "$status" || return 1', record)
+        self.assertIn('active) status_process_current "$status" || continue;', status)
+        self.assertIn('prepared) status_process_current "$status" || continue;', status)
+        self.assertIn('failed) failed=$((failed + 1))', status)
+
 
 if __name__ == "__main__":
     unittest.main()
