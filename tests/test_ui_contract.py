@@ -131,18 +131,23 @@ class UIContractTests(unittest.TestCase):
         self.assertNotIn('"source_ip"', probe)
         self.assertIn("body: JSON.stringify({family, address})", probe)
 
-    def test_ipv4_ipv6_and_dual_activate_are_supported_in_one_compact_row(self):
+    def test_ipv4_ipv6_and_split_dual_activate_are_supported_in_one_compact_row(self):
         gate = GATE.read_text(encoding="utf-8")
         template = TEMPLATE.read_text(encoding="utf-8")
         css = COMPONENTS_CSS.read_text(encoding="utf-8")
         self.assertIn("families:['ipv4','ipv6']", gate)
         self.assertIn("endpoint_ids:{ipv4:pair.ipv4.id,ipv6:pair.ipv6.id}", gate)
+        self.assertIn("egress_wans:{ipv4:egressPlan.ipv4,ipv6:egressPlan.ipv6}", gate)
         self.assertIn("dualEndpointPairs", gate)
-        self.assertIn("Dual requires IPv4 and IPv6 endpoints on the same WAN", gate)
+        self.assertIn("Dual · Split WAN", gate)
+        self.assertIn("Split Exit", gate)
+        self.assertIn("same WireGuard service", gate)
         self.assertIn("双栈就绪 · IPv4 + IPv6 已识别", gate)
         self.assertIn("Dual stack ready · IPv4 + IPv6 detected", gate)
         self.assertIn("option.dataset.ipv4EndpointId", gate)
         self.assertIn("option.dataset.ipv6EndpointId", gate)
+        self.assertIn("option.dataset.ipv4Wan", gate)
+        self.assertIn("option.dataset.ipv6Wan", gate)
         self.assertIn("queueMicrotask(syncDualEndpointSelect)", gate)
         self.assertIn("family === 'dual'", gate)
         self.assertIn("{ipv4: 'IPv4', ipv6: 'IPv6', dual: 'Dual'}", gate)
@@ -241,7 +246,7 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("Private/CGNAT · Try", app)
         self.assertIn("NAT egress · Try", app)
 
-    def test_runtime_wireguard_egress_reboots_off_and_upgrade_cleans_legacy_rules(self):
+    def test_runtime_wireguard_egress_reboots_off_and_supports_split_dual(self):
         egress = OPENWRT_EGRESS.read_text(encoding="utf-8")
         agent = OPENWRT_AGENT.read_text(encoding="utf-8")
         update = OPENWRT_UPDATE.read_text(encoding="utf-8")
@@ -250,10 +255,15 @@ class UIContractTests(unittest.TestCase):
         self.assertNotIn("uci set", egress)
         self.assertIn("schedule_expiry", egress)
         self.assertIn("status-json", egress)
+        self.assertIn("enable-split", egress)
+        self.assertIn("WAN_INTERFACE4", egress)
+        self.assertIn("WAN_INTERFACE6", egress)
         self.assertIn("AllowedIPs = 0.0.0.0/0, ::/0", egress)
         self.assertIn("cleanup-legacy", update)
         self.assertIn("runtime only, reboot returns it to OFF", update)
-        self.assertIn('"$EGRESS" enable "$wireguard" "$egress_wan" "$ttl" "$egress_mode"', agent)
+        self.assertIn('egress_wan_ipv4="$(jsonfilter', agent)
+        self.assertIn('egress_wan_ipv6="$(jsonfilter', agent)
+        self.assertIn('"$EGRESS" enable-split "$wireguard" "$egress_wan_ipv4" "$egress_wan_ipv6" "$ttl"', agent)
         self.assertIn("apply_egress=0", agent)
         self.assertIn("web-authorization-active-pending-egress", agent)
 
