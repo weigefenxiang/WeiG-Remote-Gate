@@ -58,28 +58,35 @@ case "$family" in
         ;;
 esac
 
-# OpenWrt 19.07 SDKs still enforce the obsolete Python 2 host prerequisite on
-# current hosts even for this self-contained C package. Validate and bypass
-# that exact prerequisite failure across the pinned 19.07.10 release only.
+# OpenWrt 19.07.10 SDKs still enforce the obsolete Python 2 host prerequisite
+# on current hosts even for this self-contained C package. Validate and bypass
+# that exact prerequisite failure across the pinned 19.07.10 samples only.
 #
-# The x86_64 sample has an additional old static musl/binutils startup quirk:
-# without a build-id note its ELF can omit the initial PT_LOAD containing the
-# program headers, causing static_init_tls to crash before main(). Keep that
-# linker workaround x86_64-only unless another real architecture proves it is
-# required there too. All newer SDK releases stay strict/default.
+# The x86_64 sample has an additional old static musl/binutils startup quirk.
+# A real 32-bit x86/geode runtime test shows the same five-header/0x1000 first
+# LOAD layout can execute correctly there, while both MIPS endian variants also
+# run without the workaround. Keep build-id injection x86_64-only.
 sdk_force_prereq=0
 sdk_link_flags=''
+sdk_emulator=''
 case "$sample" in
     openwrt-19.07.10-*) sdk_force_prereq=1 ;;
 esac
 case "$sample" in
     openwrt-19.07.10-x86_64) sdk_link_flags='-Wl,--build-id=sha1' ;;
+    openwrt-19.07.10-x86-geode) sdk_emulator='qemu-i386' ;;
+    openwrt-19.07.10-ramips-mt76x8) sdk_emulator='qemu-mipsel' ;;
+    openwrt-19.07.10-ar71xx-generic) sdk_emulator='qemu-mips' ;;
 esac
 
 for cmd in curl sha256sum tar file; do
     command -v "$cmd" >/dev/null 2>&1 || { echo "required host tool missing: $cmd" >&2; exit 1; }
 done
 [ "$archive" != zst ] || command -v zstd >/dev/null 2>&1 || { echo "zstd is required for this SDK" >&2; exit 1; }
+[ -z "$sdk_emulator" ] || command -v "$sdk_emulator" >/dev/null 2>&1 || {
+    echo "required SDK runtime emulator missing: $sdk_emulator" >&2
+    exit 1
+}
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/remote-gate-sdk.XXXXXX")"
 cleanup() { rm -rf "$tmp"; }
@@ -103,20 +110,52 @@ REMOTE_GATE_SDK_LINK_FLAGS="$sdk_link_flags" \
 binary="$OUT_DIR/remote-gate-mapper-$abi"
 [ -x "$binary" ] || { echo "SDK runner did not produce expected mapper: $binary" >&2; exit 1; }
 
-if [ "$abi" = x86_64 ] && [ "$(uname -m 2>/dev/null || true)" = x86_64 ]; then
-    log="$tmp/smoke.log"
-    set +e
-    "$binary" >"$log" 2>&1
-    status=$?
-    set -e
-    cat "$log"
-    [ "$status" -eq 2 ] || { echo "SDK mapper host smoke returned $status instead of 2" >&2; exit 1; }
-    grep -q '^usage:' "$log" || { echo "SDK mapper host smoke did not print usage" >&2; exit 1; }
-    identity="$("$binary" --version 2>/dev/null)" || { echo "SDK mapper self-version failed" >&2; exit 1; }
-    [ "$identity" = "remote-gate-mapper $version api=1" ] || {
-        echo "SDK mapper self-version mismatch: $identity" >&2
-        exit 1
+smoke_mapper() {
+    runner="$1"
+    smoke_binary="$2"
+    smoke_label="$3"
+    smoke_log="$tmp/smoke-$smoke_label.log"
+
+    if [ "$runner" = direct ]; then
+        set +e
+        "$smoke_binary" >"$smoke_log" 2>&1
+        smoke_status=$?
+        set -e
+        smoke_identity="$("$smoke_binary" --version 2>/dev/null)" || {
+            echo "SDK mapper $smoke_label self-version failed" >&2
+            return 1
+        }
+    else
+        set +e
+        "$runner" "$smoke_binary" >"$smoke_log" 2>&1
+        smoke_status=$?
+        set -e
+        smoke_identity="$("$runner" "$smoke_binary" --version 2>/dev/null)" || {
+            echo "SDK mapper $smoke_label self-version failed" >&2
+            return 1
+        }
+    fi
+
+    cat "$smoke_log"
+    [ "$smoke_status" -eq 2 ] || {
+        echo "SDK mapper $smoke_label smoke returned $smoke_status instead of 2" >&2
+        return 1
     }
+    grep -q '^usage:' "$smoke_log" || {
+        echo "SDK mapper $smoke_label smoke did not print usage" >&2
+        return 1
+    }
+    [ "$smoke_identity" = "remote-gate-mapper $version api=1" ] || {
+        echo "SDK mapper $smoke_label self-version mismatch: $smoke_identity" >&2
+        return 1
+    }
+    printf 'runtime_smoke=%s\n' "$smoke_label"
+}
+
+if [ -n "$sdk_emulator" ]; then
+    smoke_mapper "$sdk_emulator" "$binary" "$sdk_emulator"
+elif [ "$abi" = x86_64 ] && [ "$(uname -m 2>/dev/null || true)" = x86_64 ]; then
+    smoke_mapper direct "$binary" host
 fi
 
 printf 'SDK compatibility sample passed: %s\n' "$sample"
