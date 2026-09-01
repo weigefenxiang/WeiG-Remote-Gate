@@ -18,9 +18,6 @@ on:
           - openwrt-24.10.5-x86_64
           - openwrt-25.12.5-x86_64
           - immortalwrt-24.10.5-x86_64
-  push:
-    branches:
-      - dev
 
 permissions:
   contents: read
@@ -30,86 +27,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  sdk-1907-arch-once:
-    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[sdk-1907-arch]')
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install SDK and emulator tools
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xz-utils zstd file binutils qemu-user
-
-      - name: Build OpenWrt 19.07 x86 geode mapper
-        shell: bash
-        run: |
-          set -euo pipefail
-          sh native/run-sdk-compat.sh openwrt-19.07.10-x86-geode "$PWD/native/dist-sdk-geode"
-
-      - name: Inspect and execute x86 geode mapper
-        shell: bash
-        run: |
-          set -euo pipefail
-          binary="$PWD/native/dist-sdk-geode/remote-gate-mapper-i386_pentium"
-          file "$binary"
-          readelf -h "$binary"
-          readelf -lW "$binary"
-          readelf -n "$binary" || true
-          identity="$(qemu-i386 "$binary" --version)"
-          printf 'qemu_i386_identity=%s\n' "$identity"
-          test "$identity" = "remote-gate-mapper $(cat VERSION) api=1"
-          set +e
-          qemu-i386 "$binary" > /tmp/remote-gate-i386-usage.log 2>&1
-          status=$?
-          set -e
-          cat /tmp/remote-gate-i386-usage.log
-          printf 'qemu_i386_usage_rc=%s\n' "$status"
-          test "$status" -eq 2
-          grep -q '^usage:' /tmp/remote-gate-i386-usage.log
-
-      - name: Build OpenWrt 19.07 big-endian MIPS mapper
-        shell: bash
-        run: |
-          set -euo pipefail
-          sh native/run-sdk-compat.sh openwrt-19.07.10-ar71xx-generic "$PWD/native/dist-sdk-mipsbe"
-
-      - name: Inspect and execute big-endian MIPS mapper
-        shell: bash
-        run: |
-          set -euo pipefail
-          binary="$PWD/native/dist-sdk-mipsbe/remote-gate-mapper-mips_24kc"
-          file "$binary"
-          readelf -h "$binary"
-          readelf -lW "$binary"
-          readelf -n "$binary" || true
-          identity="$(qemu-mips "$binary" --version)"
-          printf 'qemu_mips_identity=%s\n' "$identity"
-          test "$identity" = "remote-gate-mapper $(cat VERSION) api=1"
-          set +e
-          qemu-mips "$binary" > /tmp/remote-gate-mipsbe-usage.log 2>&1
-          status=$?
-          set -e
-          cat /tmp/remote-gate-mipsbe-usage.log
-          printf 'qemu_mips_usage_rc=%s\n' "$status"
-          test "$status" -eq 2
-          grep -q '^usage:' /tmp/remote-gate-mipsbe-usage.log
-
-      - name: Upload OpenWrt 19.07 architecture candidates
-        uses: actions/upload-artifact@v4
-        with:
-          name: remote-gate-mapper-openwrt-19.07.10-arch-${{ github.sha }}
-          path: |
-            native/dist-sdk-geode/remote-gate-mapper-i386_pentium
-            native/dist-sdk-mipsbe/remote-gate-mapper-mips_24kc
-          if-no-files-found: error
-          retention-days: 14
-
   sdk-build:
-    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -120,12 +38,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install SDK archive tools
+      - name: Install SDK runtime tools
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xz-utils zstd file
+          sudo apt-get install -y --no-install-recommends xz-utils zstd file qemu-user
 
       - name: Build and smoke SDK mapper
         shell: bash
