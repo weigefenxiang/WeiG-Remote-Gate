@@ -15,7 +15,9 @@ class EndpointMemoryTests(unittest.TestCase):
         self.assertIn("function preferredSelection", source)
         self.assertIn("function rememberEndpointSelection", source)
         self.assertIn("function restoreEndpointSelection", source)
-        self.assertIn("context.state.endpointSelections[family] = {value, wan: endpointWanForSelection(family, value)}", source)
+        self.assertIn("const wans = endpointWansForSelection(family, value)", source)
+        self.assertIn("wan4: wans.ipv4", source)
+        self.assertIn("wan6: wans.ipv6", source)
         self.assertIn("rememberEndpointSelection(state.family)", source)
         self.assertIn("restoreEndpointSelection(state.family)", source)
         self.assertIn("const preferred = preferredSelection(family)", source)
@@ -39,14 +41,17 @@ class EndpointMemoryTests(unittest.TestCase):
         self.assertIn("set egressWan(value)", source)
         self.assertIn("this.egressSelections[this.family] = String(value || '__lan__')", source)
 
-    def test_internet_exit_defaults_to_access_wan_until_user_overrides_it(self):
+    def test_internet_exit_defaults_to_access_plan_until_user_overrides_it(self):
         source = GATE.read_text(encoding="utf-8")
-        self.assertIn("function selectedAccessWan()", source)
+        self.assertIn("function selectedAccessWans()", source)
+        self.assertIn("function accessEgressValue()", source)
+        self.assertIn("function splitEgressValue(wans)", source)
         self.assertIn("function egressSelectionIsManual", source)
-        self.assertIn("const accessWan = selectedAccessWan()", source)
-        self.assertIn("!egressSelectionIsManual(family) && hasOption(accessWan)", source)
+        self.assertIn("const defaultValue = accessEgressValue()", source)
+        self.assertIn("!egressSelectionIsManual(family) && hasOption(defaultValue)", source)
         self.assertIn("state.egressManualSelections[state.family]=true", source)
         self.assertIn("state.egressManualSelections={}", source)
+        self.assertIn("Dual · Split Exit · IPv4 →", source)
 
 
 if __name__ == "__main__":
