@@ -101,6 +101,23 @@ class FirewallBackendTests(unittest.TestCase):
         self.assertIn("source_count", verify)
         self.assertIn('clear_auth "${2:-all}"', firewall)
 
+    def test_close_clears_gate_authorizations_without_stopping_mapping(self):
+        source = AGENT.read_text(encoding="utf-8")
+        close_block = source.split("        close)\n", 1)[1].split("            ;;", 1)[0]
+        self.assertIn('"$FIREWALL" clear', close_block)
+        self.assertIn('"$EGRESS" disable', close_block)
+        self.assertNotIn('"$MAPPING"', close_block)
+        self.assertNotIn("stop", close_block)
+        self.assertIn("all-authorizations-and-egress-cleared", close_block)
+
+    def test_authorization_ttl_is_enforced_by_kernel_sets(self):
+        backends = BACKENDS.read_text(encoding="utf-8")
+        self.assertIn('ipset -exist add "$rg_set" "$rg_ip" timeout "$rg_remaining"', backends)
+        self.assertIn("set weig_remote_gate_auth_ipv4 { type ipv4_addr; flags timeout; }", backends)
+        self.assertIn("set weig_remote_gate_auth_ipv6 { type ipv6_addr; flags timeout; }", backends)
+        self.assertIn("add element inet fw4 $rg_auth_set { $rg_ip timeout ${rg_remaining}s }", backends)
+        self.assertIn('[ "$rg_expires" -gt "$rg_now" ]', backends)
+
     def test_concurrent_sources_share_one_safe_family_profile(self):
         source = VERIFY.read_text(encoding="utf-8")
         backends = BACKENDS.read_text(encoding="utf-8")
