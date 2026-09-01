@@ -1,0 +1,103 @@
+name: Release Browser Validation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-browser-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-matrix:
+    name: ${{ matrix.name }}
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux browser matrix
+            os: ubuntu-latest
+          - name: Windows browser matrix
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Chromium test runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --no-save playwright@1.55.0
+          npx playwright install chromium
+
+      - name: Start fixture server (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/ui_fixture_server.py > "$RUNNER_TEMP/remote-gate-ui-fixture.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/remote-gate-ui-fixture.pid"
+          for i in $(seq 1 20); do
+            curl -fsS http://127.0.0.1:8765/healthz >/dev/null && exit 0
+            sleep 0.5
+          done
+          cat "$RUNNER_TEMP/remote-gate-ui-fixture.log"
+          exit 1
+
+      - name: Start fixture server (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $stdout = Join-Path $env:RUNNER_TEMP 'remote-gate-ui-fixture.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'remote-gate-ui-fixture.err'
+          $pidFile = Join-Path $env:RUNNER_TEMP 'remote-gate-ui-fixture.pid'
+          $process = Start-Process python -ArgumentList 'tests/ui_fixture_server.py' -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+          Set-Content -Path $pidFile -Value $process.Id
+          for ($i = 0; $i -lt 20; $i++) {
+            try {
+              Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8765/healthz' | Out-Null
+              exit 0
+            } catch {
+              Start-Sleep -Milliseconds 500
+            }
+          }
+          if (Test-Path $stdout) { Get-Content $stdout }
+          if (Test-Path $stderr) { Get-Content $stderr }
+          exit 1
+
+      - name: Browser layout regression
+        run: node tests/browser_layout.mjs
+
+      - name: Split WAN Dual browser regression
+        run: node tests/browser_split_dual.mjs
+
+      - name: Stop fixture server (Linux)
+        if: always() && runner.os == 'Linux'
+        shell: bash
+        run: |
+          [ -f "$RUNNER_TEMP/remote-gate-ui-fixture.pid" ] && kill "$(cat "$RUNNER_TEMP/remote-gate-ui-fixture.pid")" 2>/dev/null || true
+          cat "$RUNNER_TEMP/remote-gate-ui-fixture.log" 2>/dev/null || true
+
+      - name: Stop fixture server (Windows)
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $pidFile = Join-Path $env:RUNNER_TEMP 'remote-gate-ui-fixture.pid'
+          $stdout = Join-Path $env:RUNNER_TEMP 'remote-gate-ui-fixture.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'remote-gate-ui-fixture.err'
+          if (Test-Path $pidFile) {
+            $fixturePid = Get-Content $pidFile
+            Stop-Process -Id $fixturePid -Force -ErrorAction SilentlyContinue
+          }
+          if (Test-Path $stdout) { Get-Content $stdout }
+          if (Test-Path $stderr) { Get-Content $stderr }
