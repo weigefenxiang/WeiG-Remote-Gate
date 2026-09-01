@@ -42,7 +42,8 @@ class DualEgressRuntimeContractTests(unittest.TestCase):
         self.assertIn('clear_error_state', helper)
         self.assertIn('egress="$(egress_json)"', agent)
         self.assertIn('\\"egress\\":${egress}', agent)
-        self.assertIn('keeps a short-lived failed', agent)
+        self.assertIn('detail="wireguard-egress-activation-failed"', agent)
+        self.assertIn('ack "$id" false "$detail"', agent)
 
     def test_vps_sanitizes_and_persists_agent_egress(self):
         source = SERVER.read_text(encoding="utf-8")
