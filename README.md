@@ -2,9 +2,9 @@
 
 **Language:** [English](README.md) · [简体中文](translations/README.zh-CN.md)
 
-**Secure Remote Access Gateway for OpenWrt / ImmortalWrt.**
+**Secure Remote Access Gateway for OpenWrt / LEDE / ImmortalWrt.**
 
-WeiG-Remote-Gate is a Cloudflare-fronted control plane for Multi-WAN status and temporary private remote access. The home WAN does **not** host an HTTP/HTTPS management service. OpenWrt reports inventory/status and pulls short-lived commands over outbound HTTPS.
+WeiG-Remote-Gate is a Cloudflare-fronted control plane for Multi-WAN status and temporary private remote access. The home WAN does **not** host an HTTP/HTTPS management service. OpenWrt-family routers report inventory/status and pull short-lived commands over outbound HTTPS.
 
 ## 0.3.17 direction: Direct / Mapped / Relay
 
@@ -81,7 +81,7 @@ VPS / WeiG-Remote-Gate
    |
    | outbound HTTPS inventory / status / pull / ack
    |
-OpenWrt
+OpenWrt-family router
    |
    +-- Multi-WAN discovery
    +-- Access Endpoint discovery
@@ -123,7 +123,7 @@ Access Endpoint
              `-- others          (future)
 ```
 
-The browser cannot create arbitrary `192.168.x.x:port` forwards. A service must be discovered or registered locally on OpenWrt and independently validated before it can become an endpoint target.
+The browser cannot create arbitrary `192.168.x.x:port` forwards. A service must be discovered or registered locally on the router and independently validated before it can become an endpoint target.
 
 0.3.17 initially registers validated WireGuard listeners only.
 
@@ -139,7 +139,7 @@ service_port   locally validated service listen port
 
 For Direct WireGuard these may be identical. For Mapped Access they may differ.
 
-This distinction is required for old OpenWrt compatibility because the mapper does not need to share the WireGuard socket.
+This distinction is required for old OpenWrt-family compatibility because the mapper does not need to share the WireGuard socket.
 
 ## 0.3.17 Mapping Engine scope
 
@@ -170,30 +170,35 @@ Remote Gate must therefore describe a successfully observed mapping as **Mapped*
 
 ## Firewall compatibility
 
-| Platform | Remote Gate backend |
+| Detected stack | Remote Gate backend |
 | --- | --- |
-| firewall3 / `fw3` | `iptables` + `ipset` timeout |
-| firewall4 / `fw4` | `nftables` timeout sets |
+| firewall3 / `fw3` + `iptables` + `ipset` | `fw3-iptables` |
+| firewall4 / `fw4` + `nft` | `fw4-nftables` |
 
 The Gate guard is evaluated before the normal `ESTABLISHED,RELATED` shortcut. Existing UCI rules such as `Allow-Ping` are not deleted; the earlier Remote Gate guard wins only for traffic owned by the Gate, and uninstall restores the original firewall behavior.
 
-Known target classes include ImmortalWrt/OpenWrt 21.02-class fw3 systems and modern fw4 systems. Unsupported backends fail closed during installation.
+Compatibility is capability-based, not release-number based. An older LEDE/OpenWrt/ImmortalWrt derivative with the required fw3/runtime capabilities is not rejected merely because of age; modern fw4 systems use the nftables backend. Unsupported firewall capabilities fail closed during installation.
 
 On fw3/iptables systems, runtime Internet Exit operations wait for the xtables lock instead of treating a short-lived concurrent firewall update as an immediate failure.
 
-## Old OpenWrt / 21.02 compatibility
+## OpenWrt / LEDE / ImmortalWrt compatibility
 
-OpenWrt/ImmortalWrt 21.02-class fw3 remains a supported baseline.
+Remote Gate uses one OpenWrt-family capability contract instead of maintaining a hardcoded version allowlist.
 
-0.3.17 rules for old systems:
+Core rules:
 
-- do not assume Linux 5.6+ cross-process socket sharing;
-- use a dedicated mapper ingress port;
-- do not require a compiler on the router;
-- do not require NATMap or another third-party traversal package;
-- if no compatible Remote Gate mapper binary is available for the router architecture, only Mapped Access is unavailable; the Agent, Direct endpoints, IPv6 Gate and Internet Exit remain functional.
+- BusyBox/POSIX `/bin/sh` remains the script baseline;
+- `rc.common` is the service framework baseline;
+- procd is preferred when available, with a PID-owned `rc.common` fallback for older compatible systems;
+- package management is detected independently: older systems commonly use `opkg`, while newer OpenWrt may use `apk`;
+- firewall generation is detected from actual `fw3/iptables/ipset` or `fw4/nft` capabilities;
+- optional IPv6, Mapped Access and Internet Exit capabilities degrade independently;
+- no compiler is required on the router;
+- no NATMap or other third-party traversal package is required.
 
-The read-only audit reports the kernel machine, OpenWrt package ABI and `opkg print-architecture` output. Native mapper delivery must match that package ABI exactly rather than guessing from a broad MIPS/ARM label.
+Native mapper delivery uses the exact OpenWrt **Package ABI**, not `uname -m` or a broad MIPS/ARM guess. The read-only audit reports package manager, Package ABI, kernel machine and libc separately. Unknown ABI values fail safe. Legacy CPU families that cannot safely share a portable static binary are assigned to an exact OpenWrt SDK build tier instead of receiving a newer-ISA executable.
+
+**OpenWrt/ImmortalWrt 21.02-class fw3 is a hardware-validated sample, not the minimum supported release.** Older LEDE/OpenWrt derivatives may be compatible when the required runtime/firewall capabilities exist; newer releases do not gain support merely from their version number if required capabilities were removed.
 
 ## Multi-WAN endpoint model
 
@@ -207,7 +212,7 @@ The server does not assume one public IPv4 WAN. An endpoint may be:
 
 Direct and verified Mapped paths are recommended ahead of heuristic/private paths. Private/CGNAT addresses are not falsely described as Internet-reachable.
 
-The OpenWrt agent continuously derives protected WAN devices, eligible IPv6 devices and registered local service ingress. A temporary authorization is revoked immediately if its WAN device or registered ingress leaves the current protected policy, even before its TTL expires.
+The OpenWrt-family agent continuously derives protected WAN devices, eligible IPv6 devices and registered local service ingress. A temporary authorization is revoked immediately if its WAN device or registered ingress leaves the current protected policy, even before its TTL expires.
 
 ## Dual-stack client sources
 
@@ -248,8 +253,8 @@ Quick presets remain:
 2. VPS records the current Cloudflare-observed source; the browser best-effort completes a missing IPv4/IPv6 family.
 3. Choose IP family, Access Endpoint, registered service, Access Scope, duration and optional Internet Exit.
 4. VPS resolves the selected session source and endpoint server-side and queues the short-lived command transaction.
-5. OpenWrt pulls the command over outbound HTTPS.
-6. OpenWrt validates the WAN/device, registered ingress/service and TTL again.
+5. The router pulls the command over outbound HTTPS.
+6. The router validates the WAN/device, registered ingress/service and TTL again.
 7. Access Gate authorizes only the selected source on the selected registered ingress.
 8. If the endpoint is Mapped, the Mapping Engine relays only through its locally registered mapping/service relationship.
 9. If Internet Exit is selected, the independent egress helper validates and installs its temporary scoped path.
@@ -279,15 +284,15 @@ From v0.3 onward the local updater is preserved at:
 
 The updater preserves hostname, login credentials, `WRITE_TOKEN`, sessions/state, creates a rollback backup under `/var/backups/weig-remote-gate/`, restarts the localhost-only service, checks health plus the Agent API and restores the old application on failure.
 
-### OpenWrt
+### OpenWrt family
 
-v0.3+ installs/preserves its own updater, uninstaller and read-only audit utility. Update creates application/config/state plus firewall/network backups, preserves WireGuard configuration, validates shell syntax, rebuilds Remote Gate-owned state and fails back to the previous installation if validation fails.
+v0.3+ installs/preserves its own updater, uninstaller, platform helper and read-only audit utility. Update creates application/config/state plus firewall/network backups, preserves WireGuard configuration, validates shell syntax, rebuilds Remote Gate-owned state and fails back to the previous installation if validation fails.
 
 Mapper availability is optional. An unsupported/missing mapper binary must not turn an otherwise valid update into a broken Remote Gate installation.
 
 ## Safe uninstall
 
-Both VPS and OpenWrt have one-command uninstallers with dry-run support. They create local backups first, remove only resources owned by Remote Gate and perform residual checks. OpenWrt does **not** blindly restore an old whole-firewall snapshot and does not remove WireGuard by default. Cloudflare Tunnel resources are not automatically deleted.
+Both VPS and router-side installations have one-command uninstallers with dry-run support. They create local backups first, remove only resources owned by Remote Gate and perform residual checks. The router uninstaller does **not** blindly restore an old whole-firewall snapshot and does not remove WireGuard by default. Cloudflare Tunnel resources are not automatically deleted.
 
 Mapped Access cleanup removes only Remote Gate-owned mapper binaries/runtime state. It never removes unrelated user NAT/firewall/service configuration.
 
@@ -302,7 +307,7 @@ dev  -> development, fixes and CI
 main -> validated stable state
 ```
 
-All routine work is committed to the single fixed `dev` branch. Core + Chromium regression CI must pass before the validated `dev` state is promoted to `main`.
+All routine work is committed to the single fixed `dev` branch. Core + Native cross-build + Chromium regression CI must pass before the validated `dev` state is promoted to `main`.
 
 Do not create `dev/*`, `feature/*`, version branches or temporary development branches. The complete hard contract is in [`docs/PROJECT-RULES.md`](docs/PROJECT-RULES.md).
 
@@ -313,6 +318,8 @@ Do not create `dev/*`, `feature/*`, version branches or temporary development br
 The existing fw3 IPv4 Access Gate path has been validated end-to-end on a real ImmortalWrt 21.02-class router using iptables legacy + ipset, PPPoE public WAN, Cloudflare control plane and a router-local WireGuard listener. Verified behavior included CLOSED blocking, source-specific Activate, real WireGuard traffic, TTL expiry, fresh-handshake failure after expiry, and preservation of the Gate boundary.
 
 The runtime WireGuard Internet Exit path has also been exercised on real hardware with Dual client configuration, separate IPv4/IPv6 policy rules, temporary routing tables and NAT44/NAT66 state.
+
+This hardware sample establishes a validated fw3 baseline; it is not a version-number minimum for the OpenWrt-family capability contract.
 
 ### 0.3.17 validation requirement
 
@@ -327,13 +334,14 @@ Close -> immediate block
 WAN reconnect -> mapping is safely rebuilt/removed
 ```
 
-fw3/21.02 and modern fw4 hardware paths both require validation before Mapped Access is promoted to `main`.
+At least one real fw3 path and one real fw4 path require Mapped Access validation before promotion to `main`. Additional historical CPU/ABI classes keep their own binary-validation status rather than inheriting support from another architecture.
 
 ## Production checks
 
-Read-only OpenWrt diagnostics:
+Read-only router diagnostics:
 
 ```sh
+/usr/lib/remote-gate/remote-gate-platform.sh summary
 /usr/lib/remote-gate/remote-gate-audit.sh
 /usr/lib/remote-gate/remote-gate-firewall.sh detect
 /usr/lib/remote-gate/remote-gate-firewall.sh status-json
