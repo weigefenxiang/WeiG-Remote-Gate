@@ -45,7 +45,7 @@ mipsel_24kc	mips32_le	cross-candidate
 mipsel_24kc_24kf	mips32_le	cross-candidate
 mipsel_74kc	mips32_le	cross-candidate
 mipsel_mips32	mips32_le	cross-candidate
-powerpc64_e5500	powerpc64_be	cross-candidate
+powerpc64_e5500	powerpc64_be	sdk-required
 powerpc_464fp	powerpc32_be	cross-candidate
 powerpc_8540	powerpc32_be	cross-candidate
 powerpc_8548	powerpc32_be	cross-candidate
