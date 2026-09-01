@@ -15,6 +15,7 @@ if [ -r "$CONFIG_FILE" ]; then
 fi
 
 MAPPED_ACCESS="${MAPPED_ACCESS:-auto}"
+MAPPED_WANS="${MAPPED_WANS:-}"
 MAPPER_STUN_HOST="${MAPPER_STUN_HOST:-stun.cloudflare.com}"
 MAPPER_STUN_PORT="${MAPPER_STUN_PORT:-3478}"
 MAPPER_KEEPALIVE="${MAPPER_KEEPALIVE:-20}"
@@ -30,6 +31,16 @@ valid_name() { case "$1" in ''|*[!A-Za-z0-9_.:@+-]*) return 1 ;; *) return 0 ;; 
 valid_device() { valid_name "$1"; }
 valid_uint() { case "$1" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
 valid_port() { valid_uint "$1" && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
+
+mapped_wan_allowed() {
+    wanted="$1"
+    [ -z "$MAPPED_WANS" ] && return 0
+    for allowed in $MAPPED_WANS; do
+        valid_name "$allowed" || continue
+        [ "$allowed" = "$wanted" ] && return 0
+    done
+    return 1
+}
 
 is_public_ipv4() {
     printf '%s\n' "$1" | awk -F. '
@@ -107,6 +118,7 @@ parse_entry() {
     [ "$#" -eq 4 ] || return 1
     ENTRY_WAN="$1"; ENTRY_DEVICE="$2"; ENTRY_SERVICE_ID="$3"; ENTRY_SERVICE_PORT="$4"
     valid_name "$ENTRY_WAN" || return 1
+    mapped_wan_allowed "$ENTRY_WAN" || return 1
     valid_device "$ENTRY_DEVICE" || return 1
     valid_name "$ENTRY_SERVICE_ID" || return 1
     valid_port "$ENTRY_SERVICE_PORT" || return 1
