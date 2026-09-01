@@ -75,6 +75,7 @@ trap cleanup EXIT INT TERM
 
 (
     cd "$SDK_ROOT"
+    make defconfig
     make package/weig-remote-gate-mapper/clean >/dev/null 2>&1 || true
     make package/weig-remote-gate-mapper/compile V=s -j1
 )
