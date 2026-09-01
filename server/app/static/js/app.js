@@ -93,11 +93,12 @@
 
   function endpointLabel(item) {
     const family = item.family === 'ipv6' ? 'IPv6' : 'IPv4';
-    let provider = 'Direct';
-    if (item.provider === 'natmap') provider = 'NATMap';
-    else if (item.provider === 'egress_probe') provider = 'NAT egress · Try';
-    else if (item.reachability === 'private') provider = 'Private/CGNAT · Try';
-    return `${item.wan} · ${family} · ${provider} · ${endpointAddress(item)}`;
+    let method = 'Direct';
+    if (item.access_method === 'mapped' || item.reachability === 'mapped') method = 'Mapped';
+    else if (item.access_method === 'relay' || item.reachability === 'relay') method = 'Relay';
+    else if (item.reachability === 'egress_probe') method = 'NAT egress · Try';
+    else if (item.reachability === 'private') method = 'Private/CGNAT · Try';
+    return `${item.wan} · ${family} · ${method} · ${endpointAddress(item)}`;
   }
 
   function syncSelect(select, items, valueFn, labelFn) {
