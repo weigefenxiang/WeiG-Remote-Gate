@@ -24,6 +24,13 @@ function overlap(a, b) {
   return width * height;
 }
 
+async function chooseEndpoint(page, value) {
+  await page.locator('#endpoint-picker-trigger').click();
+  await page.waitForSelector('#endpoint-picker-layer.open .endpoint-option-card');
+  await page.locator(`#endpoint-picker-layer .endpoint-option-card[data-value="${value}"]`).click();
+  await page.waitForFunction((expected) => document.querySelector('#endpoint-select')?.value === expected, value);
+}
+
 const browser = await chromium.launch({headless: true});
 try {
   for (const [width, height] of viewports) {
@@ -39,12 +46,15 @@ try {
     await page.waitForSelector('#endpoint-picker-trigger');
     await page.waitForSelector('.brand-icon-image');
     await page.waitForSelector('#ttl-custom-button');
-    await page.waitForFunction(() => document.querySelector('#activate-button') && !document.querySelector('#activate-button').disabled);
+    await page.waitForFunction(() => document.querySelector('#activate-button') && document.querySelector('#activate-button').disabled);
 
     const v032 = await page.evaluate(() => ({
       brandSrc: document.querySelector('.brand-icon-image')?.getAttribute('src'),
       brandChassis: document.querySelector('#utility-trigger')?.classList.contains('brand-icon-chassis'),
       nativeHidden: document.querySelector('#endpoint-select')?.classList.contains('endpoint-native-select'),
+      endpointValue: document.querySelector('#endpoint-select')?.value,
+      endpointConfirmed: document.querySelector('#endpoint-select')?.dataset.selectionConfirmed,
+      publicEndpointHidden: document.querySelector('#mapped-public-endpoint')?.hidden ?? true,
       presetLabels: [...document.querySelectorAll('#ttl-segment button')].map((node) => node.textContent.trim()),
       customMin: document.querySelector('#duration-slider')?.min,
       customMax: document.querySelector('#duration-slider')?.max,
@@ -55,6 +65,9 @@ try {
     assert(v032.brandSrc === '/static/Wei.G.ico', `${width}x${height}: header is not using Wei.G.ico`);
     assert(v032.brandChassis, `${width}x${height}: brand icon 3D chassis missing`);
     assert(v032.nativeHidden, `${width}x${height}: native endpoint select is still visual`);
+    assert(v032.endpointValue === '', `${width}x${height}: endpoint was auto-selected before user choice`);
+    assert(v032.endpointConfirmed !== '1', `${width}x${height}: endpoint was marked confirmed before user choice`);
+    assert(v032.publicEndpointHidden, `${width}x${height}: public endpoint was visible before WAN selection`);
     assert(v032.dualPresent, `${width}x${height}: dual-stack family control missing`);
     assert(v032.feedbackReady, `${width}x${height}: standard feedback module not loaded`);
     assert(JSON.stringify(v032.presetLabels) === JSON.stringify(['1m', '5m', '15m', '30m', 'Custom']), `${width}x${height}: wrong TTL presets ${v032.presetLabels}`);
@@ -147,7 +160,7 @@ try {
       };
     });
     assert(picker.optionCount >= 1, `${width}x${height}: endpoint picker has no cards`);
-    assert(picker.selected === 1, `${width}x${height}: endpoint picker selected state missing`);
+    assert(picker.selected === 0, `${width}x${height}: endpoint picker selected an option before user choice`);
     assert(picker.open === 'true', `${width}x${height}: endpoint picker did not expose open state`);
     if (width <= 767) {
       assert(Math.abs(picker.centerY - picker.viewportCenterY) <= 16, `${width}x${height}: mobile picker is not vertically centered`);
@@ -173,8 +186,9 @@ try {
     assert(duration.active, `${width}x${height}: custom duration did not become active`);
 
     await page.locator('[data-family="ipv4"]').click();
-    await page.waitForFunction(() => document.querySelector('#endpoint-select')?.value === 'ep-wan2-v4');
-    assert(!(await page.locator('#activate-button').isDisabled()), `${width}x${height}: manual IPv4 selection did not enable Activate`);
+    assert(await page.locator('#activate-button').isDisabled(), `${width}x${height}: Activate enabled before explicit IPv4 endpoint choice`);
+    await chooseEndpoint(page, 'ep-wan2-v4');
+    assert(!(await page.locator('#activate-button').isDisabled()), `${width}x${height}: explicit IPv4 selection did not enable Activate`);
 
     await page.locator('[data-scope="wg_ping"]').click();
     const requestPromise = page.waitForRequest((request) => request.url().endsWith('/api/v1/gate/activate') && request.method() === 'POST');
@@ -199,7 +213,9 @@ try {
     await page.waitForSelector('#wan-list .wan-row');
     await page.waitForFunction(() => document.querySelector('[data-family="ipv6"]') && !document.querySelector('[data-family="ipv6"]').disabled);
     await page.locator('[data-family="ipv6"]').click();
-    assert(!(await page.locator('#activate-button').isDisabled()), `${width}x${height}: manual IPv6 selection did not enable Activate`);
+    assert(await page.locator('#activate-button').isDisabled(), `${width}x${height}: IPv6 Activate enabled before explicit endpoint choice`);
+    await chooseEndpoint(page, 'ep-wan2-v6');
+    assert(!(await page.locator('#activate-button').isDisabled()), `${width}x${height}: explicit IPv6 selection did not enable Activate`);
     await page.waitForTimeout(150);
     const manualFamily = await page.locator('#family-segment .active').getAttribute('data-family');
     assert(manualFamily === 'ipv6', `${width}x${height}: refresh logic stole manual IPv6 selection`);
@@ -217,12 +233,14 @@ try {
     await page.close();
   }
 
-  // Dual-stack regression: one click submits two families without any browser-supplied source address.
+  // Dual-stack regression: one explicit pair choice submits two families without any browser-supplied source address.
   const dualPage = await browser.newPage({viewport: {width: 390, height: 844}});
   await dualPage.goto('http://127.0.0.1:8765/', {waitUntil: 'networkidle'});
   await dualPage.waitForSelector('[data-family="dual"]');
   await dualPage.locator('[data-family="dual"]').click();
-  assert(!(await dualPage.locator('#activate-button').isDisabled()), 'dual-stack selection did not enable Activate');
+  assert(await dualPage.locator('#activate-button').isDisabled(), 'dual-stack Activate enabled before explicit endpoint choice');
+  await chooseEndpoint(dualPage, 'dual:ep-wan2-v4:ep-wan2-v6');
+  assert(!(await dualPage.locator('#activate-button').isDisabled()), 'explicit dual-stack selection did not enable Activate');
   const dualRequestPromise = dualPage.waitForRequest((request) => request.url().endsWith('/api/v1/gate/activate') && request.method() === 'POST');
   await dualPage.locator('#activate-button').click();
   const dualBody = (await dualRequestPromise).postDataJSON();
@@ -306,10 +324,8 @@ try {
   await sourcePage.goto('http://127.0.0.1:8765/', {waitUntil: 'domcontentloaded'});
   await fallbackStarted;
   await sourcePage.waitForSelector('#endpoint-picker-trigger');
-  await sourcePage.waitForFunction(() =>
-    document.querySelector('#family-segment .active')?.dataset.family === 'ipv4' &&
-    document.querySelector('#endpoint-select')?.value === 'ep-wan2-v4'
-  );
+  await sourcePage.waitForFunction(() => document.querySelector('#family-segment .active')?.dataset.family === 'ipv4');
+  await chooseEndpoint(sourcePage, 'ep-wan2-v4');
 
   const marker = await sourcePage.evaluate(() => {
     window.__remoteGateNoReloadMarker = `marker-${Math.random()}`;
@@ -323,9 +339,9 @@ try {
     ipv4Source: document.querySelector('#client-ipv4')?.textContent,
   }));
   assert(beforeCandidate.family === 'ipv4', 'missing IPv4 source incorrectly fell back to request IPv6');
-  assert(beforeCandidate.endpoint === 'ep-wan2-v4', 'IPv4 endpoint disappeared while its source was missing');
+  assert(beforeCandidate.endpoint === 'ep-wan2-v4', 'explicit IPv4 endpoint disappeared while its source was missing');
   assert(beforeCandidate.activateDisabled, 'Activate enabled before an IPv4 candidate existed');
-  assert(beforeCandidate.ipv6Disabled, 'disabled IPv6 Gate remained selectable');
+  assert(!beforeCandidate.ipv6Disabled, 'IPv6 family selector was disabled instead of exposing readiness state');
   assert(beforeCandidate.ipv4Source !== '112.96.156.107', 'fixture unexpectedly started with an IPv4 source');
 
   releaseFallback();
@@ -374,7 +390,7 @@ try {
   await observedPage.unrouteAll({behavior: 'ignoreErrors'});
   await observedPage.close();
 
-  console.log(`Browser layout regression passed for ${viewports.length} viewports plus dual-stack, transaction lock, fallback candidate recovery, and observed-source probe suppression.`);
+  console.log(`Browser layout regression passed for ${viewports.length} viewports plus explicit endpoint selection, IPv6 browsing, dual-stack, transaction lock, fallback candidate recovery, and observed-source probe suppression.`);
 } finally {
   await browser.close();
 }
