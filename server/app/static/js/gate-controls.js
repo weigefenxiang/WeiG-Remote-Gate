@@ -51,38 +51,54 @@
     })[0] || null;
   }
 
+  function dualTier(pair) {
+    const direct4 = pair?.ipv4?.reachability === 'direct';
+    const mapped4 = pair?.ipv4?.reachability === 'mapped';
+    const direct6 = pair?.ipv6?.reachability === 'direct';
+    if (pair?.sameWan && direct4 && direct6) return 0;
+    if (pair?.sameWan && mapped4 && direct6) return 1;
+    if (!pair?.sameWan && (direct4 || mapped4) && direct6) return 2;
+    if (pair?.sameWan) return 3;
+    return 4;
+  }
+
   function dualEndpointPairs() {
     const v4 = endpointsFor('ipv4');
     const v6 = endpointsFor('ipv6');
-    const groups = new Map();
-    [...v4, ...v6].forEach((item) => {
-      const key = [item.wan, item.device, item.wireguard].join('|');
-      if (!groups.has(key)) groups.set(key, {wan: item.wan, device: item.device, wireguard: item.wireguard, ipv4: [], ipv6: []});
-      groups.get(key)[item.family].push(item);
-    });
     const pairs = [];
-    groups.forEach((group) => {
-      if (!group.ipv4.length || !group.ipv6.length) return;
-      group.ipv4.sort(endpointCompare);
-      group.ipv6.sort(endpointCompare);
-      const ipv4 = group.ipv4[0];
-      const ipv6 = group.ipv6[0];
-      pairs.push({
-        id: `dual:${ipv4.id}:${ipv6.id}`,
-        wan: group.wan,
-        device: group.device,
-        wireguard: group.wireguard,
+    const seen = new Set();
+    const pushPair = (ipv4, ipv6) => {
+      if (!ipv4 || !ipv6 || ipv4.wireguard !== ipv6.wireguard) return;
+      const id = `dual:${ipv4.id}:${ipv6.id}`;
+      if (seen.has(id)) return;
+      seen.add(id);
+      const sameWan = ipv4.wan === ipv6.wan && ipv4.device === ipv6.device;
+      const pair = {
+        id,
+        wan: sameWan ? ipv4.wan : '',
+        wan4: ipv4.wan,
+        wan6: ipv6.wan,
+        device: sameWan ? ipv4.device : '',
+        device4: ipv4.device,
+        device6: ipv6.device,
+        wireguard: ipv4.wireguard,
+        sameWan,
         ipv4,
         ipv6,
         score: endpointScore(ipv4) + endpointScore(ipv6)
-      });
-    });
-    const preferredV4Wan = preferredIpv4Endpoint()?.wan || '';
-    return pairs.sort((a, b) => {
-      const aSame = preferredV4Wan && a.wan === preferredV4Wan ? 0 : 1;
-      const bSame = preferredV4Wan && b.wan === preferredV4Wan ? 0 : 1;
-      return aSame - bSame || a.score - b.score || String(a.wan).localeCompare(String(b.wan));
-    });
+      };
+      pair.tier = dualTier(pair);
+      pairs.push(pair);
+    };
+
+    v4.forEach((ipv4) => v6.forEach((ipv6) => pushPair(ipv4, ipv6)));
+    return pairs.sort((a, b) =>
+      a.tier - b.tier
+      || a.score - b.score
+      || String(a.wan4).localeCompare(String(b.wan4))
+      || String(a.wan6).localeCompare(String(b.wan6))
+      || String(a.id).localeCompare(String(b.id))
+    );
   }
 
   function preferredSelection(family) {
@@ -99,6 +115,7 @@
   }
 
   function dualProvider(pair) {
+    if (!pair?.sameWan) return 'Split WAN';
     const item = pair?.ipv4;
     if (item?.reachability === 'direct') return 'Direct';
     if (item?.provider === 'natmap' || item?.reachability === 'mapped') return 'NATMap';
@@ -106,10 +123,26 @@
     return 'Private/CGNAT · Try';
   }
 
+  function endpointWansForSelection(family, value) {
+    if (!value) return {ipv4:'', ipv6:''};
+    if (family === 'dual') {
+      const pair = dualEndpointPairs().find((item) => item.id === value);
+      return {ipv4:String(pair?.wan4 || ''), ipv6:String(pair?.wan6 || '')};
+    }
+    const wan = endpointsFor(family).find((item) => item.id === value)?.wan || '';
+    return family === 'ipv6' ? {ipv4:'', ipv6:String(wan)} : {ipv4:String(wan), ipv6:''};
+  }
+
   function endpointWanForSelection(family, value) {
-    if (!value) return '';
-    if (family === 'dual') return dualEndpointPairs().find((pair) => pair.id === value)?.wan || '';
-    return endpointsFor(family).find((item) => item.id === value)?.wan || '';
+    const wans = endpointWansForSelection(family, value);
+    if (family === 'dual') return wans.ipv4 && wans.ipv4 === wans.ipv6 ? wans.ipv4 : '';
+    return family === 'ipv6' ? wans.ipv6 : wans.ipv4;
+  }
+
+  function selectedAccessWans() {
+    const family = context?.state?.family;
+    if (!['ipv4','ipv6','dual'].includes(family)) return {ipv4:'', ipv6:''};
+    return endpointWansForSelection(family, String(endpointSelect()?.value || ''));
   }
 
   function selectedAccessWan() {
@@ -159,12 +192,18 @@
       return;
     }
     if (!context.state.endpointSelections || typeof context.state.endpointSelections !== 'object') context.state.endpointSelections = {};
-    context.state.endpointSelections[family] = {value, wan: endpointWanForSelection(family, value)};
+    const wans = endpointWansForSelection(family, value);
+    context.state.endpointSelections[family] = {
+      value,
+      wan: wans.ipv4 && wans.ipv4 === wans.ipv6 ? wans.ipv4 : endpointWanForSelection(family, value),
+      wan4: wans.ipv4,
+      wan6: wans.ipv6
+    };
     publishEndpointSelection(family);
   }
 
   function restoreEndpointSelection(family = context?.state?.family) {
-    if (!context || !['ipv4','ipv6','dual'].includes(family)) return;
+    if (!context || !['ipv4','ipv6'].includes(family)) return;
     const select = endpointSelect();
     if (!select) return;
     select.disabled = false;
@@ -182,7 +221,7 @@
       if (saved.wan) fallback = options.find((option) => endpointWanForSelection(family, option.value) === saved.wan) || null;
       if (fallback) {
         select.value = fallback.value;
-        context.state.endpointSelections[family] = {value: fallback.value, wan: saved.wan};
+        context.state.endpointSelections[family] = {value: fallback.value, wan: saved.wan, wan4: family === 'ipv4' ? saved.wan : '', wan6: family === 'ipv6' ? saved.wan : ''};
         publishEndpointSelection(family);
         window.RemoteGateEndpointPicker?.sync?.('endpoint-select');
         return;
@@ -201,8 +240,10 @@
     const select = endpointSelect();
     if (!select) return;
     const saved = context.state.endpointSelections?.dual;
-    const prior = endpointSelectionIsManual('dual') ? String(saved?.value || '') : '';
-    const priorWan = endpointSelectionIsManual('dual') ? String(saved?.wan || '') : '';
+    const manual = endpointSelectionIsManual('dual');
+    const prior = manual ? String(saved?.value || '') : '';
+    const priorWan4 = manual ? String(saved?.wan4 || saved?.wan || '') : '';
+    const priorWan6 = manual ? String(saved?.wan6 || saved?.wan || '') : '';
     const pairs = dualEndpointPairs();
     select.replaceChildren();
     select.disabled = false;
@@ -221,16 +262,21 @@
       option.value = pair.id;
       option.dataset.ipv4EndpointId = pair.ipv4.id;
       option.dataset.ipv6EndpointId = pair.ipv6.id;
-      option.textContent = `${pair.wan} · Dual · ${dualProvider(pair)} · ${endpointAddress(pair.ipv4)} + ${endpointAddress(pair.ipv6)}`;
+      option.dataset.ipv4Wan = pair.wan4;
+      option.dataset.ipv6Wan = pair.wan6;
+      option.dataset.splitWan = pair.sameWan ? '0' : '1';
+      option.textContent = pair.sameWan
+        ? `${pair.wan} · Dual · ${dualProvider(pair)} · ${endpointAddress(pair.ipv4)} + ${endpointAddress(pair.ipv6)}`
+        : `Dual · Split WAN · IPv4 ${pair.wan4} ${endpointAddress(pair.ipv4)} + IPv6 ${pair.wan6} ${endpointAddress(pair.ipv6)}`;
       select.append(option);
     });
     const exact = [...select.options].find((option) => option.value === prior);
     if (exact) select.value = exact.value;
-    else if (priorWan) {
-      const pair = pairs.find((item) => item.wan === priorWan);
+    else if (manual && (priorWan4 || priorWan6)) {
+      const pair = pairs.find((item) => item.wan4 === priorWan4 && item.wan6 === priorWan6);
       if (pair) {
         select.value = pair.id;
-        context.state.endpointSelections.dual = {value: pair.id, wan: pair.wan};
+        context.state.endpointSelections.dual = {value: pair.id, wan: pair.sameWan ? pair.wan : '', wan4: pair.wan4, wan6: pair.wan6};
       } else {
         context.state.endpointManualSelections.dual = false;
         delete context.state.endpointSelections.dual;
@@ -241,6 +287,16 @@
     window.RemoteGateEndpointPicker?.sync?.('endpoint-select');
   }
 
+  function wanSupportsEgress(wan, family) {
+    if (!wan?.up) return false;
+    if (family === 'ipv4') return Boolean(wan.default_route_v4);
+    if (family === 'ipv6') {
+      if (!wan.default_route_v6) return false;
+      return (Array.isArray(wan.ipv6) ? wan.ipv6 : []).some((entry) => entry?.kind === 'global' && entry?.address);
+    }
+    return false;
+  }
+
   function egressCandidates() {
     const mode = ['ipv4','ipv6','dual'].includes(context?.state?.family) ? context.state.family : 'ipv4';
     const needs4 = mode === 'ipv4' || mode === 'dual';
@@ -248,16 +304,7 @@
     const wans = Array.isArray(data()?.inventory?.wans) ? data().inventory.wans : [];
     const endpoints = Array.isArray(data()?.endpoints) ? data().endpoints : [];
     return wans
-      .filter((wan) => {
-        if (!wan?.up) return false;
-        if (needs4 && !wan?.default_route_v4) return false;
-        if (needs6 && !wan?.default_route_v6) return false;
-        if (needs6) {
-          const global6 = (Array.isArray(wan.ipv6) ? wan.ipv6 : []).some((entry) => entry?.kind === 'global' && entry?.address);
-          if (!global6) return false;
-        }
-        return true;
-      })
+      .filter((wan) => (!needs4 || wanSupportsEgress(wan, 'ipv4')) && (!needs6 || wanSupportsEgress(wan, 'ipv6')))
       .map((wan) => {
         const direct4 = (Array.isArray(wan.ipv4) ? wan.ipv4 : []).find((entry) => entry?.kind === 'public');
         const observed4 = endpoints.find((item) => item?.wan === wan.name && item?.family === 'ipv4' && item?.provider === 'egress_probe');
@@ -283,6 +330,17 @@
         return {wan, address, kind, familyLabel, score};
       })
       .sort((a, b) => a.score - b.score || String(a.wan.name).localeCompare(String(b.wan.name)));
+  }
+
+  function splitEgressValue(wans) {
+    return wans?.ipv4 && wans?.ipv6 && wans.ipv4 !== wans.ipv6 ? `split:${wans.ipv4}|${wans.ipv6}` : '';
+  }
+
+  function accessEgressValue() {
+    const family = context?.state?.family;
+    const wans = selectedAccessWans();
+    if (family === 'dual') return wans.ipv4 === wans.ipv6 ? wans.ipv4 : splitEgressValue(wans);
+    return family === 'ipv6' ? wans.ipv6 : wans.ipv4;
   }
 
   function ensureEgressControl() {
@@ -321,7 +379,6 @@
     const label = document.querySelector('[data-egress-label]');
     if (label) label.textContent = zh() ? 'Internet 出口' : 'Internet Exit';
     const remembered = String(state.egressSelections?.[family] || '');
-    const accessWan = selectedAccessWan();
     select.replaceChildren();
 
     const local = document.createElement('option');
@@ -338,9 +395,25 @@
       select.append(option);
     });
 
+    if (family === 'dual') {
+      const accessWans = selectedAccessWans();
+      const splitValue = splitEgressValue(accessWans);
+      const inventory = Array.isArray(data()?.inventory?.wans) ? data().inventory.wans : [];
+      const wan4 = inventory.find((wan) => wan?.name === accessWans.ipv4);
+      const wan6 = inventory.find((wan) => wan?.name === accessWans.ipv6);
+      if (splitValue && wanSupportsEgress(wan4, 'ipv4') && wanSupportsEgress(wan6, 'ipv6')) {
+        const option = document.createElement('option');
+        option.value = splitValue;
+        option.dataset.splitEgress = '1';
+        option.textContent = `Dual · Split Exit · IPv4 → ${accessWans.ipv4} · IPv6 → ${accessWans.ipv6}`;
+        select.append(option);
+      }
+    }
+
+    const defaultValue = accessEgressValue();
     const hasOption = (value) => Boolean(value && [...select.options].some((option) => option.value === value));
     if (egressSelectionIsManual(family) && hasOption(remembered)) select.value = remembered;
-    else if (!egressSelectionIsManual(family) && hasOption(accessWan)) select.value = accessWan;
+    else if (!egressSelectionIsManual(family) && hasOption(defaultValue)) select.value = defaultValue;
     else if (egressSelectionIsManual(family) && remembered === '__lan__') select.value = '__lan__';
     else select.value = '__lan__';
     state.egressWan = select.value;
@@ -353,18 +426,51 @@
     window.RemoteGateEndpointPicker?.sync?.('egress-select');
   }
 
-  function selectedEgressWan() {
+  function selectedEgressPlan() {
+    const family = context?.state?.family || 'ipv4';
     const value = String(egressSelect()?.value || context?.state?.egressWan || '__lan__');
-    return value && value !== '__lan__' ? value : '';
+    if (!value || value === '__lan__') return {ipv4:'', ipv6:''};
+    if (family === 'dual' && value.startsWith('split:')) {
+      const parts = value.slice(6).split('|');
+      return {ipv4:String(parts[0] || ''), ipv6:String(parts[1] || '')};
+    }
+    if (family === 'dual') return {ipv4:value, ipv6:value};
+    return family === 'ipv6' ? {ipv4:'', ipv6:value} : {ipv4:value, ipv6:''};
+  }
+
+  function selectedEgressWan() {
+    const plan = selectedEgressPlan();
+    const family = context?.state?.family || 'ipv4';
+    if (family === 'ipv4') return plan.ipv4;
+    if (family === 'ipv6') return plan.ipv6;
+    return plan.ipv4 && plan.ipv4 === plan.ipv6 ? plan.ipv4 : '';
   }
 
   function reportedEgress(currentData = data()) {
     const value = currentData?.agent?.egress;
-    return value && typeof value === 'object' ? value : {active:false,state:'inactive',mode:'',wan:'',detail:'',expires_in:0};
+    return value && typeof value === 'object' ? value : {active:false,state:'inactive',mode:'',wan:'',wan_v4:'',wan_v6:'',detail:'',expires_in:0};
   }
 
-  function egressMatchesSelection(egress, wan, family) {
-    return Boolean(wan && egress && String(egress.wan || '') === wan && String(egress.mode || '') === family);
+  function egressMatchesSelection(egress, plan, family) {
+    if (!egress || !plan) return false;
+    if (family === 'ipv4') return Boolean(plan.ipv4 && String(egress.wan_v4 || egress.wan || '') === plan.ipv4 && String(egress.mode || '') === 'ipv4');
+    if (family === 'ipv6') return Boolean(plan.ipv6 && String(egress.wan_v6 || egress.wan || '') === plan.ipv6 && String(egress.mode || '') === 'ipv6');
+    if (family === 'dual') {
+      return Boolean(
+        plan.ipv4 && plan.ipv6 &&
+        String(egress.mode || '') === 'dual' &&
+        String(egress.wan_v4 || egress.wan || '') === plan.ipv4 &&
+        String(egress.wan_v6 || egress.wan || '') === plan.ipv6
+      );
+    }
+    return false;
+  }
+
+  function egressPlanLabel(plan) {
+    if (!plan?.ipv4 && !plan?.ipv6) return '';
+    if (plan.ipv4 && plan.ipv4 === plan.ipv6) return plan.ipv4;
+    if (plan.ipv4 && plan.ipv6) return `IPv4 ${plan.ipv4} · IPv6 ${plan.ipv6}`;
+    return plan.ipv4 || plan.ipv6 || '';
   }
 
   function sourceFor(family) { return data()?.client_sources?.[family]?.address || ''; }
@@ -411,12 +517,13 @@
     const t = context.t;
     if (family === 'dual') {
       if (!gateCapability('ipv6')) return t('gate.ipv6Unavailable');
-      if (!dualEndpointPairs().length) return zh() ? 'Dual 需要同一 WAN 同时存在可用的 IPv4 与 IPv6 Endpoint。' : 'Dual requires IPv4 and IPv6 endpoints on the same WAN.';
+      if (!dualEndpointPairs().length) return zh() ? 'Dual 需要同一 WireGuard 服务同时存在可用的 IPv4 与 IPv6 Endpoint。' : 'Dual requires available IPv4 and IPv6 endpoints for the same WireGuard service.';
       if (!sourceFor('ipv4') || !sourceFor('ipv6')) return zh() ? 'IPv4 与 IPv6 Source 都就绪后可同时授权。' : 'Both IPv4 and IPv6 sources are required for dual-stack authorization.';
       const selected = selectedDualPair() || dualEndpointPairs()[0];
+      const label = selected?.sameWan ? selected.wan : `IPv4 ${selected?.wan4 || '—'} + IPv6 ${selected?.wan6 || '—'}`;
       return zh()
-        ? `双栈就绪 · IPv4 + IPv6 已识别 · ${selected?.wan || '自动选择最佳 WAN'}`
-        : `Dual stack ready · IPv4 + IPv6 detected · ${selected?.wan || 'best WAN selected automatically'}`;
+        ? `双栈就绪 · IPv4 + IPv6 已识别 · ${label}`
+        : `Dual stack ready · IPv4 + IPv6 detected · ${label}`;
     }
     if (family === 'ipv6' && !gateCapability('ipv6')) return t('gate.ipv6Unavailable');
     const endpoints = endpointsFor(family);
@@ -637,7 +744,7 @@
     const locked = syncTransaction(currentData);
     const pending = currentData?.gate?.queue?.pending, next = currentData?.gate?.queue?.next, last = currentData?.gate?.queue?.last;
     const fw = currentData?.agent?.firewall || {}, active = activeFamilyState(fw, state.family), pendingAction = pending?.action, orb = $('gate-orb');
-    const egress = reportedEgress(currentData), selectedExit = selectedEgressWan(), selectedExitMatches = egressMatchesSelection(egress, selectedExit, state.family);
+    const egress = reportedEgress(currentData), selectedExitPlan = selectedEgressPlan(), selectedExit = egressPlanLabel(selectedExitPlan), selectedExitMatches = egressMatchesSelection(egress, selectedExitPlan, state.family);
     let mode='closed', title=t('gate.closed'), subtitle=t('gate.closedSub'), badge=t('gate.closedBadge');
     if (pendingAction === 'activate' || (locked && lockAction(currentData) === 'activate')) {
       mode='authorizing'; title=t('gate.authorizing');
@@ -669,8 +776,8 @@
           title=t('gate.open');
           const egressTtl=Number(egress.expires_in||0);
           subtitle=zh()
-            ? `Internet 出口 ${egress.wan} · ${String(egress.mode||'').toUpperCase()} · 剩余 ${remaining(egressTtl)}`
-            : `Internet Exit ${egress.wan} · ${String(egress.mode||'').toUpperCase()} · ${remaining(egressTtl)} remaining`;
+            ? `Internet 出口 ${selectedExit} · ${String(egress.mode||'').toUpperCase()} · 剩余 ${remaining(egressTtl)}`
+            : `Internet Exit ${selectedExit} · ${String(egress.mode||'').toUpperCase()} · ${remaining(egressTtl)} remaining`;
           badge='EXIT ACTIVE';
         } else {
           title=zh() ? 'OPEN · 出口未生效' : 'OPEN · EXIT OFF';
@@ -758,6 +865,7 @@
     if (!canActivate()) return;
     rememberEndpointSelection(context.state.family);
     const state=context.state;
+    const egressPlan=selectedEgressPlan();
     const egress_wan=selectedEgressWan();
     if (state.family === 'dual') {
       const pair = selectedDualPair();
@@ -766,6 +874,7 @@
         families:['ipv4','ipv6'],
         endpoint_ids:{ipv4:pair.ipv4.id,ipv6:pair.ipv6.id},
         egress_wan,
+        egress_wans:{ipv4:egressPlan.ipv4,ipv6:egressPlan.ipv6},
         scope:state.scope||'wg',
         ttl:state.ttl
       },'activate');
@@ -810,7 +919,7 @@
     $('ttl-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-ttl]'); if(!button||transactionLocked())return; state.ttl=Number(button.dataset.ttl); $('ttl-segment').querySelectorAll('button').forEach((item)=>{item.classList.toggle('active',item===button);item.setAttribute('aria-pressed',item===button?'true':'false');});});
     $('family-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-family]'); if(!button||transactionLocked()||!['ipv4','ipv6','dual'].includes(button.dataset.family))return;rememberEndpointSelection(state.family);state.familyManual=true;state.family=button.dataset.family;context.onFamilyChange?.(state.family);if(state.family==='dual')syncDualEndpointSelect();else restoreEndpointSelection(state.family);syncEgressSelect();render();});
     $('scope-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-scope]');if(!button||transactionLocked()||!['wg','wg_ping'].includes(button.dataset.scope))return;state.scope=button.dataset.scope;syncScope();});
-    endpointSelect()?.addEventListener('change',()=>{if(transactionLocked())return;const select=endpointSelect();state.endpointManualSelections[state.family]=Boolean(select?.value);if(!select?.value)delete state.endpointSelections[state.family];rememberEndpointSelection(state.family);publishEndpointSelection(state.family);render();});
+    endpointSelect()?.addEventListener('change',()=>{if(transactionLocked())return;const select=endpointSelect();state.endpointManualSelections[state.family]=Boolean(select?.value);if(!select?.value)delete state.endpointSelections[state.family];rememberEndpointSelection(state.family);publishEndpointSelection(state.family);syncEgressSelect();render();});
     egressSelect()?.addEventListener('change',()=>{if(transactionLocked())return;state.egressWan=egressSelect().value||'__lan__';state.egressManualSelections[state.family]=true;render();});
     $('wg-select')?.addEventListener('change',()=>{if(transactionLocked())return;context.onWireGuardChange?.();syncFamily();render();});
     $('activate-button')?.addEventListener('click',activate);
@@ -831,6 +940,7 @@
     dualEndpointPairs,
     egressCandidates,
     selectedEgressWan,
+    selectedEgressPlan,
     reportedEgress,
     egressMatchesSelection,
     endpointSelectionIsManual,
@@ -838,6 +948,7 @@
     restoreEndpointSelection,
     preferredIpv4Endpoint,
     preferredIpv6Endpoint,
-    preferredSelection
+    preferredSelection,
+    selectedAccessWans
   };
 })();
