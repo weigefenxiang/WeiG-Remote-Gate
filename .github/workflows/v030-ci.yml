@@ -75,35 +75,57 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends qemu-user file
 
-      - name: Cross build static mapper classes
+      - name: Cross build all portable mapper classes
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           mkdir -p native/dist
+          : > /tmp/mapper-cross-failures
           while IFS=$'\t' read -r class target cflags validation; do
             [[ -n "$class" && "$class" != \#* ]] || continue
             [[ "$validation" == 'cross-build' ]] || continue
-            echo "Building $class -> $target"
-            ZIG="$PWD/.zig/zig" OUT_DIR="$PWD/native/dist" sh native/build-portable.sh "$class"
+            echo "::group::Build $class -> $target"
+            if ! ZIG="$PWD/.zig/zig" OUT_DIR="$PWD/native/dist" sh native/build-portable.sh "$class"; then
+              echo "build:$class" | tee -a /tmp/mapper-cross-failures
+            fi
+            echo '::endgroup::'
           done < native/mapper-build-classes.tsv
 
-      - name: QEMU smoke portable mapper classes
+      - name: QEMU smoke all built mapper classes
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           while IFS=$'\t' read -r class target cflags validation; do
             [[ -n "$class" && "$class" != \#* ]] || continue
             [[ "$validation" == 'cross-build' ]] || continue
-            sh native/smoke-portable.sh "$class" "native/dist/remote-gate-mapper-$class"
+            binary="native/dist/remote-gate-mapper-$class"
+            [[ -x "$binary" ]] || continue
+            echo "::group::Smoke $class"
+            if ! sh native/smoke-portable.sh "$class" "$binary"; then
+              echo "smoke:$class" | tee -a /tmp/mapper-cross-failures
+            fi
+            echo '::endgroup::'
           done < native/mapper-build-classes.tsv
 
-      - name: Upload mapper cross candidates
+      - name: Upload successful mapper cross candidates
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: remote-gate-mapper-cross-candidates-${{ github.sha }}
           path: native/dist/remote-gate-mapper-*
           if-no-files-found: error
           retention-days: 14
+
+      - name: Enforce complete portable mapper coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -s /tmp/mapper-cross-failures ]]; then
+            echo 'Portable mapper failures:' >&2
+            sort -u /tmp/mapper-cross-failures >&2
+            exit 1
+          fi
+          echo 'All portable mapper classes built and passed architecture smoke tests.'
 
   browser:
     runs-on: ubuntu-latest
