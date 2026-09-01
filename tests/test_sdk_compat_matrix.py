@@ -76,6 +76,8 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
         self.assertIn("workflow_dispatch:", SDK_CI)
         self.assertNotIn("schedule:", SDK_CI)
         self.assertNotIn("push:", SDK_CI)
+        self.assertIn("runs-on: ubuntu-latest", SDK_CI)
+        self.assertNotIn("ubuntu-22.04", SDK_CI)
         self.assertIn("fail-fast: false", SDK_CI)
 
     def test_runner_verifies_hash_and_restricts_hosts(self):
