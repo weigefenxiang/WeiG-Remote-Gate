@@ -119,8 +119,10 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
 
     def test_static_musl_build_id_workaround_is_narrowly_scoped_to_openwrt_1907_x86_64(self):
         self.assertIn("sdk_link_flags=''", RUNNER)
-        self.assertIn("openwrt-19.07.10-x86_64) sdk_link_flags='-Wl,--build-id=sha1'", RUNNER)
+        self.assertIn("openwrt-19.07.*-x86_64) sdk_link_flags='-Wl,--build-id=sha1'", RUNNER)
         self.assertEqual(RUNNER.count("sdk_link_flags='-Wl,--build-id=sha1'"), 1)
+        self.assertNotIn("openwrt-19.07.*-x86-geode) sdk_link_flags='-Wl,--build-id=sha1'", RUNNER)
+        self.assertNotIn("openwrt-19.07.*-armvirt-64) sdk_link_flags='-Wl,--build-id=sha1'", RUNNER)
         self.assertIn('REMOTE_GATE_SDK_LINK_FLAGS="$sdk_link_flags"', RUNNER)
         self.assertIn('$(REMOTE_GATE_SDK_LINK_FLAGS)', PACKAGE)
         self.assertNotIn('--build-id=sha1', PACKAGE)
