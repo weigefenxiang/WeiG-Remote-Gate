@@ -2,6 +2,7 @@ from pathlib import Path
 import os
 import subprocess
 import tempfile
+import time
 import unittest
 
 
@@ -95,19 +96,73 @@ class MappingRuntimeIntegrityTests(unittest.TestCase):
 
     def test_current_mapping_requires_live_owned_mapper_process(self):
         source = MAPPING.read_text(encoding="utf-8")
-        helper = source.split("status_process_current() {", 1)[1].split("stop_key()", 1)[0]
+        helper = source.split("status_process_current() {", 1)[1].split("runtime_status_for_pid()", 1)[0]
+        runtime = source.split("runtime_status_for_pid() {", 1)[1].split("terminate_managed_pid()", 1)[0]
         control = source.split("status_control_tuple() {", 1)[1].split("ingress_pairs()", 1)[0]
         ingress = source.split("ingress_pairs() {", 1)[1].split("ingress_ports()", 1)[0]
         record = source.split("mapping_record() {", 1)[1].split("resolve_current()", 1)[0]
         status = source.split("status_json() {", 1)[1].split('case "${1:-status-json}"', 1)[0]
 
         self.assertIn('owned_pid "$pid" "$status"', helper)
+        self.assertIn('grep -Fqx "$MAPPER_BIN"', runtime)
+        self.assertIn('"$STATE_DIR"/*.status.json', runtime)
         self.assertIn('status_process_current "$status" || return 1', control)
         self.assertIn('status_process_current "$status" || continue', ingress)
         self.assertIn('status_process_current "$status" || return 1', record)
         self.assertIn('active) status_process_current "$status" || continue;', status)
         self.assertIn('prepared) status_process_current "$status" || continue;', status)
         self.assertIn('failed) failed=$((failed + 1))', status)
+
+    def test_stop_all_terminates_orphan_mapper_without_pid_file(self):
+        if not Path("/proc").is_dir():
+            self.skipTest("Linux /proc is required")
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            env = self._environment(base, installer_ok=True)
+            mapper = Path(env["REMOTE_GATE_MAPPER_BIN"])
+            state = Path(env["REMOTE_GATE_MAPPING_STATE_DIR"])
+            status = state / "orphan.status.json"
+            go = state / "orphan.go"
+            mapper.write_text(
+                "#!/bin/sh\n"
+                "trap 'exit 0' TERM INT HUP\n"
+                "while :; do sleep 1; done\n",
+                encoding="utf-8",
+            )
+            mapper.chmod(0o755)
+            proc = subprocess.Popen(
+                [str(mapper), "--status-file", str(status), "--go-file", str(go)],
+                env=env,
+            )
+            try:
+                deadline = time.time() + 2
+                while proc.poll() is None and time.time() < deadline:
+                    if Path(f"/proc/{proc.pid}/cmdline").exists():
+                        break
+                    time.sleep(0.02)
+                self.assertIsNone(proc.poll())
+                self.assertFalse((state / "orphan.pid").exists())
+                subprocess.run(
+                    ["sh", str(MAPPING), "stop-all"],
+                    env=env,
+                    check=True,
+                    timeout=10,
+                )
+                proc.wait(timeout=2)
+            finally:
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=2)
+
+    def test_sync_prepare_cleans_orphans_before_starting_entries(self):
+        source = MAPPING.read_text(encoding="utf-8")
+        sync = source.split("sync_prepare() {", 1)[1].split("status_value()", 1)[0]
+        self.assertIn("cleanup_orphan_runtimes", sync)
+        self.assertLess(sync.index("cleanup_orphan_runtimes"), sync.index("start_entry"))
 
 
 if __name__ == "__main__":
