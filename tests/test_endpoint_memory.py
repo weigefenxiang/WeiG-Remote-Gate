@@ -33,6 +33,15 @@ class EndpointMemoryTests(unittest.TestCase):
         self.assertIn("set egressWan(value)", source)
         self.assertIn("this.egressSelections[this.family] = String(value || '__lan__')", source)
 
+    def test_internet_exit_defaults_to_access_wan_until_user_overrides_it(self):
+        source = GATE.read_text(encoding="utf-8")
+        self.assertIn("function selectedAccessWan()", source)
+        self.assertIn("function egressSelectionIsManual", source)
+        self.assertIn("const accessWan = selectedAccessWan()", source)
+        self.assertIn("!egressSelectionIsManual(family) && hasOption(accessWan)", source)
+        self.assertIn("state.egressManualSelections[state.family]=true", source)
+        self.assertIn("state.egressManualSelections={}", source)
+
 
 if __name__ == "__main__":
     unittest.main()
