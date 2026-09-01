@@ -3,7 +3,8 @@ set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
 RESOLVER="$ROOT/resolve-abi.sh"
-SOURCE="$ROOT/remote-gate-mapper.c"
+SOURCE="$ROOT/remote-gate-mapper-entry.c"
+VERSION_FILE="$ROOT/../VERSION"
 ZIG="${ZIG:-zig}"
 OUT_DIR="${OUT_DIR:-$ROOT/dist}"
 
@@ -14,6 +15,9 @@ OUT_DIR="${OUT_DIR:-$ROOT/dist}"
 
 class="$1"
 case "$class" in ''|*[!A-Za-z0-9_.+-]*) exit 2 ;; esac
+[ -r "$SOURCE" ] && [ -r "$ROOT/remote-gate-mapper.c" ] && [ -r "$VERSION_FILE" ] || exit 1
+version="$(sed -n '1p' "$VERSION_FILE" | tr -d '\r\n')"
+case "$version" in ''|*[!0-9A-Za-z._+-]*) echo "invalid VERSION" >&2; exit 1 ;; esac
 
 class_result="$(sh "$RESOLVER" class "$class" 2>/dev/null)" || {
     echo "unknown mapper build class: $class" >&2
@@ -43,6 +47,7 @@ out="$OUT_DIR/remote-gate-mapper-$class"
 "$ZIG" cc \
     -target "$target" \
     $cflags \
+    -DREMOTE_GATE_VERSION="\"$version\"" \
     -O2 \
     -static \
     -Wall -Wextra -Werror -Wformat=2 -Wshadow -Wconversion -Wstrict-prototypes \

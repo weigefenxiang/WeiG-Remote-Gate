@@ -11,6 +11,7 @@ DEFAULT_RELEASE_BASE="https://github.com/weigefenxiang/WeiG-Remote-Gate/releases
 RELEASE_BASE="${REMOTE_GATE_MAPPER_RELEASE_BASE:-$DEFAULT_RELEASE_BASE}"
 MANIFEST_OVERRIDE="${REMOTE_GATE_MAPPER_MANIFEST_FILE:-}"
 ASSET_DIR_OVERRIDE="${REMOTE_GATE_MAPPER_ASSET_DIR:-}"
+MAPPER_API=1
 
 usage() {
     echo "usage: $0 install-release|install-local <binary>|current|status-json" >&2
@@ -34,10 +35,16 @@ sha_file() {
     command -v sha256sum >/dev/null 2>&1 || return 1
     sha256sum "$1" | awk '{print $1}'
 }
-smoke_binary() {
-    binary="$1"; log="$2"
+identity_binary() {
+    binary="$1"; version="$2"
     [ -f "$binary" ] || return 1
     chmod 0700 "$binary" || return 1
+    identity="$("$binary" --version 2>/dev/null)" || return 1
+    [ "$identity" = "remote-gate-mapper $version api=$MAPPER_API" ]
+}
+smoke_binary() {
+    binary="$1"; version="$2"; log="$3"
+    identity_binary "$binary" "$version" || return 1
     set +e
     "$binary" >"$log" 2>&1
     rc=$?
@@ -50,6 +57,7 @@ write_meta() {
     {
         printf 'schema=1\n'
         printf 'version=%s\n' "$version"
+        printf 'mapper_api=%s\n' "$MAPPER_API"
         printf 'package_abi=%s\n' "$abi"
         printf 'build_class=%s\n' "$class"
         printf 'asset=%s\n' "$asset"
@@ -61,7 +69,7 @@ write_meta() {
 install_candidate() {
     candidate="$1"; version="$2"; abi="$3"; class="$4"; asset="$5"; sha="$6"; source="$7"; work="$8"
     log="$work/smoke.log"
-    smoke_binary "$candidate" "$log" || { echo "mapper target smoke failed for ABI $abi" >&2; return 1; }
+    smoke_binary "$candidate" "$version" "$log" || { echo "mapper target smoke/self-version failed for ABI $abi" >&2; return 1; }
     mkdir -p "$(dirname "$DEST")"
     staged="${DEST}.new.$$"
     staged_meta="${META}.new.$$"
@@ -72,7 +80,28 @@ install_candidate() {
     mv -f "$staged" "$DEST"
     mv -f "$staged_meta" "$META"
     trap - EXIT INT TERM
-    printf 'Mapper installed: version=%s ABI=%s source=%s\n' "$version" "$abi" "$source"
+    printf 'Mapper installed: version=%s ABI=%s api=%s source=%s\n' "$version" "$abi" "$MAPPER_API" "$source"
+}
+
+meta_value() { sed -n "s/^$1=//p" "$META" 2>/dev/null | sed -n '1p'; }
+current() {
+    [ -x "$DEST" ] && [ -r "$META" ] || return 1
+    version="$(read_version)" || return 1
+    abi="$(read_abi)" || return 1
+    [ "$(meta_value schema)" = 1 ] || return 1
+    [ "$(meta_value version)" = "$version" ] || return 1
+    [ "$(meta_value mapper_api)" = "$MAPPER_API" ] || return 1
+    [ "$(meta_value package_abi)" = "$abi" ] || return 1
+    sha="$(meta_value sha256)"
+    printf '%s\n' "$sha" | grep -Eq '^[0-9a-f]{64}$' || return 1
+    [ "$(sha_file "$DEST")" = "$sha" ] || return 1
+    identity_binary "$DEST" "$version"
+}
+quarantine_invalid() {
+    [ -e "$DEST" ] || return 0
+    current && return 0
+    chmod 0644 "$DEST" 2>/dev/null || true
+    return 0
 }
 
 install_release() {
@@ -102,8 +131,9 @@ install_release() {
     grep -Fqx '# schema=1' "$manifest" || { echo "invalid mapper release manifest schema" >&2; return 1; }
     manifest_version="$(sed -n 's/^# version=//p' "$manifest" | sed -n '1p')"
     manifest_tag="$(sed -n 's/^# tag=//p' "$manifest" | sed -n '1p')"
-    [ "$manifest_version" = "$version" ] && [ "$manifest_tag" = "v$version" ] || {
-        echo "mapper release manifest version mismatch" >&2
+    manifest_api="$(sed -n 's/^# mapper_api=//p' "$manifest" | sed -n '1p')"
+    [ "$manifest_version" = "$version" ] && [ "$manifest_tag" = "v$version" ] && [ "$manifest_api" = "$MAPPER_API" ] || {
+        echo "mapper release manifest version/API mismatch" >&2
         return 1
     }
 
@@ -159,26 +189,22 @@ install_local() {
     rm -rf "$work"
 }
 
-meta_value() { sed -n "s/^$1=//p" "$META" 2>/dev/null | sed -n '1p'; }
-current() {
-    [ -x "$DEST" ] && [ -r "$META" ] || return 1
-    version="$(read_version)" || return 1
-    abi="$(read_abi)" || return 1
-    [ "$(meta_value schema)" = 1 ] || return 1
-    [ "$(meta_value version)" = "$version" ] || return 1
-    [ "$(meta_value package_abi)" = "$abi" ] || return 1
-    sha="$(meta_value sha256)"
-    printf '%s\n' "$sha" | grep -Eq '^[0-9a-f]{64}$' || return 1
-    [ "$(sha_file "$DEST")" = "$sha" ]
-}
 status_json() {
     if current; then ready=true; else ready=false; fi
-    printf '{"ready":%s,"version":"%s","package_abi":"%s","source":"%s"}\n' \
-        "$ready" "$(meta_value version)" "$(meta_value package_abi)" "$(meta_value source)"
+    printf '{"ready":%s,"version":"%s","mapper_api":"%s","package_abi":"%s","source":"%s"}\n' \
+        "$ready" "$(meta_value version)" "$(meta_value mapper_api)" "$(meta_value package_abi)" "$(meta_value source)"
 }
 
 case "${1:-}" in
-    install-release) shift; [ "$#" -eq 0 ] || usage; install_release ;;
+    install-release)
+        shift; [ "$#" -eq 0 ] || usage
+        set +e
+        install_release
+        rc=$?
+        set -e
+        [ "$rc" -eq 0 ] || quarantine_invalid
+        exit "$rc"
+        ;;
     install-local) shift; install_local "$@" ;;
     current) shift; [ "$#" -eq 0 ] || usage; current ;;
     status-json) shift; [ "$#" -eq 0 ] || usage; status_json ;;

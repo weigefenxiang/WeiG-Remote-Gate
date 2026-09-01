@@ -5,6 +5,7 @@ ROOT="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
 RESOLVER="$ROOT/resolve-abi.sh"
 PACKAGE_TEMPLATE="$ROOT/openwrt-sdk-package/Makefile"
 SOURCE="$ROOT/remote-gate-mapper.c"
+ENTRY="$ROOT/remote-gate-mapper-entry.c"
 VERSION_FILE="$ROOT/../VERSION"
 
 usage() {
@@ -22,7 +23,7 @@ PACKAGE_DIR="$SDK_ROOT/package/weig-remote-gate-mapper"
 case "$EXPECTED_ABI" in ''|*[!A-Za-z0-9_.+-]*) usage ;; esac
 [ -d "$SDK_ROOT" ] || { echo "SDK root not found: $SDK_ROOT" >&2; exit 1; }
 [ -r "$SDK_ROOT/rules.mk" ] || { echo "not an OpenWrt-family SDK root: $SDK_ROOT" >&2; exit 1; }
-[ -r "$PACKAGE_TEMPLATE" ] && [ -r "$SOURCE" ] && [ -r "$VERSION_FILE" ] || exit 1
+[ -r "$PACKAGE_TEMPLATE" ] && [ -r "$SOURCE" ] && [ -r "$ENTRY" ] && [ -r "$VERSION_FILE" ] || exit 1
 
 resolved="$(sh "$RESOLVER" full "$EXPECTED_ABI" 2>/dev/null)" || {
     echo "unsupported package ABI: $EXPECTED_ABI" >&2
@@ -48,6 +49,7 @@ mkdir -p "$PACKAGE_DIR/src" "$OUT_DIR"
 : > "$PACKAGE_DIR/.weig-remote-gate-owned"
 cp "$PACKAGE_TEMPLATE" "$PACKAGE_DIR/Makefile"
 cp "$SOURCE" "$PACKAGE_DIR/src/remote-gate-mapper.c"
+cp "$ENTRY" "$PACKAGE_DIR/src/remote-gate-mapper-entry.c"
 printf '%s\n' "$version" > "$PACKAGE_DIR/VERSION"
 
 cleanup() {

@@ -26,6 +26,17 @@ def abi_rows():
     return rows
 
 
+def fake_mapper(path: Path, version: str = "0.3.17"):
+    path.write_text(
+        "#!/bin/sh\n"
+        f"if [ \"${{1:-}}\" = --version ]; then echo 'remote-gate-mapper {version} api=1'; exit 0; fi\n"
+        "echo usage: fake >&2\n"
+        "exit 2\n",
+        encoding="utf-8",
+    )
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+
 class MapperReleaseDeliveryTests(unittest.TestCase):
     def test_release_builder_emits_only_exact_portable_abis(self):
         with tempfile.TemporaryDirectory() as td:
@@ -34,9 +45,7 @@ class MapperReleaseDeliveryTests(unittest.TestCase):
             out = root / "release"
             classes.mkdir()
             for build_class in {row[1] for row in abi_rows() if row[2] == "cross-candidate"}:
-                binary = classes / f"remote-gate-mapper-{build_class}"
-                binary.write_text("#!/bin/sh\necho usage: fake >&2\nexit 2\n", encoding="utf-8")
-                binary.chmod(binary.stat().st_mode | stat.S_IXUSR)
+                fake_mapper(classes / f"remote-gate-mapper-{build_class}")
             env = os.environ.copy()
             env["REMOTE_GATE_RELEASE_COMMIT"] = "a" * 40
             subprocess.run(["sh", str(BUILDER), str(classes), str(out)], check=True, env=env)
@@ -44,6 +53,7 @@ class MapperReleaseDeliveryTests(unittest.TestCase):
             manifest = (out / "remote-gate-mapper-manifest.tsv").read_text(encoding="utf-8")
             self.assertIn("# schema=1", manifest)
             self.assertIn("# version=0.3.17", manifest)
+            self.assertIn("# mapper_api=1", manifest)
             data = [line.split("\t") for line in manifest.splitlines() if line and not line.startswith("#")]
             expected = {row[0] for row in abi_rows() if row[2] == "cross-candidate"}
             self.assertEqual({row[0] for row in data}, expected)
@@ -53,7 +63,7 @@ class MapperReleaseDeliveryTests(unittest.TestCase):
                 payload = (out / asset).read_bytes()
                 self.assertEqual(hashlib.sha256(payload).hexdigest(), sha256, abi)
 
-    def test_router_installer_exact_abi_hash_smoke_and_atomic_install(self):
+    def test_router_installer_exact_abi_hash_identity_and_atomic_install(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             lib = root / "lib"
@@ -64,12 +74,11 @@ class MapperReleaseDeliveryTests(unittest.TestCase):
             platform = lib / "remote-gate-platform.sh"
             platform.write_text("#!/bin/sh\n[ \"$1\" = mapper-abi ] && { echo x86_64; exit 0; }\nexit 1\n", encoding="utf-8")
             mapper = assets / "remote-gate-mapper-x86_64"
-            mapper.write_text("#!/bin/sh\necho usage: fake >&2\nexit 2\n", encoding="utf-8")
-            mapper.chmod(0o755)
+            fake_mapper(mapper)
             digest = hashlib.sha256(mapper.read_bytes()).hexdigest()
             manifest = root / "manifest.tsv"
             manifest.write_text(
-                "# schema=1\n# version=0.3.17\n# tag=v0.3.17\n# commit=" + "a" * 40 + "\n"
+                "# schema=1\n# version=0.3.17\n# tag=v0.3.17\n# mapper_api=1\n# commit=" + "a" * 40 + "\n"
                 "# package_abi\tbuild_class\tasset\tsha256\tstatus\n"
                 f"x86_64\tx86_64\t{mapper.name}\t{digest}\treleased\n",
                 encoding="utf-8",
@@ -89,6 +98,7 @@ class MapperReleaseDeliveryTests(unittest.TestCase):
             self.assertEqual(dest.read_bytes(), mapper.read_bytes())
             meta = (lib / "remote-gate-mapper.meta").read_text(encoding="utf-8")
             self.assertIn("version=0.3.17", meta)
+            self.assertIn("mapper_api=1", meta)
             self.assertIn("package_abi=x86_64", meta)
             self.assertIn("source=released", meta)
             subprocess.run(["sh", str(INSTALLER), "current"], check=True, env=env)
@@ -98,6 +108,41 @@ class MapperReleaseDeliveryTests(unittest.TestCase):
             result = subprocess.run(["sh", str(INSTALLER), "install-release"], env=env)
             self.assertNotEqual(result.returncode, 0)
             self.assertEqual(dest.read_bytes(), old)
+            self.assertTrue(os.access(dest, os.X_OK), "a still-current mapper must not be quarantined on manifest failure")
+
+    def test_stale_or_wrong_self_version_is_quarantined(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            lib = root / "lib"
+            assets = root / "assets"
+            lib.mkdir(); assets.mkdir()
+            (lib / "VERSION").write_text("0.3.17\n", encoding="utf-8")
+            platform = lib / "remote-gate-platform.sh"
+            platform.write_text("#!/bin/sh\n[ \"$1\" = mapper-abi ] && { echo x86_64; exit 0; }\nexit 1\n", encoding="utf-8")
+            dest = lib / "remote-gate-mapper"
+            fake_mapper(dest, version="0.3.16")
+            digest = hashlib.sha256(dest.read_bytes()).hexdigest()
+            (lib / "remote-gate-mapper.meta").write_text(
+                "schema=1\nversion=0.3.17\nmapper_api=1\npackage_abi=x86_64\nbuild_class=x86_64\n"
+                f"asset=old\nsha256={digest}\nsource=released\n",
+                encoding="utf-8",
+            )
+            manifest = root / "manifest.tsv"
+            manifest.write_text("# schema=1\n# version=0.3.17\n# tag=v0.3.17\n# mapper_api=1\n", encoding="utf-8")
+            env = os.environ.copy()
+            env.update({
+                "REMOTE_GATE_LIB_DIR": str(lib),
+                "REMOTE_GATE_PLATFORM": str(platform),
+                "REMOTE_GATE_VERSION_FILE": str(lib / "VERSION"),
+                "REMOTE_GATE_MAPPER_DEST": str(dest),
+                "REMOTE_GATE_MAPPER_META": str(lib / "remote-gate-mapper.meta"),
+                "REMOTE_GATE_MAPPER_MANIFEST_FILE": str(manifest),
+                "REMOTE_GATE_MAPPER_ASSET_DIR": str(assets),
+            })
+            result = subprocess.run(["sh", str(INSTALLER), "install-release"], env=env)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(os.access(dest, os.X_OK))
+            self.assertNotEqual(subprocess.run(["sh", str(INSTALLER), "current"], env=env).returncode, 0)
 
     def test_release_workflow_is_main_tip_tag_only_and_manifest_is_last(self):
         self.assertIn("tags:", RELEASE_CI)
@@ -119,9 +164,11 @@ class MapperReleaseDeliveryTests(unittest.TestCase):
         self.assertIn('sh "$PLATFORM" mapper-abi', helper)
         self.assertNotIn('uname -m', helper)
         self.assertIn('sha256sum', helper)
-        self.assertIn('status="$4"', helper)
+        self.assertIn('identity_binary', helper)
+        self.assertIn('mapper_api', helper)
         self.assertIn('[ "$status" = released ]', helper)
         self.assertIn('mv -f "$staged" "$DEST"', helper)
+        self.assertIn('quarantine_invalid', helper)
 
 
 if __name__ == "__main__":

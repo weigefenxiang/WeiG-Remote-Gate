@@ -7,6 +7,7 @@ VERSION_FILE="$ROOT/../VERSION"
 CLASS_DIR="${1:-$ROOT/dist}"
 OUT_DIR="${2:-$ROOT/release}"
 RELEASE_COMMIT="${REMOTE_GATE_RELEASE_COMMIT:-unknown}"
+MAPPER_API=1
 
 [ -r "$ABI_MAP" ] && [ -r "$VERSION_FILE" ] || exit 1
 version="$(sed -n '1p' "$VERSION_FILE" | tr -d '\r\n')"
@@ -21,6 +22,7 @@ manifest="$OUT_DIR/remote-gate-mapper-manifest.tsv"
     printf '# schema=1\n'
     printf '# version=%s\n' "$version"
     printf '# tag=v%s\n' "$version"
+    printf '# mapper_api=%s\n' "$MAPPER_API"
     printf '# commit=%s\n' "$RELEASE_COMMIT"
     printf '# package_abi\tbuild_class\tasset\tsha256\tstatus\n'
 } > "$manifest"
@@ -45,5 +47,6 @@ done < "$ABI_MAP"
 [ "$count" -gt 0 ] || { echo "release manifest contains no mapper assets" >&2; exit 1; }
 chmod 0644 "$manifest"
 printf 'release_version=%s\n' "$version"
+printf 'mapper_api=%s\n' "$MAPPER_API"
 printf 'release_assets=%s\n' "$count"
 printf '%s\n' "$manifest"

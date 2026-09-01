@@ -4,6 +4,7 @@ set -eu
 ROOT="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
 MATRIX="${REMOTE_GATE_SDK_COMPAT_MATRIX:-$ROOT/sdk-compat-matrix.tsv}"
 BUILDER="$ROOT/build-openwrt-sdk.sh"
+VERSION_FILE="$ROOT/../VERSION"
 OUT_DIR="${2:-$ROOT/dist-sdk}"
 
 [ "$#" -ge 1 ] && [ "$#" -le 2 ] || {
@@ -13,7 +14,9 @@ OUT_DIR="${2:-$ROOT/dist-sdk}"
 
 sample="$1"
 case "$sample" in ''|*[!A-Za-z0-9_.+-]*) exit 2 ;; esac
-[ -r "$MATRIX" ] && [ -r "$BUILDER" ] || exit 1
+[ -r "$MATRIX" ] && [ -r "$BUILDER" ] && [ -r "$VERSION_FILE" ] || exit 1
+version="$(sed -n '1p' "$VERSION_FILE" | tr -d '\r\n')"
+case "$version" in ''|*[!0-9A-Za-z._+-]*) exit 1 ;; esac
 
 row="$(awk -F '\t' -v wanted="$sample" '
     $0 !~ /^#/ && NF == 8 && $1 == wanted {
@@ -89,6 +92,11 @@ if [ "$abi" = x86_64 ] && [ "$(uname -m 2>/dev/null || true)" = x86_64 ]; then
     cat "$log"
     [ "$status" -eq 2 ] || { echo "SDK mapper host smoke returned $status instead of 2" >&2; exit 1; }
     grep -q '^usage:' "$log" || { echo "SDK mapper host smoke did not print usage" >&2; exit 1; }
+    identity="$("$binary" --version 2>/dev/null)" || { echo "SDK mapper self-version failed" >&2; exit 1; }
+    [ "$identity" = "remote-gate-mapper $version api=1" ] || {
+        echo "SDK mapper self-version mismatch: $identity" >&2
+        exit 1
+    }
 fi
 
 printf 'SDK compatibility sample passed: %s\n' "$sample"
