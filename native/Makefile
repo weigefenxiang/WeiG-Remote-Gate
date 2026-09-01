@@ -18,7 +18,7 @@ $(TARGET): $(ENTRY) $(CORE) ../VERSION
 
 check: $(TARGET)
 	./$(TARGET) >/dev/null 2>&1; test $$? -eq 2
-	test "$$($(TARGET) --version)" = "remote-gate-mapper $(VERSION) api=1"
+	test "$$(./$(TARGET) --version)" = "remote-gate-mapper $(VERSION) api=1"
 
 clean:
 	rm -f $(TARGET)
