@@ -122,6 +122,56 @@ def _clean_fw_family(value: object, family: str) -> dict:
     return result
 
 
+def _clean_network(value: object, version: int) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        network = ipaddress.ip_network(text, strict=False)
+    except ValueError:
+        return ""
+    return str(network) if network.version == version else ""
+
+
+def _clean_egress(value: object) -> dict:
+    item = value if isinstance(value, dict) else {}
+    state = str(item.get("state") or "inactive").strip()
+    if state not in {"inactive", "active", "failed"}:
+        state = "inactive"
+    mode = str(item.get("mode") or "").strip()
+    if mode not in {"", "ipv4", "ipv6", "dual"}:
+        mode = ""
+    wan = str(item.get("wan") or "").strip()
+    if wan and not NAME_RE.fullmatch(wan):
+        wan = ""
+    device = str(item.get("device") or "").strip()
+    if device and not DEVICE_RE.fullmatch(device):
+        device = ""
+    wg = str(item.get("wg") or "").strip()
+    if wg and not NAME_RE.fullmatch(wg):
+        wg = ""
+    try:
+        expires = max(0, int(item.get("expires_in", 0) or 0))
+    except (TypeError, ValueError):
+        expires = 0
+    detail = re.sub(r"[^A-Za-z0-9 ._:/(),+\-]", "_", str(item.get("detail") or ""))[:200]
+    active = bool(item.get("active", False)) and state == "active"
+    if state == "active" and not active:
+        state = "inactive"
+    return {
+        "active": active,
+        "state": state,
+        "mode": mode,
+        "wan": wan,
+        "device": device,
+        "wg": wg,
+        "ipv4_subnet": _clean_network(item.get("ipv4_subnet"), 4),
+        "ipv6_subnet": _clean_network(item.get("ipv6_subnet"), 6),
+        "detail": detail,
+        "expires_in": expires,
+    }
+
+
 def _sanitize_inventory(data: dict) -> dict:
     return validate_inventory_v2(data)
 
@@ -221,10 +271,11 @@ class Handler(BaseHandler):
             if not any(x["active"] for x in families.values()) and bool(firewall.get("active", False)):
                 old_family = str(firewall.get("family", ""))
                 if old_family in families: families[old_family] = _clean_fw_family(firewall, old_family)
+            egress = _clean_egress(data.get("egress"))
             transport = data.get("transport", {}) if isinstance(data.get("transport"), dict) else {}
         except (ValueError, TypeError): self._json(400, {"error": "invalid_status"}); return
         active = [x for x in families.values() if x["active"]]; primary = active[0] if active else {}
-        STORE.write("agent-status.json", {"schema": schema, "reported_at": int(time.time()), "wireguard": clean_wg, "firewall": {"backend": str(firewall.get("backend", ""))[:32], "ready": bool(firewall.get("ready", False)), "ipv6_capable": bool(firewall.get("ipv6_capable", False)), "active": bool(active), "family": str(primary.get("family", "")), "scope": str(primary.get("scope", "")), "expires_in": int(primary.get("expires_in", 0) or 0), "source_ip": str(primary.get("source_ip", "")), "device": str(primary.get("device", "")), "wg_port": int(primary.get("wg_port", 0) or 0), "families": families, "protected_devices_v4": max(0, int(firewall.get("protected_devices_v4", firewall.get("protected_devices", 0)) or 0)), "protected_devices_v6": max(0, int(firewall.get("protected_devices_v6", 0) or 0)), "protected_ports": max(0, int(firewall.get("protected_ports", 0) or 0))}, "transport": {"active_family": str(transport.get("active_family", ""))[:8], "active_device": str(transport.get("active_device", ""))[:128], "healthy": bool(transport.get("healthy", False)), "last_ok_at": max(0, int(transport.get("last_ok_at", 0) or 0))}})
+        STORE.write("agent-status.json", {"schema": schema, "reported_at": int(time.time()), "wireguard": clean_wg, "firewall": {"backend": str(firewall.get("backend", ""))[:32], "ready": bool(firewall.get("ready", False)), "ipv6_capable": bool(firewall.get("ipv6_capable", False)), "active": bool(active), "family": str(primary.get("family", "")), "scope": str(primary.get("scope", "")), "expires_in": int(primary.get("expires_in", 0) or 0), "source_ip": str(primary.get("source_ip", "")), "device": str(primary.get("device", "")), "wg_port": int(primary.get("wg_port", 0) or 0), "families": families, "protected_devices_v4": max(0, int(firewall.get("protected_devices_v4", firewall.get("protected_devices", 0)) or 0)), "protected_devices_v6": max(0, int(firewall.get("protected_devices_v6", 0) or 0)), "protected_ports": max(0, int(firewall.get("protected_ports", 0) or 0))}, "egress": egress, "transport": {"active_family": str(transport.get("active_family", ""))[:8], "active_device": str(transport.get("active_device", ""))[:128], "healthy": bool(transport.get("healthy", False)), "last_ok_at": max(0, int(transport.get("last_ok_at", 0) or 0))}})
         self._empty(204)
 
     def do_POST(self) -> None:
