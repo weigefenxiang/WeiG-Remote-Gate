@@ -38,6 +38,17 @@ class DualEgressRuntimeContractTests(unittest.TestCase):
         self.assertIn('Persistent UCI egress rules: no', source)
         self.assertIn('AllowedIPs = 0.0.0.0/0, ::/0', source)
 
+    def test_selected_wan_policy_route_change_clears_egress(self):
+        source = HELPER.read_text(encoding="utf-8")
+        self.assertIn('egress_policy_route_current()', source)
+        self.assertIn('interface_up "$wan" || return 1', source)
+        self.assertIn('[ "$current_dev" = "$saved_dev" ] || return 1', source)
+        self.assertIn('route show default dev "$current_dev"', source)
+        self.assertIn('route show table "$table" default dev "$current_dev"', source)
+        self.assertIn('egress_policy_route_current -4 "$wan4" "$saved_dev4" "${ROUTE_TABLE4:-}"', source)
+        self.assertIn('egress_policy_route_current -6 "$wan6" "$saved_dev6" "${ROUTE_TABLE6:-}"', source)
+        self.assertIn('WireGuard egress WAN or policy route changed and was cleared', source)
+
     def test_failed_egress_state_survives_refresh_but_not_close(self):
         helper = HELPER.read_text(encoding="utf-8")
         agent = AGENT.read_text(encoding="utf-8")
