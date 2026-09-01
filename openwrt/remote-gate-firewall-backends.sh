@@ -9,6 +9,7 @@ set weig_remote_gate_protected_ifname_v4 { type ifname; }
 set weig_remote_gate_protected_ifname_v6 { type ifname; }
 set weig_remote_gate_protected_udp_port { type inet_service; }
 set weig_remote_gate_mapped_ingress_v4 { type ifname . inet_service; }
+set weig_remote_gate_mapped_control_v4 { type ifname . inet_service . ipv4_addr . inet_service; }
 
 set weig_remote_gate_auth_ipv4 { type ipv4_addr; flags timeout; }
 set weig_remote_gate_auth_ipv6 { type ipv6_addr; flags timeout; }
@@ -31,6 +32,7 @@ iifname @weig_remote_gate_verify_ifname_v4 ip saddr @weig_remote_gate_verify_ipv
 iifname @weig_remote_gate_auth_ping_ifname_v4 ip saddr @weig_remote_gate_auth_ipv4 icmp type echo-request counter accept comment "!WeiG Remote Gate: authorized IPv4 ICMP"
 iifname @weig_remote_gate_protected_ifname_v4 icmp type echo-request counter drop comment "!WeiG Remote Gate: protected IPv4 ICMP"
 iifname @weig_remote_gate_auth_ifname_v4 ip saddr @weig_remote_gate_auth_ipv4 udp dport @weig_remote_gate_auth_udp_port_v4 counter accept comment "!WeiG Remote Gate: authorized IPv4 ingress"
+iifname . udp dport . ip saddr . udp sport @weig_remote_gate_mapped_control_v4 counter accept comment "!WeiG Remote Gate: mapped STUN control"
 iifname . udp dport @weig_remote_gate_mapped_ingress_v4 counter drop comment "!WeiG Remote Gate: protected IPv4 mapped ingress"
 iifname @weig_remote_gate_protected_ifname_v4 udp dport @weig_remote_gate_protected_udp_port counter drop comment "!WeiG Remote Gate: protected IPv4 WireGuard"
 
@@ -182,6 +184,20 @@ fw3_load_auth() {
     "$rg_cmd" -A "$rg_chain" -i "$rg_dev" -p udp --dport "$rg_port" -m set --match-set "$rg_set" src -j ACCEPT
 }
 
+fw3_load_mapped_control_v4() {
+    local rg_control rg_dev rg_ingress rg_stun_ip rg_stun_port rg_rest
+    [ -r "$MAPPED_CONTROL_V4_FILE" ] || return 0
+    while IFS= read -r rg_control; do
+        [ -n "$rg_control" ] || continue
+        rg_dev="${rg_control%%|*}"; rg_rest="${rg_control#*|}"
+        rg_ingress="${rg_rest%%|*}"; rg_rest="${rg_rest#*|}"
+        rg_stun_ip="${rg_rest%%|*}"; rg_stun_port="${rg_rest#*|}"
+        valid_device "$rg_dev" && valid_port "$rg_ingress" && valid_ipv4 "$rg_stun_ip" && valid_port "$rg_stun_port" || continue
+        grep -Fqx "${rg_dev}|${rg_ingress}" "$MAPPED_INGRESS_V4_FILE" 2>/dev/null || continue
+        iptables -A "$FW3_CHAIN_V4" -i "$rg_dev" -p udp -s "$rg_stun_ip" --sport "$rg_stun_port" --dport "$rg_ingress" -j ACCEPT
+    done < "$MAPPED_CONTROL_V4_FILE"
+}
+
 fw3_load_mapped_drops_v4() {
     local rg_pair rg_dev rg_port
     [ -r "$MAPPED_INGRESS_V4_FILE" ] || return 0
@@ -199,6 +215,7 @@ fw3_rebuild_v4() {
     fw3_remove_jump_v4; iptables -F "$FW3_CHAIN_V4"; iptables -I INPUT 1 -j "$FW3_CHAIN_V4"
     ipset flush "$FW3_AUTH_SET_V4" >/dev/null 2>&1 || true; ipset flush "$FW3_VERIFY_SET_V4" >/dev/null 2>&1 || true
     fw3_load_verify ipv4; fw3_load_auth ipv4
+    fw3_load_mapped_control_v4
     fw3_load_mapped_drops_v4
     while IFS= read -r rg_dev; do
         [ -n "$rg_dev" ] || continue; valid_device "$rg_dev" || continue
@@ -263,6 +280,21 @@ add element inet fw4 weig_remote_gate_mapped_ingress_v4 { "$rg_dev" . $rg_port }
 EOF2
     done < "$MAPPED_INGRESS_V4_FILE"
 }
+fw4_add_mapped_control() {
+    local rg_control rg_dev rg_ingress rg_stun_ip rg_stun_port rg_rest
+    [ -r "$MAPPED_CONTROL_V4_FILE" ] || return 0
+    while IFS= read -r rg_control; do
+        [ -n "$rg_control" ] || continue
+        rg_dev="${rg_control%%|*}"; rg_rest="${rg_control#*|}"
+        rg_ingress="${rg_rest%%|*}"; rg_rest="${rg_rest#*|}"
+        rg_stun_ip="${rg_rest%%|*}"; rg_stun_port="${rg_rest#*|}"
+        valid_device "$rg_dev" && valid_port "$rg_ingress" && valid_ipv4 "$rg_stun_ip" && valid_port "$rg_stun_port" || continue
+        grep -Fqx "${rg_dev}|${rg_ingress}" "$MAPPED_INGRESS_V4_FILE" 2>/dev/null || continue
+        nft -f - <<EOF2
+add element inet fw4 weig_remote_gate_mapped_control_v4 { "$rg_dev" . $rg_ingress . $rg_stun_ip . $rg_stun_port }
+EOF2
+    done < "$MAPPED_CONTROL_V4_FILE"
+}
 fw4_load_family() {
     local rg_family="$1" rg_record rg_records rg_ip rg_dev rg_port rg_expires rg_remaining rg_meta rg_scope rg_auth_set rg_auth_if rg_ping_if rg_auth_port rg_verify_set rg_verify_if rg_verify_port rg_source rg_mode rg_network
     if [ "$rg_family" = ipv4 ]; then rg_auth_set=weig_remote_gate_auth_ipv4; rg_auth_if=weig_remote_gate_auth_ifname_v4; rg_ping_if=weig_remote_gate_auth_ping_ifname_v4; rg_auth_port=weig_remote_gate_auth_udp_port_v4; rg_verify_set=weig_remote_gate_verify_ipv4; rg_verify_if=weig_remote_gate_verify_ifname_v4; rg_verify_port=weig_remote_gate_verify_udp_port_v4; else rg_auth_set=weig_remote_gate_auth_ipv6; rg_auth_if=weig_remote_gate_auth_ifname_v6; rg_ping_if=weig_remote_gate_auth_ping_ifname_v6; rg_auth_port=weig_remote_gate_auth_udp_port_v6; rg_verify_set=weig_remote_gate_verify_ipv6; rg_verify_if=weig_remote_gate_verify_ifname_v6; rg_verify_port=weig_remote_gate_verify_udp_port_v6; fi
@@ -300,11 +332,12 @@ EOF2
 fw4_restore_sets() {
     local rg_s
     nft list set inet fw4 weig_remote_gate_protected_ifname_v4 >/dev/null 2>&1 || return 1
-    for rg_s in weig_remote_gate_protected_ifname_v4 weig_remote_gate_protected_ifname_v6 weig_remote_gate_protected_udp_port weig_remote_gate_mapped_ingress_v4 weig_remote_gate_auth_ipv4 weig_remote_gate_auth_ipv6 weig_remote_gate_auth_ifname_v4 weig_remote_gate_auth_ifname_v6 weig_remote_gate_auth_ping_ifname_v4 weig_remote_gate_auth_ping_ifname_v6 weig_remote_gate_auth_udp_port_v4 weig_remote_gate_auth_udp_port_v6 weig_remote_gate_verify_ipv4 weig_remote_gate_verify_ipv6 weig_remote_gate_verify_ifname_v4 weig_remote_gate_verify_ifname_v6 weig_remote_gate_verify_udp_port_v4 weig_remote_gate_verify_udp_port_v6; do fw4_flush_set "$rg_s"; done
+    for rg_s in weig_remote_gate_protected_ifname_v4 weig_remote_gate_protected_ifname_v6 weig_remote_gate_protected_udp_port weig_remote_gate_mapped_ingress_v4 weig_remote_gate_mapped_control_v4 weig_remote_gate_auth_ipv4 weig_remote_gate_auth_ipv6 weig_remote_gate_auth_ifname_v4 weig_remote_gate_auth_ifname_v6 weig_remote_gate_auth_ping_ifname_v4 weig_remote_gate_auth_ping_ifname_v6 weig_remote_gate_auth_udp_port_v4 weig_remote_gate_auth_udp_port_v6 weig_remote_gate_verify_ipv4 weig_remote_gate_verify_ipv6 weig_remote_gate_verify_ifname_v4 weig_remote_gate_verify_ifname_v6 weig_remote_gate_verify_udp_port_v4 weig_remote_gate_verify_udp_port_v6; do fw4_flush_set "$rg_s"; done
     fw4_add_lines weig_remote_gate_protected_ifname_v4 "$DEVICES_V4_FILE" ifname
     fw4_add_lines weig_remote_gate_protected_ifname_v6 "$DEVICES_V6_FILE" ifname
     fw4_add_lines weig_remote_gate_protected_udp_port "$PORTS_FILE" port
     fw4_add_mapped_pairs
+    fw4_add_mapped_control
     reconcile_policy
     fw4_load_family ipv4; fw4_load_family ipv6
 }
@@ -324,7 +357,7 @@ install_rules() {
 }
 
 normalize_list_to_file() {
-    local rg_input="$1" rg_kind="$2" rg_out="$3" rg_tmp rg_value
+    local rg_input="$1" rg_kind="$2" rg_out="$3" rg_tmp rg_value rg_dev rg_port rg_rest rg_stun_ip rg_stun_port rg_oldifs
     rg_tmp="${rg_out}.tmp.$$"; : > "$rg_tmp"
     for rg_value in $rg_input; do
         case "$rg_kind" in
@@ -335,6 +368,14 @@ normalize_list_to_file() {
                 [ "$rg_dev" != "$rg_value" ] && valid_device "$rg_dev" && valid_port "$rg_port" || fail "invalid mapped ingress pair: $rg_value"
                 rg_value="${rg_dev}|${rg_port}"
                 ;;
+            mapped_control)
+                rg_oldifs="$IFS"; IFS='|'; set -- $rg_value; IFS="$rg_oldifs"
+                [ "$#" -eq 4 ] || fail "invalid mapped control tuple: $rg_value"
+                rg_dev="$1"; rg_port="$2"; rg_stun_ip="$3"; rg_stun_port="$4"
+                valid_device "$rg_dev" && valid_port "$rg_port" && valid_ipv4 "$rg_stun_ip" && valid_port "$rg_stun_port" || fail "invalid mapped control tuple: $rg_value"
+                grep -Fqx "${rg_dev}|${rg_port}" "$MAPPED_INGRESS_V4_FILE" 2>/dev/null || fail "mapped control tuple has no protected ingress: $rg_value"
+                rg_value="${rg_dev}|${rg_port}|${rg_stun_ip}|${rg_stun_port}"
+                ;;
             *) fail "invalid protected-list kind" ;;
         esac
         printf '%s\n' "$rg_value" >> "$rg_tmp"
@@ -343,17 +384,19 @@ normalize_list_to_file() {
 }
 sync_policy() {
     ensure_state
-    local rg_v4 rg_v6 rg_ports rg_mapped=""
+    local rg_v4 rg_v6 rg_ports rg_mapped="" rg_control=""
     case "$#" in
         2) rg_v4="$1"; rg_v6=""; rg_ports="$2" ;;
         3) rg_v4="$1"; rg_v6="$2"; rg_ports="$3" ;;
         4) rg_v4="$1"; rg_v6="$2"; rg_ports="$3"; rg_mapped="$4" ;;
-        *) fail "usage: $0 sync <ipv4-devices> [ipv6-devices] <wireguard-udp-ports> [mapped-ipv4-device-port-pairs]" ;;
+        5) rg_v4="$1"; rg_v6="$2"; rg_ports="$3"; rg_mapped="$4"; rg_control="$5" ;;
+        *) fail "usage: $0 sync <ipv4-devices> [ipv6-devices] <wireguard-udp-ports> [mapped-ipv4-device-port-pairs] [mapped-stun-control-tuples]" ;;
     esac
     if [ -n "$rg_v6" ] && [ "$(backend 2>/dev/null || true)" = fw3-iptables ] && ! fw3_ipv6_capable; then fail "IPv6 Gate requested but ip6tables/ipset inet6 support is unavailable"; fi
     normalize_list_to_file "$rg_v4" device "$DEVICES_V4_FILE"
     normalize_list_to_file "$rg_v6" device "$DEVICES_V6_FILE"
     normalize_list_to_file "$rg_ports" port "$PORTS_FILE"
     normalize_list_to_file "$rg_mapped" mapped_pair "$MAPPED_INGRESS_V4_FILE"
+    normalize_list_to_file "$rg_control" mapped_control "$MAPPED_CONTROL_V4_FILE"
     restore_rules
 }
