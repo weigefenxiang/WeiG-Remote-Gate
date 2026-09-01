@@ -98,8 +98,10 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
         self.assertNotIn("eval ", RUNNER)
 
     def test_python2_prerequisite_override_is_narrowly_scoped_to_openwrt_1907(self):
-        self.assertIn('openwrt-19.07.10-*) sdk_force_prereq=1', RUNNER)
-        self.assertEqual(RUNNER.count('openwrt-19.07.10-*) sdk_force_prereq=1'), 1)
+        self.assertIn('openwrt-19.07.*-*) sdk_force_prereq=1', RUNNER)
+        self.assertEqual(RUNNER.count('openwrt-19.07.*-*) sdk_force_prereq=1'), 1)
+        self.assertNotIn('openwrt-19.08.*-*) sdk_force_prereq=1', RUNNER)
+        self.assertNotIn('openwrt-21.*-*) sdk_force_prereq=1', RUNNER)
         self.assertIn('sdk_force_prereq=0', RUNNER)
         self.assertIn('REMOTE_GATE_SDK_FORCE_PREREQ="$sdk_force_prereq"', RUNNER)
         self.assertIn('SDK_FORCE_PREREQ="${REMOTE_GATE_SDK_FORCE_PREREQ:-0}"', BUILDER)
@@ -128,6 +130,7 @@ class SdkCompatibilityMatrixTests(unittest.TestCase):
             "openwrt-19.07.10-x86-geode": "qemu-i386",
             "openwrt-19.07.10-ramips-mt76x8": "qemu-mipsel",
             "openwrt-19.07.10-ar71xx-generic": "qemu-mips",
+            "openwrt-19.07.9-armvirt-64": "qemu-aarch64",
         }
         for sample, emulator in expected.items():
             self.assertIn(f"{sample}) sdk_emulator='{emulator}'", RUNNER)
