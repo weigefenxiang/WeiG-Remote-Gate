@@ -47,8 +47,8 @@ case "${1:-}" in
     full)
         [ "$#" -eq 2 ] || exit 2
         result="$(resolve_abi "$2")" || exit 1
-        oldifs="$IFS"; IFS='\t'; set -- $result; IFS="$oldifs"
-        class="$1"; status="$2"
+        class="$(printf '%s\n' "$result" | awk -F '\t' '{print $1}')"
+        status="$(printf '%s\n' "$result" | awk -F '\t' '{print $2}')"
         class_result="$(resolve_class "$class")" || exit 1
         printf '%s\t%s\t%s\n' "$class" "$status" "$class_result"
         ;;
