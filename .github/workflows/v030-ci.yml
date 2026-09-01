@@ -40,6 +40,9 @@ jobs:
             bash -n "$file"
           done
 
+      - name: Native mapper build
+        run: make -C native clean all check
+
       - name: JavaScript syntax
         shell: bash
         run: |
