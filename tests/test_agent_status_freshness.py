@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SERVER = ROOT / "server/remote-gate.py"
 MAIN = ROOT / "server/app/main.py"
 APP = ROOT / "server/app/static/js/app.js"
+GATE_CONTROLS = ROOT / "server/app/static/js/gate-controls.js"
 AGENT = ROOT / "openwrt/remote-gate-agent.sh"
 
 
@@ -67,16 +68,18 @@ class AgentStatusFreshnessTests(unittest.TestCase):
         view = fail_closed_agent_status(status, now=1000 + AGENT_STATUS_FRESH_SECONDS)
         self.assertTrue(view["fresh"])
         self.assertTrue(view["inventory_synced"])
+        self.assertTrue(view["may_have_active_runtime"])
         self.assertTrue(view["firewall"]["active"])
         self.assertTrue(view["egress"]["active"])
         self.assertEqual(view["wireguard"][0]["name"], "WG_HOME")
         self.assertTrue(view["transport"]["healthy"])
 
-    def test_stale_report_loses_all_runtime_authority(self):
+    def test_stale_report_loses_all_runtime_authority_but_keeps_close_hint(self):
         status = self.sample()
         view = fail_closed_agent_status(status, now=1001 + AGENT_STATUS_FRESH_SECONDS)
         self.assertFalse(view["fresh"])
         self.assertTrue(view["inventory_synced"])
+        self.assertTrue(view["may_have_active_runtime"])
         self.assertEqual(view["reported_at"], 1000)
         self.assertEqual(view["firewall"]["backend"], "fw3-iptables")
         self.assertFalse(view["firewall"]["ready"])
@@ -92,6 +95,16 @@ class AgentStatusFreshnessTests(unittest.TestCase):
         self.assertEqual(view["transport"]["active_family"], "")
         self.assertEqual(view["transport"]["active_device"], "")
 
+    def test_stale_inactive_report_does_not_offer_close_hint(self):
+        status = self.sample()
+        status["firewall"]["active"] = False
+        status["firewall"]["families"]["ipv4"]["active"] = False
+        status["egress"]["active"] = False
+        status["egress"]["state"] = "inactive"
+        view = fail_closed_agent_status(status, now=1001 + AGENT_STATUS_FRESH_SECONDS)
+        self.assertFalse(view["fresh"])
+        self.assertFalse(view["may_have_active_runtime"])
+
     def test_inventory_unsynced_report_is_never_authoritative(self):
         status = self.sample()
         status["inventory_synced"] = False
@@ -99,6 +112,7 @@ class AgentStatusFreshnessTests(unittest.TestCase):
         view = fail_closed_agent_status(status, now=1000)
         self.assertFalse(view["fresh"])
         self.assertFalse(view["inventory_synced"])
+        self.assertTrue(view["may_have_active_runtime"])
         self.assertFalse(view["firewall"]["active"])
         self.assertEqual(view["wireguard"], [])
         self.assertEqual(view["egress"]["detail"], "inventory_unsynced")
@@ -109,12 +123,19 @@ class AgentStatusFreshnessTests(unittest.TestCase):
         self.assertFalse(agent_status_is_fresh(status, now=1000))
         self.assertFalse(fail_closed_agent_status(status, now=1000)["fresh"])
 
-    def test_dashboard_sanitizes_agent_before_base_handler_renders(self):
-        source = SERVER.read_text(encoding="utf-8")
-        self.assertIn("fail_closed_agent_status", source)
-        self.assertIn("_sanitize_stored_agent_status()", source)
-        dashboard = source.split("def do_GET(self) -> None:", 1)[1].split("super().do_GET()", 1)[0]
-        self.assertLess(dashboard.index("_sanitize_stored_agent_status()"), len(dashboard))
+    def test_dashboard_projects_agent_without_mutating_raw_report(self):
+        base = MAIN.read_text(encoding="utf-8")
+        dashboard = base.split('if path == "/api/v1/dashboard":', 1)[1].split('if path == "/api/v1/agent/pull":', 1)[0]
+        self.assertIn('raw_agent = STORE.read("agent-status.json", {})', dashboard)
+        self.assertIn("agent = fail_closed_agent_status(raw_agent)", dashboard)
+        self.assertIn('gate["agent"] = agent', dashboard)
+        self.assertIn('"agent": agent', dashboard)
+
+        production = SERVER.read_text(encoding="utf-8")
+        self.assertNotIn("_sanitize_stored_agent_status", production)
+        production_get = production.split("def do_GET(self) -> None:", 1)[1].split("def _candidate_post(self) -> None:", 1)[0]
+        self.assertNotIn('STORE.write("agent-status.json"', production_get)
+        self.assertNotIn("fail_closed_agent_status", production_get)
 
     def test_system_status_consumes_server_freshness_without_browser_threshold(self):
         source = APP.read_text(encoding="utf-8")
@@ -123,6 +144,27 @@ class AgentStatusFreshnessTests(unittest.TestCase):
         self.assertNotIn("const reportedAt", render_system)
         self.assertNotIn("Date.now()", render_system)
         self.assertNotIn("< 45", render_system)
+
+    def test_stale_gate_ui_disables_activate_but_keeps_safe_close(self):
+        source = GATE_CONTROLS.read_text(encoding="utf-8")
+        self.assertIn("function agentFresh(currentData = data())", source)
+        self.assertIn("function staleCloseRecommended(currentData = data())", source)
+        self.assertIn("Boolean(currentData?.agent?.may_have_active_runtime)", source)
+
+        can_activate = source.split("function canActivate() {", 1)[1].split("function ensureDualButton() {", 1)[0]
+        self.assertIn("!agentFresh()", can_activate)
+
+        controls = source.split("function setLockedControls(", 1)[1].split("function render(currentData", 1)[0]
+        self.assertIn("staleCloseRecommended(currentData)", controls)
+        self.assertIn("(active || safeClose)", controls)
+
+        render = source.split("function render(currentData = data()) {", 1)[1].split("async function submit(", 1)[0]
+        self.assertIn("else if (!fresh)", render)
+        stale_branch = render.split("else if (!fresh)", 1)[1].split("else if (recentTerminalFailure(last))", 1)[0]
+        self.assertIn("STATUS UNKNOWN", stale_branch)
+        self.assertIn("staleCloseRecommended", source)
+        self.assertNotIn("mode='open'", stale_branch)
+        self.assertNotIn("title=t('gate.open')", stale_branch)
 
     def test_activate_requires_fresh_agent_but_close_remains_deliverable(self):
         source = SERVER.read_text(encoding="utf-8")
