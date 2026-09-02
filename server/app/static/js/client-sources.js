@@ -95,7 +95,7 @@
       setDiagnostic(family, 'candidate_error', `Candidate rejected: ${code}`, address);
       throw new Error(`candidate ${code}`);
     }
-    setDiagnostic(family, 'saved', 'Carrier candidate saved; waiting for WireGuard verification', address);
+    setDiagnostic(family, 'saved', 'Carrier candidate saved as short-lived session source evidence', address);
     return payload;
   }
 
@@ -115,7 +115,7 @@
       if (source.confidence === 'observed') {
         setDiagnostic(family, 'observed', 'Cloudflare HTTP source already observed; carrier probe skipped', source.address);
       } else if (source.confidence === 'candidate') {
-        setDiagnostic(family, 'saved', 'Carrier candidate remains fresh', source.address);
+        setDiagnostic(family, 'saved', 'Carrier candidate remains fresh as short-lived session source evidence', source.address);
       }
     });
     return result;
