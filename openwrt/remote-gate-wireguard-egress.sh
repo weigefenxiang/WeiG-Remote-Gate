@@ -222,6 +222,49 @@ fw4_install6() {
     nft insert rule inet fw4 srcnat oifname "$wan_dev" ip6 saddr "$subnet" counter masquerade comment "$NFT_COMMENT v6 nat66" || return 1
 }
 
+fw3_family_current() {
+    family="$1"; wg_dev="$2"; wan_dev="$3"; subnet="$4"
+    [ -n "$wg_dev" ] && [ -n "$wan_dev" ] && [ -n "$subnet" ] || return 1
+    case "$family" in
+        ipv4)
+            xtables4 -C FORWARD -j "$FW3_FILTER_CHAIN" >/dev/null 2>&1 || return 1
+            xtables4 -C "$FW3_FILTER_CHAIN" -i "$wg_dev" -o "$wan_dev" -s "$subnet" -j ACCEPT >/dev/null 2>&1 || return 1
+            xtables4 -C "$FW3_FILTER_CHAIN" -i "$wan_dev" -o "$wg_dev" -d "$subnet" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT >/dev/null 2>&1 || return 1
+            xtables4 -t nat -C POSTROUTING -j "$FW3_NAT_CHAIN" >/dev/null 2>&1 || return 1
+            xtables4 -t nat -C "$FW3_NAT_CHAIN" -s "$subnet" -o "$wan_dev" -j MASQUERADE >/dev/null 2>&1
+            ;;
+        ipv6)
+            xtables6 -C FORWARD -j "$FW3_FILTER_CHAIN6" >/dev/null 2>&1 || return 1
+            xtables6 -C "$FW3_FILTER_CHAIN6" -i "$wg_dev" -o "$wan_dev" -s "$subnet" -j ACCEPT >/dev/null 2>&1 || return 1
+            xtables6 -C "$FW3_FILTER_CHAIN6" -i "$wan_dev" -o "$wg_dev" -d "$subnet" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT >/dev/null 2>&1 || return 1
+            xtables6 -t nat -C POSTROUTING -j "$FW3_NAT_CHAIN6" >/dev/null 2>&1 || return 1
+            xtables6 -t nat -C "$FW3_NAT_CHAIN6" -s "$subnet" -o "$wan_dev" -j MASQUERADE >/dev/null 2>&1
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+fw4_comment_present() {
+    chain="$1"; marker="$2"
+    nft -a list chain inet fw4 "$chain" 2>/dev/null | grep -Fq "$marker"
+}
+
+fw4_family_current() {
+    case "$1" in
+        ipv4)
+            fw4_comment_present forward "$NFT_COMMENT v4 outbound" &&
+            fw4_comment_present forward "$NFT_COMMENT v4 return" &&
+            fw4_comment_present srcnat "$NFT_COMMENT v4 nat"
+            ;;
+        ipv6)
+            fw4_comment_present forward "$NFT_COMMENT v6 outbound" &&
+            fw4_comment_present forward "$NFT_COMMENT v6 return" &&
+            fw4_comment_present srcnat "$NFT_COMMENT v6 nat66"
+            ;;
+        *) return 1 ;;
+    esac
+}
+
 priority_used() {
     flag="$1"; priority="$2"
     ip "$flag" rule show 2>/dev/null | grep -Eq "^${priority}:"
@@ -575,16 +618,21 @@ sync_egress() {
     if mode_has_v6 "$mode"; then
         valid_uint "${RULE_BASE6:-}" && valid_uint "${ROUTE_TABLE6:-}" && ip -6 rule show 2>/dev/null | grep -Eq "^$((RULE_BASE6 + 10)):.*lookup ${ROUTE_TABLE6}([[:space:]]|$)" || rule_ok=0
     fi
-    firewall_ok=0
+    firewall_ok=1
     case "${FIREWALL_BACKEND:-}" in
         fw3-iptables)
-            if mode_has_v4 "$mode"; then xtables4 -C FORWARD -j "$FW3_FILTER_CHAIN" >/dev/null 2>&1 || rule_ok=0; fi
-            if mode_has_v6 "$mode"; then xtables6 -C FORWARD -j "$FW3_FILTER_CHAIN6" >/dev/null 2>&1 || rule_ok=0; fi
-            [ "$rule_ok" -eq 1 ] && firewall_ok=1
+            if mode_has_v4 "$mode"; then
+                fw3_family_current ipv4 "${WG_DEVICE:-}" "${WAN_DEVICE4:-${WAN_DEVICE:-}}" "${WG_SUBNET4:-}" || firewall_ok=0
+            fi
+            if mode_has_v6 "$mode"; then
+                fw3_family_current ipv6 "${WG_DEVICE:-}" "${WAN_DEVICE6:-${WAN_DEVICE:-}}" "${WG_SUBNET6:-}" || firewall_ok=0
+            fi
             ;;
         fw4-nftables)
-            nft -a list chain inet fw4 forward 2>/dev/null | grep -Fq "$NFT_COMMENT" && firewall_ok=1
+            if mode_has_v4 "$mode"; then fw4_family_current ipv4 || firewall_ok=0; fi
+            if mode_has_v6 "$mode"; then fw4_family_current ipv6 || firewall_ok=0; fi
             ;;
+        *) firewall_ok=0 ;;
     esac
     [ "$rule_ok" -eq 1 ] && [ "$firewall_ok" -eq 1 ] && return 0
 
