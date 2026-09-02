@@ -97,6 +97,72 @@ class TrustedSourceTests(unittest.TestCase):
         self.assertEqual(record["address"], "1.1.1.1")
         self.assertEqual(source_for_family(self.store, self.token, "ipv4", now=1000), "1.1.1.1")
 
+    def test_dual_gate_pins_each_family_authorized_source(self):
+        observe_source(self.store, self.token, "1.1.1.1", now=100)
+        observe_source(self.store, self.token, "2001:4860:4860::8888", now=100)
+        self.store.write(
+            "agent-status.json",
+            {
+                "firewall": {
+                    "active": True,
+                    "family": "ipv4",
+                    "source_ip": "1.1.1.1",
+                    "families": {
+                        "ipv4": {
+                            "active": True,
+                            "family": "ipv4",
+                            "source_ip": "1.1.1.1",
+                            "authorized_sources": ["1.1.1.1"],
+                        },
+                        "ipv6": {
+                            "active": True,
+                            "family": "ipv6",
+                            "source_ip": "2001:4860:4860::8888",
+                            "authorized_sources": ["2001:4860:4860::8888"],
+                        },
+                    },
+                }
+            },
+        )
+
+        ipv4 = observe_source(self.store, self.token, "8.8.8.8", now=1000)
+        ipv6 = observe_source(self.store, self.token, "2606:4700:4700::1111", now=1000)
+        self.assertEqual(ipv4["address"], "1.1.1.1")
+        self.assertEqual(ipv6["address"], "2001:4860:4860::8888")
+        sources = trusted_sources(self.store, self.token, now=1000)
+        self.assertEqual(sources["ipv4"]["address"], "1.1.1.1")
+        self.assertEqual(sources["ipv6"]["address"], "2001:4860:4860::8888")
+
+    def test_family_status_pins_non_primary_authorized_source(self):
+        observe_source(self.store, self.token, "8.8.8.8", now=100)
+        self.store.write(
+            "agent-status.json",
+            {
+                "firewall": {
+                    "active": True,
+                    "family": "ipv4",
+                    "source_ip": "1.1.1.1",
+                    "families": {
+                        "ipv4": {
+                            "active": True,
+                            "family": "ipv4",
+                            "source_ip": "1.1.1.1",
+                            "authorized_sources": ["1.1.1.1", "8.8.8.8"],
+                            "authorizations": [
+                                {"source_ip": "1.1.1.1"},
+                                {"source_ip": "8.8.8.8"},
+                            ],
+                        },
+                        "ipv6": {"active": False, "authorized_sources": []},
+                    },
+                }
+            },
+        )
+
+        record = observe_source(self.store, self.token, "9.9.9.9", now=1000)
+        self.assertEqual(record["address"], "8.8.8.8")
+        self.assertEqual(source_for_family(self.store, self.token, "ipv4", now=1000), "8.8.8.8")
+
     def test_non_public_or_special_addresses_are_rejected(self):
         for family, address in (
             ("ipv4", "10.0.0.1"),
