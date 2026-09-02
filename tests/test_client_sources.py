@@ -92,16 +92,49 @@ class TrustedSourceTests(unittest.TestCase):
         self.store.write(
             "agent-status.json",
             {
+                "reported_at": 1000,
                 "firewall": {
                     "active": True,
                     "family": "ipv4",
                     "source_ip": "1.1.1.1",
-                }
+                },
             },
         )
         record = observe_source(self.store, self.token, "8.8.8.8", now=1000)
         self.assertEqual(record["address"], "1.1.1.1")
         self.assertEqual(source_for_family(self.store, self.token, "ipv4", now=1000), "1.1.1.1")
+
+    def test_stale_agent_status_cannot_pin_expired_source(self):
+        observe_source(self.store, self.token, "1.1.1.1", now=100)
+        self.store.write(
+            "agent-status.json",
+            {
+                "reported_at": 100,
+                "firewall": {
+                    "active": True,
+                    "family": "ipv4",
+                    "source_ip": "1.1.1.1",
+                },
+            },
+        )
+        self.assertEqual(trusted_sources(self.store, self.token, now=1000), {})
+        record = observe_source(self.store, self.token, "8.8.8.8", now=1000)
+        self.assertEqual(record["address"], "8.8.8.8")
+        self.assertEqual(record["confidence"], "observed")
+
+    def test_missing_agent_report_time_cannot_pin_expired_source(self):
+        observe_source(self.store, self.token, "1.1.1.1", now=100)
+        self.store.write(
+            "agent-status.json",
+            {
+                "firewall": {
+                    "active": True,
+                    "family": "ipv4",
+                    "source_ip": "1.1.1.1",
+                },
+            },
+        )
+        self.assertEqual(trusted_sources(self.store, self.token, now=1000), {})
 
     def test_dual_gate_pins_each_family_authorized_source(self):
         observe_source(self.store, self.token, "1.1.1.1", now=100)
@@ -109,6 +142,7 @@ class TrustedSourceTests(unittest.TestCase):
         self.store.write(
             "agent-status.json",
             {
+                "reported_at": 1000,
                 "firewall": {
                     "active": True,
                     "family": "ipv4",
@@ -127,7 +161,7 @@ class TrustedSourceTests(unittest.TestCase):
                             "authorized_sources": ["2001:4860:4860::8888"],
                         },
                     },
-                }
+                },
             },
         )
 
@@ -144,6 +178,7 @@ class TrustedSourceTests(unittest.TestCase):
         self.store.write(
             "agent-status.json",
             {
+                "reported_at": 1000,
                 "firewall": {
                     "active": True,
                     "family": "ipv4",
@@ -161,7 +196,7 @@ class TrustedSourceTests(unittest.TestCase):
                         },
                         "ipv6": {"active": False, "authorized_sources": []},
                     },
-                }
+                },
             },
         )
 
