@@ -684,7 +684,9 @@
   function canActivate() {
     if (!context || transactionLocked() || !agentFresh()) return false;
     const state = context.state;
+    const fw = data()?.agent?.firewall || {};
     const endpointReady = state.family === 'dual' ? Boolean(selectedDualPair()) : Boolean(endpointSelect()?.value);
+    if (activeFamilyState(fw, state.family) || conflictingActiveProfile(fw, state.family)) return false;
     return Boolean(!state.busy && familyAvailable(state.family) && endpointReady && $('wg-select')?.value);
   }
 
@@ -756,9 +758,69 @@
     const entry = authorizationForSource(fw, family);
     return Number(entry?.expires_in || fw?.families?.[family]?.expires_in || 0);
   }
+  function normalizedPort(value) {
+    const port = Number(value || 0);
+    return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : 0;
+  }
+  function endpointIngressPort(item) {
+    const method = endpointMethod(item);
+    const candidates = method === 'mapped'
+      ? [item?.ingress_port, item?.local_port]
+      : [item?.ingress_port, item?.service_port, item?.local_port, item?.external_port];
+    for (const value of candidates) {
+      const port = normalizedPort(value);
+      if (port) return port;
+    }
+    return 0;
+  }
+  function selectedEndpointForFamily(family) {
+    if (!['ipv4','ipv6'].includes(family)) return null;
+    if (context?.state?.family === 'dual') {
+      const pair = selectedDualPair();
+      return family === 'ipv4' ? pair?.ipv4 || null : pair?.ipv6 || null;
+    }
+    if (context?.state?.family !== family) return null;
+    const value = String(endpointSelect()?.value || '');
+    return endpointsFor(family).find((item) => item.id === value) || null;
+  }
+  function selectedFamilyProfile(family) {
+    const endpoint = selectedEndpointForFamily(family);
+    if (!endpoint) return null;
+    return {
+      device:String(endpoint.device || ''),
+      ingressPort:endpointIngressPort(endpoint),
+      scope:String(context?.state?.scope || 'wg')
+    };
+  }
+  function firewallFamilyProfile(fw, family) {
+    const item = fw?.families?.[family] || {};
+    const legacy = fw?.family === family ? fw : {};
+    return {
+      active:Boolean(item.active || legacy.active),
+      device:String(item.device || legacy.device || ''),
+      ingressPort:normalizedPort(item.ingress_port || item.wg_port || legacy.ingress_port || legacy.wg_port),
+      scope:String(item.scope || legacy.scope || '')
+    };
+  }
+  function activeProfileMatchesSelection(fw, family) {
+    const runtime = firewallFamilyProfile(fw, family);
+    const selected = selectedFamilyProfile(family);
+    return Boolean(
+      runtime.active && selected && runtime.device && selected.device &&
+      runtime.device === selected.device && runtime.ingressPort > 0 && runtime.ingressPort === selected.ingressPort &&
+      runtime.scope && runtime.scope === selected.scope
+    );
+  }
+  function conflictingActiveProfile(fw, family) {
+    const families = family === 'dual' ? ['ipv4','ipv6'] : [family];
+    return families.some((item) => {
+      const runtime = firewallFamilyProfile(fw, item);
+      return runtime.active && !activeProfileMatchesSelection(fw, item);
+    });
+  }
   function activeFamilyState(fw, family) {
-    if (family === 'dual') return sourceAuthorized(fw, 'ipv4') && sourceAuthorized(fw, 'ipv6');
-    return sourceAuthorized(fw, family);
+    if (family === 'dual') return ['ipv4','ipv6'].every((item) => sourceAuthorized(fw, item) && activeProfileMatchesSelection(fw, item));
+    return sourceAuthorized(fw, family) && activeProfileMatchesSelection(fw, family);
   }
 
   function setLockedControls(locked, action, active, activatable, currentData = data()) {
@@ -806,7 +868,7 @@
     const locked = syncTransaction(currentData);
     const pending = currentData?.gate?.queue?.pending, next = currentData?.gate?.queue?.next, last = currentData?.gate?.queue?.last;
     const fresh = agentFresh(currentData), safeClose = staleCloseRecommended(currentData);
-    const fw = currentData?.agent?.firewall || {}, active = activeFamilyState(fw, state.family), pendingAction = pending?.action, orb = $('gate-orb');
+    const fw = currentData?.agent?.firewall || {}, active = activeFamilyState(fw, state.family), profileConflict = conflictingActiveProfile(fw, state.family), closeRequired = active || profileConflict, pendingAction = pending?.action, orb = $('gate-orb');
     const egress = reportedEgress(currentData), selectedExitPlan = selectedEgressPlan(), selectedExit = egressPlanLabel(selectedExitPlan), selectedExitMatches = egressMatchesSelection(egress, selectedExitPlan);
     let mode='closed', title=t('gate.closed'), subtitle=t('gate.closedSub'), badge=t('gate.closedBadge');
     if (pendingAction === 'activate' || (locked && lockAction(currentData) === 'activate')) {
@@ -832,6 +894,11 @@
           title=zh() ? 'OPEN · 出口未生效' : 'OPEN · EXIT OFF'; subtitle=zh() ? 'Gate 已授权，但所选 Internet 出口当前未处于 Active。' : 'Gate access is open, but the selected Internet exit is not active.'; badge='EXIT OFF';
         }
       }
+    } else if (profileConflict) {
+      mode='open';
+      title=zh() ? 'OPEN · 其它访问路径' : 'OPEN · OTHER ACCESS PATH';
+      subtitle=zh() ? '另一个 Access Endpoint 仍有 Gate 授权。请先 Close，再切换 WireGuard、WAN、入口或 Access Scope。' : 'Another Access Endpoint still has Gate authorization. Close it before switching WireGuard, WAN, ingress, or Access Scope.';
+      badge=zh() ? '其它路径已开启' : 'OPEN ELSEWHERE';
     } else if (!fresh) {
       mode='closed';
       title=zh() ? '状态未知' : 'STATUS UNKNOWN';
@@ -842,8 +909,8 @@
     }
     const activatable=canActivate(), action=lockAction(currentData);
     if (orb) {
-      const orbLabel = active ? t('gate.close') : t('gate.activate');
-      const orbEnabled = !locked && (active ? !state.busy : (mode === 'closed' && activatable));
+      const orbLabel = closeRequired ? t('gate.close') : t('gate.activate');
+      const orbEnabled = !locked && (closeRequired ? !state.busy : (mode === 'closed' && activatable));
       orb.dataset.state=mode; orb.dataset.hint=orbLabel; orb.disabled=!orbEnabled;
       orb.classList.toggle('transaction-locked', locked);
       orb.setAttribute('aria-disabled', orb.disabled ? 'true':'false');
@@ -853,7 +920,7 @@
     if ($('gate-state')) $('gate-state').textContent=title;
     if ($('gate-substate')) $('gate-substate').textContent=subtitle;
     if ($('gate-state-badge')) $('gate-state-badge').textContent=badge;
-    if ($('gate-lock')) $('gate-lock').textContent=active?'◇':'◆';
+    if ($('gate-lock')) $('gate-lock').textContent=closeRequired?'◇':'◆';
     const trustNote=document.querySelector('.trust-note');
     if (trustNote) trustNote.textContent=zh() ? 'Cloudflare HTTP 观察和运营商 Candidate 是当前登录 Session 的来源依据；点击 Activate 后由 VPS 解析所选协议族，OpenWrt 直接应用临时授权，不要求 WireGuard 预先握手。' : 'Cloudflare HTTP observations and carrier candidates are source evidence for the signed-in session. Activate resolves the selected family server-side and OpenWrt applies the temporary authorization without requiring a pre-existing WireGuard handshake.';
     const authorizationSource=$('authorization-source');
@@ -863,7 +930,7 @@
         authorizationSource.textContent=values.length?values.join(' · '):(sourceFor('ipv4')||sourceFor('ipv6')||t('common.unavailable'));
       } else authorizationSource.textContent=sourceFor(state.family)||t('common.unavailable');
     }
-    setLockedControls(locked, action, active, activatable, currentData);
+    setLockedControls(locked, action, closeRequired, activatable, currentData);
   }
 
   async function submit(path, body, action) {
@@ -902,7 +969,7 @@
   function toggleAccess() {
     if (!context || transactionLocked()) return;
     const fw=data()?.agent?.firewall||{};
-    if(activeFamilyState(fw,context.state.family)) closeAccess(); else activate();
+    if(activeFamilyState(fw,context.state.family)||conflictingActiveProfile(fw,context.state.family)) closeAccess(); else activate();
   }
   function guardedTarget(target) { return target?.closest?.('.gate-form button, .gate-form select, .gate-form input, #gate-orb'); }
   function transactionGuard(event) {
