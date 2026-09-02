@@ -9,6 +9,8 @@
 
   function data() { return context?.getData?.() || {}; }
   function inventoryWans() { return Array.isArray(data()?.inventory?.wans) ? data().inventory.wans : []; }
+  function agentFresh(currentData = data()) { return Boolean(currentData?.agent?.fresh); }
+  function staleCloseRecommended(currentData = data()) { return !agentFresh(currentData) && Boolean(currentData?.agent?.may_have_active_runtime); }
 
   function endpointsFor(family) {
     const selectedWg = $('wg-select')?.value || '';
@@ -530,6 +532,7 @@
   }
   function familyReason(family) {
     const t = context.t;
+    if (!agentFresh()) return zh() ? 'OpenWrt Agent 状态不可用；Activate 已禁用，等待新的有效状态。' : 'OpenWrt Agent status is unavailable; Activate is disabled until a fresh report arrives.';
     if (family === 'dual') {
       if (!gateCapability('ipv4')) return zh() ? '此 OpenWrt 的 IPv4 Gate 已禁用。' : 'IPv4 Gate is disabled on this OpenWrt device.';
       if (!gateCapability('ipv6')) return t('gate.ipv6Unavailable');
@@ -580,7 +583,7 @@
     return Boolean(transaction.commandId && command.preempted_command_id === transaction.commandId);
   }
   function adoptCloseTransaction(command) {
-    transaction = {action:'close', commandId:String(command.id || ''), batchId:String(command.batch_id || ''), startedAt:Number(command.created_at || 0) * 1000 || Date.now(), serverOwned:true};
+    transaction = {action:'close', commandId:String(command.id || ''), batchId:String(command.batch_id || ''), startedAt:Number(command.created_at || 0) * 1000 || Date.now(),serverOwned:true};
   }
   function syncTransaction(currentData) {
     const queue = currentData?.gate?.queue || {};
@@ -589,7 +592,7 @@
     if (pending && closeSupersedesTransaction(pending)) adoptCloseTransaction(pending);
     if (!pending && last && closeSupersedesTransaction(last)) adoptCloseTransaction(last);
     if (pending && !transaction) {
-      transaction = {action:String(pending.action || 'activate'), commandId:String(pending.id || ''), batchId:String(pending.batch_id || ''), startedAt:Number(pending.created_at || 0) * 1000 || Date.now(), serverOwned:true};
+      transaction = {action:String(pending.action || 'activate'), commandId:String(pending.id || ''), batchId:String(pending.batch_id || ''), startedAt:Number(pending.created_at || 0) * 1000 || Date.now(),serverOwned:true};
       startTransactionPoll();
     }
     if (!transaction) return false;
@@ -617,7 +620,7 @@
   }
 
   function canActivate() {
-    if (!context || transactionLocked()) return false;
+    if (!context || transactionLocked() || !agentFresh()) return false;
     const state = context.state;
     const endpointReady = state.family === 'dual' ? Boolean(selectedDualPair()) : Boolean(endpointSelect()?.value);
     return Boolean(!state.busy && familyAvailable(state.family) && endpointReady && $('wg-select')?.value);
@@ -701,6 +704,7 @@
 
   function setLockedControls(locked, action, active, activatable, currentData = data()) {
     const preemptible = locked && action === 'activate' && closeCanPreempt(currentData);
+    const safeClose = !locked && staleCloseRecommended(currentData);
     const form = document.querySelector('.gate-form');
     if (form) {
       form.classList.toggle('transaction-locked', locked);
@@ -726,7 +730,7 @@
       activateButton.setAttribute('aria-disabled', activateButton.disabled ? 'true' : 'false');
     }
     if (closeButton) {
-      const showClose = locked ? (action === 'close' || preemptible) : active;
+      const showClose = locked ? (action === 'close' || preemptible) : (active || safeClose);
       closeButton.classList.toggle('hidden', !showClose);
       closeButton.disabled = (locked && !preemptible) || Boolean(context?.state?.busy);
       closeButton.classList.toggle('transaction-locked', locked && action === 'close');
@@ -742,6 +746,7 @@
     syncEgressSelect();
     const locked = syncTransaction(currentData);
     const pending = currentData?.gate?.queue?.pending, next = currentData?.gate?.queue?.next, last = currentData?.gate?.queue?.last;
+    const fresh = agentFresh(currentData), safeClose = staleCloseRecommended(currentData);
     const fw = currentData?.agent?.firewall || {}, active = activeFamilyState(fw, state.family), pendingAction = pending?.action, orb = $('gate-orb');
     const egress = reportedEgress(currentData), selectedExitPlan = selectedEgressPlan(), selectedExit = egressPlanLabel(selectedExitPlan), selectedExitMatches = egressMatchesSelection(egress, selectedExitPlan);
     let mode='closed', title=t('gate.closed'), subtitle=t('gate.closedSub'), badge=t('gate.closedBadge');
@@ -768,6 +773,11 @@
           title=zh() ? 'OPEN · 出口未生效' : 'OPEN · EXIT OFF'; subtitle=zh() ? 'Gate 已授权，但所选 Internet 出口当前未处于 Active。' : 'Gate access is open, but the selected Internet exit is not active.'; badge='EXIT OFF';
         }
       }
+    } else if (!fresh) {
+      mode='closed';
+      title=zh() ? '状态未知' : 'STATUS UNKNOWN';
+      subtitle=safeClose ? (zh() ? 'OpenWrt Agent 状态不可用；不会把旧状态视为 OPEN。上次报告仍可能存在 Gate/Internet 出口，可使用 Close 安全清理。' : 'OpenWrt Agent status is unavailable. Cached state is not treated as OPEN; the last report may still have Gate/Internet runtime, so Close remains available for safe cleanup.') : (zh() ? 'OpenWrt Agent 状态不可用；Activate 已禁用，等待新的有效状态。' : 'OpenWrt Agent status is unavailable. Activate is disabled until a fresh report arrives.');
+      badge=zh() ? '未知' : 'UNKNOWN';
     } else if (recentTerminalFailure(last)) {
       mode='error'; title=t('gate.error'); subtitle=last.detail || (last.state === 'expired' ? (zh() ? '请求已过期。' : 'The request expired.') : t('gate.agentFailed')); badge=t('gate.errorBadge');
     }
