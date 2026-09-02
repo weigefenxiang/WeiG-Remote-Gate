@@ -56,7 +56,7 @@ try {
     await page.waitForSelector('.brand-icon-image');
     await page.waitForSelector('#ttl-custom-button');
     await waitForAutoEndpoint(page, 'ep-wan2-v4');
-    await page.waitForFunction(() => document.querySelector('#egress-select')?.value === 'WAN2');
+    await page.waitForFunction(() => document.querySelector('#egress-select')?.value === 'ipv4:WAN2');
     await page.waitForFunction(() => document.querySelector('#activate-button') && !document.querySelector('#activate-button').disabled);
 
     const initial = await page.evaluate(() => ({
@@ -80,7 +80,7 @@ try {
     assert(initial.endpointValue === 'ep-wan2-v4', `${width}x${height}: best public IPv4 endpoint was not selected automatically`);
     assert(initial.endpointConfirmed === '1', `${width}x${height}: automatic endpoint was not confirmed`);
     assert(initial.endpointSource === 'auto', `${width}x${height}: automatic endpoint was mislabelled as manual`);
-    assert(initial.egressValue === 'WAN2', `${width}x${height}: Internet Exit did not follow the public IPv4 access WAN`);
+    assert(initial.egressValue === 'ipv4:WAN2', `${width}x${height}: Internet Exit did not follow the public IPv4 access WAN`);
     assert(initial.dualPresent, `${width}x${height}: dual-stack family control missing`);
     assert(initial.feedbackReady, `${width}x${height}: standard feedback module not loaded`);
     assert(JSON.stringify(initial.presetLabels) === JSON.stringify(['1m', '5m', '15m', '30m', 'Custom']), `${width}x${height}: wrong TTL presets ${initial.presetLabels}`);
@@ -151,11 +151,13 @@ try {
     const picker = await page.evaluate(() => {
       const sheet = document.querySelector('#endpoint-picker-layer .endpoint-picker-sheet');
       const handle = document.querySelector('#endpoint-picker-layer .endpoint-picker-handle');
+      const selected = document.querySelector('#endpoint-picker-layer .endpoint-option-card.selected');
       const r = sheet.getBoundingClientRect();
       const style = getComputedStyle(sheet);
       return {
         optionCount: document.querySelectorAll('#endpoint-picker-layer .endpoint-option-card').length,
         selected: document.querySelectorAll('#endpoint-picker-layer .endpoint-option-card.selected').length,
+        selectedBlocks: selected?.querySelectorAll('.path-family-block').length || 0,
         open: document.querySelector('#endpoint-picker-trigger')?.getAttribute('aria-expanded'),
         centerY: (r.top + r.bottom) / 2,
         viewportCenterY: window.innerHeight / 2,
@@ -169,6 +171,7 @@ try {
     });
     assert(picker.optionCount >= 1, `${width}x${height}: endpoint picker has no cards`);
     assert(picker.selected === 1, `${width}x${height}: automatic endpoint is not highlighted in the picker`);
+    assert(picker.selectedBlocks === 1, `${width}x${height}: single-family Access PathCard must render one FamilyPathBlock (${picker.selectedBlocks})`);
     assert(picker.open === 'true', `${width}x${height}: endpoint picker did not expose open state`);
     if (width <= 767) {
       assert(Math.abs(picker.centerY - picker.viewportCenterY) <= 16, `${width}x${height}: mobile picker is not vertically centered`);
@@ -199,7 +202,9 @@ try {
     const body = (await requestPromise).postDataJSON();
     assert(body.endpoint_id === 'ep-wan2-v4', `${width}x${height}: automatic IPv4 endpoint_id not submitted`);
     assert(body.family === 'ipv4', `${width}x${height}: family not submitted`);
+    assert(body.egress_mode === 'ipv4', `${width}x${height}: automatic IPv4 exit mode is incorrect (${body.egress_mode})`);
     assert(body.egress_wan === 'WAN2', `${width}x${height}: automatic IPv4 exit did not follow WAN2`);
+    assert(body.egress_wans?.ipv4 === 'WAN2' && body.egress_wans?.ipv6 === '', `${width}x${height}: automatic IPv4 exit family WANs are incorrect`);
     assert(body.scope === 'wg_ping', `${width}x${height}: scope not submitted`);
     assert(body.ttl === 7200, `${width}x${height}: custom TTL not submitted (${body.ttl})`);
     assert(!('source_ip' in body) && !('address' in body), `${width}x${height}: authorization request included a browser address`);
@@ -216,12 +221,12 @@ try {
     await page.waitForSelector('#wan-list .wan-row');
     await page.locator('[data-family="ipv6"]').click();
     await waitForAutoEndpoint(page, 'ep-wan2-v6');
-    await page.waitForFunction(() => document.querySelector('#egress-select')?.value === 'WAN2');
+    await page.waitForFunction(() => document.querySelector('#egress-select')?.value === 'ipv6:WAN2');
     assert(!(await page.locator('#activate-button').isDisabled()), `${width}x${height}: automatic IPv6 endpoint did not enable Activate`);
 
     await chooseEndpoint(page, 'ep-wan-v6');
     await page.waitForFunction(() => document.querySelector('#endpoint-select')?.dataset.selectionSource === 'manual');
-    await page.waitForFunction(() => document.querySelector('#egress-select')?.value === 'WAN');
+    await page.waitForFunction(() => document.querySelector('#egress-select')?.value === 'ipv6:WAN');
     const manualIpv6 = await page.evaluate(() => ({
       family: document.querySelector('#family-segment .active')?.dataset.family,
       endpoint: document.querySelector('#endpoint-select')?.value,
@@ -231,7 +236,7 @@ try {
     assert(manualIpv6.family === 'ipv6', `${width}x${height}: manual IPv6 family selection was stolen`);
     assert(manualIpv6.endpoint === 'ep-wan-v6', `${width}x${height}: manual IPv6 endpoint was not preserved`);
     assert(manualIpv6.source === 'manual', `${width}x${height}: manual IPv6 endpoint was not marked manual`);
-    assert(manualIpv6.exit === 'WAN', `${width}x${height}: automatic exit did not follow manual IPv6 access WAN`);
+    assert(manualIpv6.exit === 'ipv6:WAN', `${width}x${height}: automatic exit did not follow manual IPv6 access WAN`);
 
     if (width >= 1200) {
       const typography = await page.evaluate(() => ({
@@ -252,16 +257,31 @@ try {
   await dualPage.waitForSelector('[data-family="dual"]');
   await dualPage.locator('[data-family="dual"]').click();
   await waitForAutoEndpoint(dualPage, 'dual:ep-wan2-v4:ep-wan2-v6');
-  await dualPage.waitForFunction(() => document.querySelector('#egress-select')?.value === 'WAN2');
+  await dualPage.waitForFunction(() => document.querySelector('#egress-select')?.value === 'dual:WAN2|WAN2');
   assert(!(await dualPage.locator('#activate-button').isDisabled()), 'automatic dual-stack selection did not enable Activate');
+
+  await dualPage.locator('#endpoint-picker-trigger').click();
+  await dualPage.waitForSelector('#endpoint-picker-layer.open .endpoint-option-card.selected');
+  const dualBlocks = await dualPage.locator('#endpoint-picker-layer .endpoint-option-card.selected .path-family-block').count();
+  assert(dualBlocks === 2, `Dual Access PathCard must render two FamilyPathBlocks (${dualBlocks})`);
+  await dualPage.keyboard.press('Escape');
+
+  await dualPage.locator('#egress-select-picker-trigger').click();
+  await dualPage.waitForSelector('#endpoint-picker-layer.open .endpoint-option-card.selected');
+  const dualExitBlocks = await dualPage.locator('#endpoint-picker-layer .endpoint-option-card.selected .path-family-block').count();
+  assert(dualExitBlocks === 2, `Dual Internet Exit PathCard must render two FamilyPathBlocks (${dualExitBlocks})`);
+  await dualPage.keyboard.press('Escape');
+
   const dualRequestPromise = dualPage.waitForRequest((request) => request.url().endsWith('/api/v1/gate/activate') && request.method() === 'POST');
   await dualPage.locator('#activate-button').click();
   const dualBody = (await dualRequestPromise).postDataJSON();
   assert(JSON.stringify(dualBody.families) === JSON.stringify(['ipv4', 'ipv6']), 'dual-stack family list is incorrect');
   assert(dualBody.endpoint_ids?.ipv4 === 'ep-wan2-v4', 'dual-stack IPv4 endpoint is incorrect');
   assert(dualBody.endpoint_ids?.ipv6 === 'ep-wan2-v6', 'dual-stack IPv6 endpoint is incorrect');
+  assert(dualBody.egress_mode === 'dual', `same-WAN dual exit mode is incorrect (${dualBody.egress_mode})`);
   assert(dualBody.egress_wan === 'WAN2', 'same-WAN dual exit did not follow WAN2');
-  assert(!('source_ip' in dualBody) && !('address' in dualBody), 'dual-stack authorization request included a browser address');
+  assert(dualBody.egress_wans?.ipv4 === 'WAN2' && dualBody.egress_wans?.ipv6 === 'WAN2', 'same-WAN dual exit family WANs are incorrect');
+  assert(!('source_ip' in dualBody) && !('address' in dualBody), 'dual-stack authorization request included a browser source address');
   await dualPage.close();
 
   // Candidate success updates the current page in-place while the automatic endpoint remains stable.
@@ -373,7 +393,7 @@ try {
   await observedPage.unrouteAll({behavior: 'ignoreErrors'});
   await observedPage.close();
 
-  console.log(`Browser layout regression passed for ${viewports.length} viewports plus automatic public endpoint/exit selection, manual override, dual-stack, transaction lock, candidate recovery, and observed-source probe suppression.`);
+  console.log(`Browser layout regression passed for ${viewports.length} viewports plus automatic public endpoint/exit selection, shared PathCard rendering, manual override, dual-stack, transaction lock, candidate recovery, and observed-source probe suppression.`);
 } finally {
   await browser.close();
 }
