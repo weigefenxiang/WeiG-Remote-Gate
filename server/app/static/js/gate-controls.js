@@ -619,6 +619,15 @@
     context?.toast?.(message, kind === 'error' ? 'error' : 'info');
     return null;
   }
+  function requestError(code) {
+    const value = String(code || 'request failed');
+    if (value === 'gate_close_required') {
+      return zh()
+        ? '已有远程访问仍在运行。请先 Close，再切换协议族、WireGuard、WAN、入口或 Access Scope。'
+        : 'Remote access is already active. Close it before switching family, WireGuard, WAN, ingress, or Access Scope.';
+    }
+    return value;
+  }
   function pendingCommand(currentData = data()) { return currentData?.gate?.queue?.pending || null; }
   function closeCanPreempt(currentData = data()) { return pendingCommand(currentData)?.action === 'activate'; }
   function lockAction(currentData = data()) { return transaction?.action || pendingCommand(currentData)?.action || ''; }
@@ -954,15 +963,21 @@
     if (transactionLocked() && !preemptingClose) { notify(lockMessage(), 'info', {title:zh() ? '操作进行中' : 'Operation in progress'}); return; }
     transaction={action,commandId:'',batchId:'',startedAt:Date.now(),serverOwned:false};
     startTransactionPoll(); context.state.busy=true; render(data());
+    let errorCode='';
     try {
       const response=await fetch(path,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-CSRF-Token':context.state.csrf},body:JSON.stringify(body||{})});
       const payload=response.status===204?{}:await response.json().catch(()=>({}));
-      if(!response.ok) throw new Error(String(payload?.error||`HTTP ${response.status}`));
+      if(!response.ok) {
+        errorCode=String(payload?.error||`HTTP ${response.status}`);
+        throw new Error(requestError(errorCode));
+      }
       transaction.commandId=String(payload?.command_id||''); transaction.batchId=String(payload?.batch_id||'');
       notify(action==='close'?(zh()?'关闭请求已提交，正在等待 OpenWrt 确认。':'Close request submitted; waiting for OpenWrt confirmation.'):(zh()?'激活请求已提交，正在等待 OpenWrt 应用授权。':'Activation submitted; waiting for OpenWrt to apply the authorization.'),'info',{title:zh()?'处理中':'In progress'});
       window.RemoteGateApp?.refresh?.();
     } catch(error) {
-      notify(String(error?.message||error||'request failed'),'error',{title:zh()?'请求失败':'Request failed',duration:5200}); clearTransaction();
+      notify(String(error?.message||error||'request failed'),'error',{title:zh()?'请求失败':'Request failed',duration:5200});
+      clearTransaction();
+      if(errorCode==='gate_close_required') window.RemoteGateApp?.refresh?.();
     } finally { context.state.busy=false; render(data()); }
   }
 

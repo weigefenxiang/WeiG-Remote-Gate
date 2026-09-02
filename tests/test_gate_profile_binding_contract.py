@@ -5,6 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "server/app/static/js/gate-controls.js"
 APP = ROOT / "server/app/static/js/app.js"
 QUEUE = ROOT / "server/app/gate.py"
+SERVER = ROOT / "server/remote-gate.py"
 BROWSER = ROOT / "tests/browser_gate_profile_binding.mjs"
 CORE_CI = ROOT / ".github/workflows/v030-ci.yml"
 RELEASE_CI = ROOT / ".github/workflows/browser-release.yml"
@@ -68,6 +69,22 @@ class GateProfileBindingContractTests(unittest.TestCase):
         self.assertIn("def _require_gate_closed_for_activate(store: JsonStore) -> None:", source)
         self.assertIn('raise GateError("gate_close_required")', source)
         self.assertEqual(source.count("_require_gate_closed_for_activate(store)"), 2)
+
+    def test_close_required_conflict_refreshes_browser_runtime_authority(self):
+        server = SERVER.read_text(encoding="utf-8")
+        gate = GATE.read_text(encoding="utf-8")
+        self.assertIn("code = str(exc)", server)
+        self.assertIn('409 if code in {"command_pending", "gate_close_required"} else 400', server)
+        self.assertIn("function requestError(code)", gate)
+        self.assertIn("gate_close_required", gate)
+        self.assertIn("已有远程访问仍在运行", gate)
+        self.assertIn("Remote access is already active", gate)
+        submit = gate.split("async function submit(path, body, action)", 1)[1].split("function activate()", 1)[0]
+        self.assertIn("let errorCode='';", submit)
+        self.assertIn("errorCode=String(payload?.error||`HTTP ${response.status}`);", submit)
+        self.assertIn("throw new Error(requestError(errorCode));", submit)
+        self.assertIn("clearTransaction();", submit)
+        self.assertIn("if(errorCode==='gate_close_required') window.RemoteGateApp?.refresh?.();", submit)
 
     def test_browser_regression_covers_profile_source_family_partial_and_refresh_conflicts(self):
         source = BROWSER.read_text(encoding="utf-8")

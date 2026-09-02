@@ -371,7 +371,8 @@ class Handler(BaseHandler):
                 egress_mode=egress_mode or None,
             )
         except (ValueError, KeyError, GateError) as exc:
-            self._json(409 if str(exc) == "command_pending" else 400, {"error": str(exc)})
+            code = str(exc)
+            self._json(409 if code in {"command_pending", "gate_close_required"} else 400, {"error": code})
             return
         self._json(202, {"command_id": command["id"], "state": "pending"})
 
