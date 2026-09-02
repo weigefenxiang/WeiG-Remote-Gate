@@ -213,9 +213,9 @@ Never encode current-device observations as general policy:
 
 Use validated runtime identity: logical WAN + current L3 device + current route/service/mapping state.
 
-## 10. Fail closed on identity drift
+## 10. Fail closed on identity drift and incomplete activation
 
-Runtime state is authoritative only while its validated identity remains current.
+Runtime state is authoritative only while its validated identity remains current, and a failed or ambiguous multi-step Activate must never leave a wider Gate state behind.
 
 Examples:
 
@@ -224,6 +224,8 @@ Examples:
 - selected policy-table default route disappears -> egress is cleared rather than falling through to main;
 - stale mapper JSON without current owned process -> reject;
 - incomplete Dual egress -> roll back the whole Dual runtime;
+- if Gate authorization succeeds but the requested Internet Exit activation then fails, clear Gate authorization and egress before acknowledging failure;
+- if any member of a multi-family Activate batch expires before its ACK is accepted, treat router runtime as ambiguous, clear the remaining batch tail and queue a Close rollback regardless of that member's batch index;
 - ambiguous WAN/service/port -> omit or reject rather than guess.
 
 ## 11. Asynchronous and stale-state investigations
@@ -237,6 +239,8 @@ Known examples:
 - Mapping existence and Gate authorization are independent;
 - a remap tuple may legitimately be numerically identical to a prior tuple;
 - mapper status is valid only with current managed-process ownership.
+
+An ACK timeout is not proof that an Activate command never executed on the router. For a multi-family batch, expiry of any unacknowledged member is therefore an uncertain-runtime condition and must reduce access through the Close rollback path rather than continuing the batch.
 
 Wait for the defined bounded settle/ACK boundary, then inspect authoritative state.
 
