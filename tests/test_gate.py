@@ -167,6 +167,51 @@ class GateTests(unittest.TestCase):
         events = self.store.read("activity.json", [])
         self.assertTrue(any(item.get("type") == "batch_rollback_queued" and item.get("batch_id") == "batch" for item in events))
 
+    def test_expired_first_batch_command_queues_rollback_close(self):
+        now = int(time.time())
+        first = {
+            "schema": 3,
+            "id": "first",
+            "action": "activate",
+            "family": "ipv4",
+            "source_ip": "198.51.100.7",
+            "batch_id": "batch",
+            "batch_index": 0,
+            "batch_count": 2,
+            "ttl": 300,
+            "state": "pending",
+            "created_at": now - 120,
+            "expires_at": now - 1,
+        }
+        second = {
+            "schema": 3,
+            "id": "second",
+            "action": "activate",
+            "family": "ipv6",
+            "source_ip": "2001:4860:4860::8888",
+            "batch_id": "batch",
+            "batch_index": 1,
+            "batch_count": 2,
+            "ttl": 300,
+            "state": "pending",
+            "created_at": now,
+            "expires_at": now + 60,
+        }
+        self.store.write("commands.json", {"pending": first, "next": [second], "last": None})
+
+        rollback = pull_command(self.store)
+        self.assertIsNotNone(rollback)
+        self.assertEqual(rollback["action"], "close")
+        self.assertEqual(rollback["rollback_for_batch"], "batch")
+        queue = self.store.read("commands.json", {})
+        self.assertEqual(queue["last"]["id"], "first")
+        self.assertEqual(queue["last"]["state"], "expired")
+        self.assertEqual(queue["pending"]["id"], rollback["id"])
+        self.assertEqual(queue["next"], [])
+        self.assertFalse(ack_command(self.store, "first", True, "late-ack"))
+        events = self.store.read("activity.json", [])
+        self.assertTrue(any(item.get("type") == "batch_rollback_queued" and item.get("batch_id") == "batch" for item in events))
+
     def test_dashboard_view_archives_expired_pending_command(self):
         expired = {
             "schema": 2,
