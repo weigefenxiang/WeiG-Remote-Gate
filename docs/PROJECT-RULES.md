@@ -217,7 +217,7 @@ Mapping changes revoke old authorization rather than migrating it.
 
 ## OpenWrt-family compatibility
 
-Target the OpenWrt family by capabilities, not branding/version allowlists.
+Target the OpenWrt family by capabilities, not branding/version allowlists. OpenWrt, LEDE, ImmortalWrt branding/version strings are metadata only; capability detection is runtime authority and branding/version alone must not be treated as sufficient authority.
 
 - Support detected `fw3 + iptables + ipset` and `fw4 + nft` backends through the firewall abstraction.
 - Keep shell compatible with BusyBox `ash`; no Bash-only/GNU-only/Python/Node/router-compiler runtime dependency.
