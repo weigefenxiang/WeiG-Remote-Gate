@@ -12,6 +12,11 @@ class GateCloseUiContractTests(unittest.TestCase):
             "pending.action === 'close' && transaction.action === 'activate'",
             source,
         )
+        self.assertIn(
+            "last.action === 'close' && transaction.action === 'activate'",
+            source,
+        )
+        self.assertIn("closeCreatedAt >= localStartedAt - 2", source)
         self.assertIn("transaction = {action:'close'", source)
         self.assertIn("serverOwned:true", source)
 
