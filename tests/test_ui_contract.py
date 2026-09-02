@@ -116,7 +116,7 @@ class UIContractTests(unittest.TestCase):
             self.assertIn('RAW_BASE="${RAW_PREFIX}${BUILD_SHA}"', source)
             self.assertIn('"{{ASSET_VERSION}}": build', source)
             self.assertIn('"{{BUILD_SHA}}": build', source)
-            self.assertIn('"{{BUILD_SHORT}}": build[:12]', source)
+            self.assertIn('"{{BUILD_SHORT}}": build', source)
             self.assertIn('install -o root -g root -m 0644 "$TMP_DIR/BUILD" "$LIB_DIR/BUILD"', source)
             self.assertIn("application/vnd.github.raw+json", source)
             self.assertIn("server/app/static/css/feedback.css", source)
@@ -226,7 +226,8 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("closeAccess();", gate)
         self.assertIn("else activate();", gate)
         self.assertIn("addEventListener('click',toggleAccess)", gate)
-        self.assertIn("const orbLabel = active ? t('gate.close') : t('gate.activate')", gate)
+        self.assertIn("closeRequired = active || profileConflict", gate)
+        self.assertIn("const orbLabel = closeRequired ? t('gate.close') : t('gate.activate')", gate)
 
     def test_gate_open_state_is_scoped_to_current_browser_source(self):
         gate = GATE.read_text(encoding="utf-8")
