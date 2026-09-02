@@ -226,6 +226,9 @@ Examples:
 - selected policy-table default route disappears -> egress is cleared rather than falling through to main;
 - stale mapper JSON without current owned process -> reject;
 - incomplete Dual egress -> roll back the whole Dual runtime;
+- Gate `OPEN` for the selected plan requires both the current authorized source and the current family Access profile to match the reported runtime `device + ingress_port + scope`; source equality alone is not enough;
+- if an active Gate profile differs from the selected WireGuard/WAN/ingress/scope, expose it as an active profile elsewhere, keep Close available and block replacement Activate until Close converges;
+- for Mapped Access, `external_port` is never a substitute for the active `ingress_port` when comparing the selected plan with firewall runtime;
 - if Gate authorization succeeds but the requested Internet Exit activation then fails, clear Gate authorization and egress before acknowledging failure;
 - clearing/replacing pre-existing Internet Exit runtime is itself an Activate side effect, so it must happen only after the Activate command has a durable runtime `pending` journal;
 - Internet Exit cleanup is successful only when the owned firewall/PBR runtime is verified absent; a helper must return failure and retain enough state identity for retry when cleanup cannot be proven complete;
@@ -346,3 +349,4 @@ Before implementing any network/UI change, answer all of these:
 13. Can an Activate be retried, ACK-lost or interrupted without repeating uncertain side effects, and is its result journaled before Server acknowledgement?
 14. Does every expired unacknowledged Activate converge through a Close rollback, and does a failed Close stay retryable until success or its existing Close deadline?
 15. Are pre-Activate cleanup and rollback themselves journal-covered, verified to completion, and retry-only when convergence is incomplete?
+16. Does any Gate OPEN indicator require the current source **and** the current family `device + ingress_port + scope` profile, with mismatched active profiles forced through Close-before-switch?
