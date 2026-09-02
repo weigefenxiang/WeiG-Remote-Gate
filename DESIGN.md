@@ -1,5 +1,5 @@
 ---
-version: 6
+version: 7
 name: WeiG-Remote-Gate
 description: "A dense, tactile, adaptive network-security workspace with standardized spatial depth, modular controls, and a distinct Wei.G security identity."
 ---
@@ -151,16 +151,13 @@ Primary action target: approximately 50-54px high. Normal touch controls are 44p
 
 Segmented controls use a recessed base; the selected item appears physically raised. IP Family, Access Scope, TTL presets, Language, Theme and feedback toggles share this interaction language.
 
-# 7. EndpointPicker
+Unavailable IP families remain visible when that helps explain device capability, but are disabled before interaction. Dual is disabled when either required Gate family capability is unavailable.
 
-The browser-native `<select>` may remain as an internal state bridge, but it must not be the visible endpoint chooser.
+# 7. EndpointPicker and PathCard
 
-Visible component: `EndpointPicker`.
+The browser-native `<select>` may remain as an internal state bridge, but it must not be the visible endpoint/exit chooser.
 
-Closed trigger:
-- shows WAN, family/provider and address/port as separate hierarchy levels;
-- uses a recessed chassis with a raised chevron control;
-- has keyboard focus state and pressed feedback.
+`EndpointPicker` is the one interaction framework for both Access Endpoint and Internet Exit. Do not create separate Dual, IPv6, Mapped or Exit picker systems.
 
 Desktop:
 - opens a compact spatial picker/popover appropriate to the available viewport.
@@ -170,13 +167,58 @@ Mobile:
 - uses a backdrop and safe-area padding;
 - options are full-width tactile cards.
 
-Each `EndpointCard` exposes:
-- WAN name;
-- family;
-- Direct / Mapped / NAT egress / Private-CGNAT reachability;
-- external address and port;
-- Primary / Try state where applicable;
-- selected state that is textual/iconic as well as visual.
+## PathCard
+
+`PathCard` is the one option-card presentation primitive. It contains one or two `FamilyPathBlock` records:
+
+```text
+PathCard
+  -> FamilyPathBlock[1] for IPv4 or IPv6
+  -> FamilyPathBlock[2] for Dual
+```
+
+A `FamilyPathBlock` has exactly these semantic fields:
+- family (`IPv4` / `IPv6`);
+- WAN identity;
+- optional role (`Direct`, `Mapped`, `NAT egress · Try`, etc. for Access);
+- complete machine value (endpoint/address).
+
+Single Access example:
+
+```text
+IPv4   WAN2   Direct
+223.73.44.6:51820
+```
+
+Mapped Access example:
+
+```text
+IPv4   WAN    Mapped
+223.73.44.6:7179
+```
+
+Dual Access is always two blocks / four information lines:
+
+```text
+IPv4   WAN2   Direct
+223.73.44.6:7179
+IPv6   WAN    Direct
+[240e:....]:51820
+```
+
+Same-WAN and split-WAN Dual use the exact same DOM/component structure. The WAN values communicate the topology, so do not repeat `Dual`, `Split WAN` or `Split Exit` inside the card.
+
+Internet Exit consumes the same PathCard renderer. Exit rows show family, WAN and observed/known address value; they do not expose `Private/CGNAT` as a product role. A private/CGNAT local IPv4 WAN may still be a valid outbound exit when routing capability is valid.
+
+Card-level `Primary` / selected state applies to the whole plan, not independently to each family block.
+
+Responsive rules:
+- family and optional role remain compact anchors;
+- WAN identity uses `NetworkIdentityText` `identity` profile;
+- endpoint/address value uses `NetworkIdentityText` `compact` profile;
+- the complete IPv6 value stays one line and is fitted rather than truncated;
+- mobile and desktop use the same semantic DOM; only spacing/surface behavior changes;
+- a 320px viewport must not cause whole-page horizontal overflow.
 
 Opening/closing uses short transform/opacity motion. Essential information must never depend on hover.
 
@@ -260,7 +302,7 @@ Rules:
 
 WireGuard remains a professional term and is not translated. Never expose private keys. A Handshake alone does not prove LAN routing health.
 
-Multi-WAN cards may show Public, Private/CGNAT, Global IPv6, NAT egress probe and mapped endpoint information. Reachability labels influence recommendation and explanation but do not silently invent an upstream mapping.
+Multi-WAN cards may show network facts such as Public, Private/CGNAT, Global IPv6, NAT egress probe and mapped endpoint information. These are diagnostics/facts; they do not automatically become Access Endpoint or Internet Exit product labels.
 
 Remote Gate remains INPUT-only. FORWARD, DNAT, UPnP, NAT-PMP and qBittorrent forwarding remain outside Gate ownership.
 
@@ -293,7 +335,8 @@ Mobile persistent header contains BrandIcon, product name and the circular resol
 - 44px-class primary touch targets;
 - EndpointPicker becomes a bottom sheet;
 - custom duration remains comfortably draggable without horizontal page overflow;
-- full network identities, including IPv6 endpoints, remain one line by dynamic fitting.
+- full network identities, including IPv6 endpoints, remain one line by dynamic fitting;
+- Dual PathCard remains two FamilyPathBlocks/four information lines rather than collapsing into one overloaded line.
 
 # 17. Accessibility
 
@@ -305,6 +348,7 @@ Mobile persistent header contains BrandIcon, product name and the circular resol
 - Selected states expose ARIA state.
 - Range control remains keyboard operable.
 - CLOSED Gate orb remains a semantic button.
+- Disabled family controls expose disabled state and an explanatory reason.
 
 # 18. Module boundaries
 
@@ -315,7 +359,7 @@ CSS:
 - `layout.css`: workspace flow/zones and responsive structure.
 - `dashboard.css`: dashboard data presentation only.
 - `spatial.css`: card/workspace spatial layer.
-- `interaction.css`: BrandIcon, EndpointPicker, DurationCrown and feedback-setting interaction surfaces.
+- `interaction.css`: BrandIcon, EndpointPicker/PathCard, DurationCrown and feedback-setting interaction surfaces.
 
 JavaScript:
 - `theme-bootstrap.js`: pre-paint theme/favicon bootstrap and early component asset loading.
@@ -327,12 +371,12 @@ JavaScript:
 - `activity.js`: event summaries/expansion.
 - `motion-feedback.js`: sound/haptic feedback abstraction.
 - `client-sources.js`: missing-family IPv4/IPv6 probe completion.
-- `endpoint-picker.js`: custom endpoint trigger, option cards and picker lifecycle.
+- `endpoint-picker.js`: the one custom picker and PathCard renderer for Access Endpoint and Internet Exit.
 - `duration-control.js`: presets-to-Custom bridge, range/detent/feedback.
-- `gate-controls.js`: Family/Scope/TTL state and single activation path.
-- `app.js`: API state, refresh and data rendering orchestration.
+- `gate-controls.js`: Family/Scope/TTL state, capability/eligibility, AccessPlan, InternetExitPlan, structured PathCard view-model data and the single activation path.
+- `app.js`: API state, refresh and general data rendering orchestration.
 
-Do not put component-specific interaction code back into `app.js` when a dedicated module owns it.
+Do not put component-specific interaction code back into `app.js` when a dedicated module owns it. Do not create separate Dual/IPv6/Mapped/Exit picker, card or fitting frameworks.
 
 # 19. Do / Don't
 
@@ -341,11 +385,16 @@ Do:
 - use the canonical Wei.G asset;
 - preserve both observed IP families;
 - make recommendation separate from user choice;
-- reuse component/elevation/motion/text-fit primitives;
+- reuse PathCard, component/elevation/motion/text-fit primitives;
+- keep AccessPlan independent from InternetExitPlan;
+- derive WireGuard service port from runtime service identity;
 - test mobile and desktop interactions before release.
 
 Don't:
 - expose a browser-native Endpoint dropdown as the final UI;
+- show Private/CGNAT as a selectable public Access Endpoint;
+- expose Private/CGNAT as an Internet Exit product mode/role;
+- repeat `Dual`, `Split WAN` or `Split Exit` when PathCard rows already express the topology;
 - add a 1h preset to the duration group;
 - allow Custom duration above 12h or off the 0.5h detents;
 - delete IPv6 merely because IPv4 becomes available, or vice versa;
@@ -354,5 +403,5 @@ Don't:
 - allow whole-page horizontal scrolling;
 - create per-component IPv6/WAN/Endpoint fitting utilities;
 - hard-code WAN2, wg0 or UDP 51820 in frontend business logic;
-- create a second activation implementation;
+- create a second activation/planning implementation;
 - expose WRITE_TOKEN, session secret or WireGuard private keys.
