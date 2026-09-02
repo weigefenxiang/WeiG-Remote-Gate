@@ -350,7 +350,7 @@ control_candidates() {
         if [ -f "$base.v6" ] && [ -f "$base.def6" ]; then
             has6=0
             while IFS= read -r a; do is_global_ipv6 "$a" && has6=1; done < "$base.v6"
-            [ "$has6" -eq 1 ] && printf '20|ipv6|%s\n' "$dev" >> "$tmp"
+            [ "$has6" -eq 1 ] && printf '20|ipv6|%s\n' "$rank" "$dev" >> "$tmp"
         fi
     done
 
@@ -527,12 +527,16 @@ ack() {
     control_request POST "/api/v1/agent/ack" "$BODY" "$payload" >/dev/null 2>&1 || true
 }
 
+rollback_active_access() {
+    "$FIREWALL" clear >/dev/null 2>&1 || true
+    [ ! -x "$EGRESS" ] || "$EGRESS" disable >/dev/null 2>&1 || true
+}
+
 rollback_batch_access() {
     count="$1"
     valid_uint "$count" || count=1
     [ "$count" -gt 1 ] || return 0
-    "$FIREWALL" clear >/dev/null 2>&1 || true
-    [ ! -x "$EGRESS" ] || "$EGRESS" disable >/dev/null 2>&1 || true
+    rollback_active_access
 }
 
 pull_once() {
@@ -686,7 +690,7 @@ pull_once() {
                         detail="$(sed -n 's/^ERROR: //p' "${TMP_BASE}.egress-error" 2>/dev/null | tail -n 1)"
                         [ -n "$detail" ] || detail="wireguard-egress-activation-failed"
                         logger -t "$TAG" "egress activation failed: $detail" 2>/dev/null || true
-                        rollback_batch_access "$batch_count"
+                        rollback_active_access
                         ack "$id" false "$detail"
                     fi
                 elif [ "$egress_requested" -eq 1 ]; then
