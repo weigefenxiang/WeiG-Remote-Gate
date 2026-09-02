@@ -812,10 +812,10 @@
     if (pendingAction === 'activate' || (locked && lockAction(currentData) === 'activate')) {
       mode='authorizing'; title=t('gate.authorizing');
       const queued = Array.isArray(next) ? next.length : 0;
-      subtitle = queued > 0 ? (zh() ? `正在授权 ${String(pending?.family||'').toUpperCase()}，随后继续下一协议族…` : `Authorizing ${String(pending?.family||'').toUpperCase()}, then continuing with the next family...`) : t('gate.authorizingSub');
-      badge=t('gate.authorizingBadge');
+      subtitle = queued > 0 ? (zh() ? `正在授权 ${String(pending?.family||'').toUpperCase()}，随后继续下一协议族…` : `Authorizing ${String(pending?.family||'').toUpperCase()}, then continuing with the next family…`) : (zh() ? '正在等待 OpenWrt 应用临时授权…' : 'Waiting for OpenWrt to apply the temporary authorization…');
+      badge=t('gate.pendingBadge');
     } else if (pendingAction === 'close' || (locked && lockAction(currentData) === 'close')) {
-      mode='authorizing'; title=zh() ? '正在关闭' : 'CLOSING'; subtitle=zh() ? '正在等待 OpenWrt 清理临时授权与 Internet 出口。' : 'Waiting for OpenWrt to clear temporary authorization and Internet egress.'; badge=zh() ? '关闭中' : 'CLOSING';
+      mode='authorizing'; title=t('gate.closing'); subtitle=zh() ? '正在等待 OpenWrt 清除临时授权…' : 'Waiting for OpenWrt to clear temporary authorizations…'; badge=t('gate.pendingBadge');
     } else if (active) {
       mode='open'; title=t('gate.open');
       const selected = state.family === 'dual' ? [sourceExpiresIn(fw,'ipv4'), sourceExpiresIn(fw,'ipv6')] : [sourceExpiresIn(fw,state.family)];
