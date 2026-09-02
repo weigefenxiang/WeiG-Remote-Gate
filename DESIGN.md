@@ -1,5 +1,5 @@
 ---
-version: 7
+version: 8
 name: WeiG-Remote-Gate
 description: "A dense, tactile, adaptive network-security workspace with standardized spatial depth, modular controls, and a distinct Wei.G security identity."
 ---
@@ -180,29 +180,56 @@ PathCard
 A `FamilyPathBlock` has exactly these semantic fields:
 - family (`IPv4` / `IPv6`);
 - WAN identity;
-- optional role (`Direct`, `Mapped`, `NAT egress · Try`, etc. for Access);
+- optional Access role;
 - complete machine value (endpoint/address).
 
-Single Access example:
+Canonical Access roles are structured values, not text inferred by the renderer:
 
 ```text
-IPv4   WAN2   Direct
+Public Direct
+Global Direct
+Mapped
+Try
+Relay
+```
+
+`Recommended` / `推荐` is plan-ranking metadata and is separate from the Access role. Recommendation must never be reconstructed from role text, option order or visible labels.
+
+For a single-family Access trigger, keep the selected path compact and two-line. The first line is:
+
+```text
+<WAN>   <family>   <flexible space>   <concise reachability when useful>
+```
+
+For `Public Direct`, the trigger may shorten only the trailing presentation token to `Public`; the structured role remains `Public Direct`. The second line is always the complete endpoint identity.
+
+Example trigger:
+
+```text
+WAN2   IPv4                         Public
 223.73.44.6:51820
 ```
 
-Mapped Access example:
+The corresponding picker option keeps recommendation and role distinct:
 
 ```text
-IPv4   WAN    Mapped
+IPv4   WAN2              Recommended   Public Direct
+223.73.44.6:51820
+```
+
+Mapped Access uses the same two-line block:
+
+```text
+IPv4   WAN                              Mapped
 223.73.44.6:7179
 ```
 
 Dual Access is always two blocks / four information lines:
 
 ```text
-IPv4   WAN2   Direct
+IPv4   WAN2                        Public Direct
 223.73.44.6:7179
-IPv6   WAN    Direct
+IPv6   WAN                         Global Direct
 [240e:....]:51820
 ```
 
@@ -210,10 +237,15 @@ Same-WAN and split-WAN Dual use the exact same DOM/component structure. The WAN 
 
 Internet Exit consumes the same PathCard renderer. Exit rows show family, WAN and observed/known address value; they do not expose `Private/CGNAT` as a product role. A private/CGNAT local IPv4 WAN may still be a valid outbound exit when routing capability is valid.
 
-Card-level `Primary` / selected state applies to the whole plan, not independently to each family block.
+Structured ownership is mandatory:
+- `gate-controls.js` is the browser owner of Access Endpoint eligibility, ranking, option creation and PathCard row data;
+- it writes structured `data-path-rows` and recommendation metadata (`data-path-primary`) onto the internal select options;
+- `endpoint-picker.js` is render/interaction only: it consumes those structured records and must not parse `option.textContent`, infer Access roles from strings/order, or use `MutationObserver` to rediscover policy state;
+- `app.js` must not re-filter, re-rank or relabel Access Endpoint options.
 
 Responsive rules:
 - family and optional role remain compact anchors;
+- recommendation and role remain visually distinct tokens;
 - WAN identity uses `NetworkIdentityText` `identity` profile;
 - endpoint/address value uses `NetworkIdentityText` `compact` profile;
 - the complete IPv6 value stays one line and is fitted rather than truncated;
@@ -371,10 +403,10 @@ JavaScript:
 - `activity.js`: event summaries/expansion.
 - `motion-feedback.js`: sound/haptic feedback abstraction.
 - `client-sources.js`: missing-family IPv4/IPv6 probe completion.
-- `endpoint-picker.js`: the one custom picker and PathCard renderer for Access Endpoint and Internet Exit.
+- `endpoint-picker.js`: the one custom picker and PathCard renderer for Access Endpoint and Internet Exit; render/interaction only, with no policy inference from label text or DOM mutation observation.
 - `duration-control.js`: presets-to-Custom bridge, range/detent/feedback.
-- `gate-controls.js`: Family/Scope/TTL state, capability/eligibility, AccessPlan, InternetExitPlan, structured PathCard view-model data and the single activation path.
-- `app.js`: API state, refresh and general data rendering orchestration.
+- `gate-controls.js`: Family/Scope/TTL state, capability/eligibility, AccessPlan, InternetExitPlan, Access Endpoint option creation, structured PathCard view-model data and the single activation path.
+- `app.js`: API state, refresh and general data rendering orchestration; it does not own Access Endpoint filtering/ranking/labels/options.
 
 Do not put component-specific interaction code back into `app.js` when a dedicated module owns it. Do not create separate Dual/IPv6/Mapped/Exit picker, card or fitting frameworks.
 
@@ -384,7 +416,7 @@ Do:
 - keep the console calm, tactile, compact and data-first;
 - use the canonical Wei.G asset;
 - preserve both observed IP families;
-- make recommendation separate from user choice;
+- make recommendation separate from user choice and from Access role;
 - reuse PathCard, component/elevation/motion/text-fit primitives;
 - keep AccessPlan independent from InternetExitPlan;
 - derive WireGuard service port from runtime service identity;
@@ -394,6 +426,8 @@ Don't:
 - expose a browser-native Endpoint dropdown as the final UI;
 - show Private/CGNAT as a selectable public Access Endpoint;
 - expose Private/CGNAT as an Internet Exit product mode/role;
+- make `app.js` a second Access Endpoint policy/label owner;
+- let EndpointPicker parse option display text or observe mutations to infer policy semantics;
 - repeat `Dual`, `Split WAN` or `Split Exit` when PathCard rows already express the topology;
 - add a 1h preset to the duration group;
 - allow Custom duration above 12h or off the 0.5h detents;
