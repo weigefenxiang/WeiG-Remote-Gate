@@ -73,7 +73,9 @@ class FirewallBackendTests(unittest.TestCase):
         self.assertIn('2>"$error_file"', source)
         self.assertIn("sed -n 's/^ERROR: //p'", source)
         self.assertIn('logger -t "$TAG" "activation failed: $detail"', source)
-        self.assertIn('finish_activation_command "$id" false "$detail"', source)
+        self.assertIn('rollback_activation_failure "$id" "$detail"', source)
+        self.assertIn('finish_activation_command "$result_id" false "$result_detail"', source)
+        self.assertIn('write_activation_result "$result_id" pending "rollback-pending:$result_detail"', source)
         self.assertNotIn('ack "$id" false "firewall-activation-failed"', source)
         self.assertIn("sanitize_detail", source)
 
