@@ -225,6 +225,9 @@ Examples:
 - stale mapper JSON without current owned process -> reject;
 - incomplete Dual egress -> roll back the whole Dual runtime;
 - if Gate authorization succeeds but the requested Internet Exit activation then fails, clear Gate authorization and egress before acknowledging failure;
+- clearing/replacing pre-existing Internet Exit runtime is itself an Activate side effect, so it must happen only after the Activate command has a durable runtime `pending` journal;
+- Internet Exit cleanup is successful only when the owned firewall/PBR runtime is verified absent; a helper must return failure and retain enough state identity for retry when cleanup cannot be proven complete;
+- explicit Internet Exit `none` must clear any previous egress before Gate activation and must not rely on a redundant post-Activate cleanup to converge;
 - if any pending Activate expires before its ACK is accepted, treat router runtime as ambiguous and queue a Close rollback; for a multi-family batch also clear the remaining batch tail regardless of which member expired;
 - if a Close attempt reports failure, keep that same Close pending for retry instead of treating failure as a terminal command result;
 - ambiguous WAN/service/port -> omit or reject rather than guess.
@@ -251,7 +254,8 @@ The journal follows these fail-closed rules:
 - if the same command id is later found in `pending`, local execution is uncertain, so Gate authorization and Internet Exit are cleared before a failure result is journaled and ACKed;
 - if a journal belongs to a different command id, only a saved `false` result is safe to discard without rollback; saved `true`, `pending` or invalid state may represent live unacknowledged runtime and must be rolled back before the new Activate may execute;
 - if the Agent cannot create the pre-side-effect journal, it must not perform Activate side effects;
-- if the Agent cannot persist the final result, it must roll back runtime rather than acknowledge a success that cannot be replayed safely.
+- if the Agent cannot persist the final result, it must roll back runtime rather than acknowledge a success that cannot be replayed safely;
+- rollback is part of the same Activate transaction: if Gate/egress cleanup is incomplete, keep the journal `pending` with rollback intent, do not ACK a final result, do not run a replacement Activate, and retry cleanup only until convergence.
 
 The journal belongs to the same runtime-authority lifetime as the firewall/egress state and therefore lives in the runtime namespace rather than becoming long-lived configuration state.
 
@@ -339,3 +343,4 @@ Before implementing any network/UI change, answer all of these:
 12. Is last-known diagnostic state kept separate from the projected authority view, with any stale runtime hint limited to safe Close behavior only?
 13. Can an Activate be retried, ACK-lost or interrupted without repeating uncertain side effects, and is its result journaled before Server acknowledgement?
 14. Does every expired unacknowledged Activate converge through a Close rollback, and does a failed Close stay retryable until success or its existing Close deadline?
+15. Are pre-Activate cleanup and rollback themselves journal-covered, verified to completion, and retry-only when convergence is incomplete?
