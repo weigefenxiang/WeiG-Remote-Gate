@@ -198,7 +198,7 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("form.inert = Boolean(locked)", gate)
         self.assertIn("control.disabled = true;", gate)
         self.assertRegex(gate, r"orb\.disabled\s*=\s*!orbEnabled")
-        self.assertIn("['done', 'failed', 'expired']", gate)
+        self.assertRegex(gate, r"\['done',\s*'failed',\s*'expired'\]")
         self.assertNotIn("65000", gate)
         self.assertIn("setInterval(() => window.RemoteGateApp?.refresh?.(), 1000)", gate)
         self.assertIn("RemoteGateFeedback", gate)
