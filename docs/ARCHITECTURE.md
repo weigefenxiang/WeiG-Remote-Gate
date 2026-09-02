@@ -144,6 +144,8 @@ dual
   -> one IPv6 WAN choice
 ```
 
+Each visible family selector is deliberately pure: IPv4 mode renders only an IPv4 WAN trigger/options, IPv6 mode renders only IPv6, and Dual renders those same two scalar selectors independently. Every Internet Exit option is one `FamilyPathBlock` containing the selected family, logical WAN and WAN address. It is not an Access Endpoint identity, so no WireGuard/Mapping `external_port`, `ingress_port` or `service_port` belongs in an Exit row.
+
 There is no canonical `IPv4 WAN × IPv6 WAN` combination object or selectable pair list. With three, four or more WANs the UI grows only by adding eligible WAN rows to the relevant family selector. It must never generate a Cartesian product or cap an exploding pair list.
 
 Default recommendation follows the current Access family for the **mode** only:
@@ -218,6 +220,8 @@ Internet client
 ```
 
 Never infer the WireGuard service port from the Mapping external port.
+
+Internet Exit does not consume this port model for WAN selection. It chooses an outbound family/WAN path; presenting an Access/service port in an Internet Exit option is a layering violation.
 
 ## Mapping Engine
 
@@ -357,11 +361,15 @@ IPv6   WAN    Direct
 
 Same-WAN, split-WAN, Direct and Mapped Access use the same component tree. Differences are data, not component families.
 
-Internet Exit reuses the same `EndpointPicker` and single-family `FamilyPathBlock` renderer for WAN choice, but its interaction is mode-first. IPv4 and IPv6 modes each expose one family picker; Dual exposes both independent family pickers. A generated two-family Exit combination card is not part of the architecture.
+Internet Exit reuses the same `EndpointPicker` and single-family `FamilyPathBlock` renderer for WAN choice, but its interaction is mode-first. IPv4 and IPv6 modes each expose one matching-family picker and hide the opposite family; Dual exposes both independent family pickers. Each Exit PathCard carries WAN address identity only. A generated two-family Exit combination card is not part of the architecture.
+
+Phone and desktop consume the same semantic select/trigger/PathCard structure. Responsive behavior changes only the existing `EndpointPicker` surface: mobile uses the bottom sheet and desktop uses the popover. There is no separate mobile plan owner or mobile-only Exit component tree.
 
 Do not repeat `Dual`, `Split WAN` or `Split Exit` labels when the family controls already communicate the topology.
 
 Internet Exit rows do not expose internal `Private/CGNAT` classification as a user-facing role.
+
+The current WireGuard public Endpoint display is a read-only projection of the currently selected structured Access PathCard row. Healthy state shows the endpoint identity itself without an extra `IPv4/IPv6 Direct · OpenWrt currently reports` line. Actionable errors belong to the existing Gate/family status surfaces rather than a permanent healthy-state note.
 
 ### Browser module ownership
 
@@ -369,9 +377,12 @@ Internet Exit rows do not expose internal `Private/CGNAT` classification as a us
 - `plan-preferences.js`: browser-only persistence adapter for non-authoritative manual Access plan hints; it never decides endpoint eligibility and never creates authorization;
 - `endpoint-picker.js`: visible picker trigger, desktop popover/mobile sheet, PathCard rendering and selected/focus state only;
 - `fit-text.js`: the only NetworkIdentityText fitting engine;
-- `app.js`: API refresh and general dashboard rendering only; it does not own Internet Exit selections or Access Endpoint policy;
+- `app.js`: API refresh and general dashboard presentation; it may project the current public Endpoint from `gate-controls.js` structured `data-path-rows`, but it does not own Internet Exit selections, endpoint eligibility/ranking or Access policy;
+- `theme-bootstrap.js`: pre-paint theme/favicon setup and early presentation-module asset loading only; it must not mutate Gate structure, wrap dashboard fetch, observe Gate state or independently resolve Access/Exit policy;
 - `interaction.css`: generic EndpointPicker/PathCard interaction styling;
 - root `DESIGN.md`: visual tokens/component/responsive rules.
+
+GateStatusHero and current-public-endpoint semantic markup live in `dashboard.html`. They are not reconstructed by bootstrap scripts. `gate-controls.js` remains the decision owner; presentation orchestration may consume its structured selected option but must not recreate the selection algorithm.
 
 One decision has one Current Owner. When a new canonical runtime owner replaces an old implementation, the old owner, old shadow state and obsolete DOM/test contract leave runtime in the same issue chain. Do not preserve a second implementation through CSS overrides, MutationObserver, version-file switching or indefinite compatibility adapters.
 

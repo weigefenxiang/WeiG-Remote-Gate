@@ -42,6 +42,8 @@ Examples of wrong reasoning:
 
 A recurring UI form of the same mistake is letting Access topology drive Internet Exit topology. A split-WAN AccessPlan does not imply a split-WAN InternetExitPlan, and changing the Access Endpoint must not silently rewrite a manually or automatically selected Internet Exit WAN.
 
+A second recurring UI form is leaking Access identity into Internet Exit presentation. Access Endpoint rows may legitimately contain an Internet endpoint plus a service/mapping port. Internet Exit rows identify an outbound WAN path and therefore show only that selected family, logical WAN and WAN address. They must not borrow the opposite family or any `external_port`, `ingress_port` or `service_port` from Access.
+
 ## 2. Product concepts must not leak implementation facts
 
 User-facing concepts are intentionally small and stable.
@@ -109,6 +111,8 @@ ipv6 -> exactly one IPv6 WAN selector
 dual -> exactly one IPv4 WAN selector + exactly one IPv6 WAN selector
 ```
 
+Each visible selector is family-pure. IPv4 mode exposes only the IPv4 WAN picker and every option contains one IPv4 `FamilyPathBlock`; IPv6 mode is symmetric. Dual exposes the same two scalar pickers side by side/stacked according to viewport, never a combined pair card. Exit rows contain WAN address identity only, not WireGuard or Mapping port identity.
+
 Never generate an IPv4-WAN × IPv6-WAN Cartesian product as selectable Internet Exit plans. Adding a third, fourth or later WAN may add rows to each family picker, but must not multiply Dual choices. Dual egress is one transaction containing two scalar family choices, not a list of precomputed pair combinations.
 
 Automatic WAN recommendation is independent of the Access Endpoint. When one currently eligible WAN is the best shared IPv4+IPv6 exit, all three non-LAN modes should naturally recommend that same WAN for their applicable family fields. If no shared WAN exists, Dual independently recommends the best current IPv4 WAN and best current IPv6 WAN.
@@ -131,6 +135,8 @@ For Direct access they may be equal. For Mapped access they are allowed to diffe
 
 The browser/VPS cannot invent any of these ports as authority.
 
+These three port identities belong to Access/service runtime. Internet Exit WAN choice does not have a service port field and its PathCard must not display one.
+
 ## 5. Capability precedes interaction
 
 A feature that is not available must not be presented as an apparently valid action that fails only after the user enters the flow.
@@ -146,6 +152,8 @@ Capability changes never auto-Activate.
 
 A normal/ready capability is the quiet default state. Do not spend a persistent explanatory row saying that OpenWrt currently reports a normal IPv4/IPv6 path. Family notes are reserved for actionable exceptions such as unavailable capability, missing current Source or missing reachable Endpoint.
 
+The same quiet-state rule applies to the current public WireGuard Endpoint display: show the endpoint identity itself when useful, but do not add a permanent `IPv4 Direct / IPv6 Direct / OpenWrt currently reports` status line underneath a healthy value.
+
 ## 6. One policy engine per decision
 
 Do not create parallel implementations for the same policy.
@@ -159,6 +167,8 @@ Hard examples:
 - EndpointPicker remains the visible picker infrastructure; do not create separate Dual, IPv6, Mapped or Exit picker frameworks.
 
 When a new canonical owner replaces an old implementation, the old runtime implementation must be removed in the same issue chain. Do not keep it alive behind version files, CSS overrides, MutationObserver, shadow state, legacy DOM ids or a permanent compatibility adapter. Compatibility is allowed only at a real external/protocol boundary with an explicit retirement reason; it is not a justification for two live browser owners.
+
+`theme-bootstrap.js` is pre-paint/theme/component-asset bootstrap only. It must not mutate Gate structure, wrap `window.fetch`, observe Gate DOM state or independently re-resolve selected Endpoint policy. Gate markup is canonical template markup; `gate-controls.js` owns Gate/plan decisions; `app.js` may render non-authoritative dashboard presentation only from the structured selection view already emitted by the Gate owner.
 
 A helper inside the owning module is preferred over a new single-purpose module when the responsibility already belongs to that module.
 
@@ -189,15 +199,19 @@ The same structure applies to same-WAN and split-WAN Access plans. Do not create
 
 Internet Exit is different in interaction shape even though it reuses the same PathCard renderer: each family WAN selector is a scalar picker and therefore renders one FamilyPathBlock. Dual Exit displays two independent family pickers rather than one generated two-family combination card.
 
+Phone and desktop use the same semantic controls and the same `EndpointPicker` instance contract. Below 768px the picker is the existing bottom sheet; at desktop width it is the existing popover. Responsive layout may change placement, never plan state, option schema or component ownership.
+
 Do not repeat low-value labels such as `Dual`, `Split WAN` or `Split Exit` when the family selectors/rows already express the fact.
 
-Access rows may show `Direct`, `Mapped` or another real Access Method. Internet Exit rows show family/WAN/address information without leaking `Private/CGNAT` as a product label.
+Access rows may show `Direct`, `Mapped` or another real Access Method. Internet Exit rows show family/WAN/address information without leaking `Private/CGNAT` as a product label or any Access endpoint port.
 
 Module ownership:
 
 - `gate-controls.js`: capability, eligibility, AccessPlan, InternetExitPlan, automatic/manual selection and structured view-model data;
 - `endpoint-picker.js`: trigger/sheet/popover/card rendering and interaction only;
 - `fit-text.js`: the only responsive fitting engine for complete network identities;
+- `app.js`: dashboard refresh/general presentation; it may consume Gate structured rows to display the current public Endpoint but may not re-filter/re-rank or create a second plan;
+- `theme-bootstrap.js`: pre-paint theme/favicon and early presentation asset loading only;
 - `interaction.css`: generic picker/PathCard interaction styling;
 - `DESIGN.md`: visual/component/responsive contract.
 
@@ -386,3 +400,6 @@ Before implementing any network/UI change, answer all of these:
 17. Does Internet Exit remain `mode + wan4 + wan6` with at most one WAN selection per family, rather than generated pair combinations?
 18. If a new canonical owner was introduced, did the previous runtime owner and its old state/DOM/test contract exit in the same change?
 19. Is normal ready state quiet, with persistent explanatory UI reserved for actionable exceptions rather than repeating current OpenWrt reports?
+20. Does each visible Internet Exit picker contain exactly one matching family block and WAN address, with no opposite-family row or Access/service port identity?
+21. Do mobile and desktop consume the same semantic DOM/plan state, with only the existing EndpointPicker sheet/popover presentation changing by viewport?
+22. Is `theme-bootstrap.js` still bootstrap-only rather than a hidden Gate DOM/data owner?

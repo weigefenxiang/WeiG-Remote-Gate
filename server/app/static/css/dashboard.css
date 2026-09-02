@@ -230,9 +230,10 @@
 .full-row { grid-column: 1 / -1; }
 .gate-action {
   min-height: var(--control-height-primary);
-  justify-content: space-between;
+  justify-content: center;
   padding-left: 19px;
   padding-right: 19px;
+  text-align: center;
 }
 .family-segment { grid-template-columns: repeat(3, 1fr); }
 .family-note {
@@ -732,8 +733,7 @@
   text-align: center;
 }
 .verified-endpoint[hidden] { display: none !important; }
-.verified-endpoint-label,
-.verified-endpoint-note { display: block; }
+.verified-endpoint-label { display: block; }
 .verified-endpoint-label {
   color: var(--ink-muted);
   font-size: 11px;
@@ -764,11 +764,6 @@
 }
 .verified-endpoint.is-current .verified-endpoint-value {
   animation: remote-gate-endpoint-verified 3.4s ease-in-out infinite;
-}
-.verified-endpoint-note {
-  color: var(--ink-subtle);
-  font-size: 10px;
-  line-height: 1.4;
 }
 @keyframes remote-gate-endpoint-verified {
   0%, 68%, 100% {
@@ -833,7 +828,6 @@
     overflow-wrap: normal;
     word-break: normal;
   }
-  .verified-endpoint-note { font-size: 11px; }
 }
 @media (max-width: 379px) {
   .gate-status-stage {

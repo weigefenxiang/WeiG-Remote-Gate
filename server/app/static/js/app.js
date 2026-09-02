@@ -377,6 +377,89 @@
     }
   }
 
+  function gateStatusPresentation() {
+    const orb = $('gate-orb');
+    if (!orb) return;
+    const gateState = String(orb.dataset.state || 'closed');
+    const short = $('gate-orb-state');
+    const shortLabels = {open:'OPEN', authorizing:'WAIT', error:'ERROR', closed:'CLOSED'};
+    if (short) short.textContent = shortLabels[gateState] || 'CLOSED';
+    const zh = document.documentElement.dataset.lang === 'zh';
+    const sides = gateState === 'open'
+      ? (zh ? ['WAN 入口', '临时开放'] : ['WAN INPUT', 'TEMP OPEN'])
+      : gateState === 'authorizing'
+        ? (zh ? ['WAN 入口', '正在同步'] : ['WAN INPUT', 'SYNCING'])
+        : gateState === 'error'
+          ? (zh ? ['WAN 入口', '需要检查'] : ['WAN INPUT', 'CHECK'])
+          : (zh ? ['WAN 入口', '保持隐藏'] : ['WAN INPUT', 'HIDDEN']);
+    const left = document.querySelector('[data-gate-status-side="left"]');
+    const right = document.querySelector('[data-gate-status-side="right"]');
+    if (left) left.textContent = sides[0];
+    if (right) right.textContent = sides[1];
+    const copy = $('gate-status-copy');
+    const normalClosed = gateState === 'closed' && $('gate-state')?.textContent === t('gate.closed');
+    copy?.classList.toggle('is-redundant', normalClosed);
+  }
+
+  function selectedPublicPathRow() {
+    const select = $('endpoint-select') || $('wan-select');
+    if (!state.dashboardAvailable || !select || select.dataset.selectionConfirmed !== '1') return null;
+    if (String(select.dataset.selectionFamily || '') === 'dual' || String(select.value || '').startsWith('dual:')) return null;
+    const option = select.selectedOptions?.[0];
+    if (!option?.dataset?.pathRows) return null;
+    try {
+      const rows = JSON.parse(option.dataset.pathRows);
+      if (!Array.isArray(rows) || rows.length !== 1) return null;
+      const row = rows[0] || {};
+      const role = String(row.role || '');
+      if (!['Public Direct', 'Global Direct', 'Mapped'].includes(role)) return null;
+      const value = String(row.value || '').trim();
+      if (!value || value === '—') return null;
+      return {value};
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function renderCurrentPublicEndpoint() {
+    const host = $('current-public-endpoint');
+    if (!host) return;
+    const selected = selectedPublicPathRow();
+    if (!selected) {
+      host.hidden = true;
+      host.classList.remove('is-current');
+      return;
+    }
+    const zh = document.documentElement.dataset.lang === 'zh';
+    const label = host.querySelector('[data-public-endpoint-label]');
+    const value = host.querySelector('[data-public-endpoint-value]');
+    if (label) label.textContent = zh ? '当前 WireGuard 公网 Endpoint' : 'Current WireGuard Public Endpoint';
+    if (value) {
+      value.textContent = selected.value;
+      value.title = zh ? `复制 ${selected.value}` : `Copy ${selected.value}`;
+      value.setAttribute('aria-label', value.title);
+    }
+    host.hidden = false;
+    host.classList.add('is-current');
+  }
+
+  async function copyCurrentPublicEndpoint() {
+    const value = String(document.querySelector('[data-public-endpoint-value]')?.textContent || '').trim();
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      toast(t('toast.ipCopied'));
+    } catch (_) {
+      toast(t('toast.clipboardUnavailable'), 'error');
+    }
+  }
+
+  function renderGatePresentation(currentData) {
+    window.RemoteGateGateControls?.render(currentData || {});
+    gateStatusPresentation();
+    renderCurrentPublicEndpoint();
+  }
+
   function render(data) {
     state.data = data;
     state.csrf = data.csrf || '';
@@ -390,7 +473,7 @@
     renderWans(data);
     renderSystem(data);
     window.RemoteGateActivity?.render($('activity-list'), data?.activity, t);
-    window.RemoteGateGateControls?.render(data);
+    renderGatePresentation(data);
     window.RemoteGateFit?.observe();
   }
 
@@ -407,7 +490,8 @@
       render(payload);
     } catch (_) {
       state.dashboardAvailable = false;
-      if (state.data) window.RemoteGateGateControls?.render(state.data);
+      if (state.data) renderGatePresentation(state.data);
+      if ($('current-public-endpoint')) $('current-public-endpoint').hidden = true;
       if ($('system-state')) $('system-state').textContent = t('header.statusUnavailable');
       if ($('system-dot')) $('system-dot').className = 'status-dot danger';
     }
@@ -430,7 +514,7 @@
   async function post(path, body = {}) {
     if (state.busy) return;
     state.busy = true;
-    window.RemoteGateGateControls?.render(state.data || {});
+    renderGatePresentation(state.data || {});
 
     try {
       const response = await fetch(path, {
@@ -447,7 +531,7 @@
       toast(String(error.message || error), 'error');
     } finally {
       state.busy = false;
-      window.RemoteGateGateControls?.render(state.data || {});
+      renderGatePresentation(state.data || {});
     }
   }
 
@@ -471,14 +555,18 @@
     onFamilyChange: () => {
       if (!state.data) return;
       renderClient(state.data);
+      renderCurrentPublicEndpoint();
     },
     onWireGuardChange: () => {
       if (!state.data) return;
       renderWireGuard(state.data);
+      renderCurrentPublicEndpoint();
     }
   });
 
+  document.querySelector('[data-public-endpoint-value]')?.addEventListener('click', copyCurrentPublicEndpoint);
   document.querySelectorAll('[data-action="logout"]').forEach((button) => button.addEventListener('click', logout));
+  window.addEventListener('remote-gate-endpoint-selection', () => renderCurrentPublicEndpoint());
   window.addEventListener('remote-gate-language', () => {
     window.RemoteGateI18n?.apply();
     if (state.data) render(state.data);

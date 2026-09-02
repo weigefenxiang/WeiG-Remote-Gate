@@ -25,7 +25,7 @@
     <div class="topbar-inner">
       <div class="mobile-brand-line">
         <div class="brand compact">
-          <button class="brand-mark brand-trigger" id="utility-trigger" type="button" aria-haspopup="dialog" aria-controls="utility-layer" aria-expanded="false" title="WeiG Remote Gate settings">WG</button>
+          <button class="brand-mark brand-trigger brand-icon-chassis" id="utility-trigger" type="button" aria-haspopup="dialog" aria-controls="utility-layer" aria-expanded="false" title="WeiG Remote Gate settings"><img class="brand-icon-image" src="/static/Wei.G.ico" alt="" width="44" height="44" decoding="async"></button>
           <a class="brand-copy" href="/" aria-label="WeiG Remote Gate home">
             <strong>WeiG Remote Gate</strong>
             <span data-i18n="header.secureRemoteAccess">Secure Remote Access</span>
@@ -73,16 +73,27 @@
           </div>
 
           <div class="gate-layout">
-            <div class="gate-orb-wrap">
-              <button class="gate-orb" id="gate-orb" data-state="closed" type="button" aria-live="polite" aria-label="Activate remote access">
-                <span class="gate-ring ring-a" aria-hidden="true"></span>
-                <span class="gate-ring ring-b" aria-hidden="true"></span>
-                <span class="gate-core">
-                  <span class="gate-lock" id="gate-lock" aria-hidden="true">◆</span>
-                  <strong id="gate-state">Closed</strong>
-                  <small id="gate-substate">WAN input stays hidden</small>
-                </span>
-              </button>
+            <div class="gate-orb-wrap gate-status-hero">
+              <div class="gate-status-stage" id="gate-status-stage">
+                <span class="gate-status-side gate-status-side--left" data-gate-status-side="left">WAN INPUT</span>
+                <button class="gate-orb" id="gate-orb" data-state="closed" type="button" aria-live="polite" aria-label="Activate remote access">
+                  <span class="gate-ring ring-a" aria-hidden="true"></span>
+                  <span class="gate-ring ring-b" aria-hidden="true"></span>
+                  <span class="gate-core">
+                    <span class="gate-lock" id="gate-lock" aria-hidden="true">◆</span>
+                    <strong class="gate-orb-short-state" id="gate-orb-state">CLOSED</strong>
+                  </span>
+                </button>
+                <span class="gate-status-side gate-status-side--right" data-gate-status-side="right">HIDDEN</span>
+              </div>
+              <div class="gate-status-copy is-redundant" id="gate-status-copy" aria-live="polite">
+                <strong id="gate-state">Closed</strong>
+                <small id="gate-substate">WAN input stays hidden</small>
+              </div>
+              <div class="verified-endpoint" id="current-public-endpoint" hidden>
+                <span class="verified-endpoint-label" data-public-endpoint-label="1">Current WireGuard Public Endpoint</span>
+                <button class="verified-endpoint-value" data-public-endpoint-value="1" type="button" title="Copy public endpoint" aria-label="Copy public endpoint"></button>
+              </div>
             </div>
 
             <div class="gate-form">
@@ -127,10 +138,7 @@
               </div>
 
               <p class="family-note full-row" id="family-note" aria-live="polite">Checking trusted source and endpoint capability…</p>
-              <button class="button primary gate-action full-row" id="activate-button" type="button">
-                <span data-i18n="gate.activate">Activate remote access</span>
-                <span aria-hidden="true">→</span>
-              </button>
+              <button class="button primary gate-action full-row" id="activate-button" type="button"><span data-i18n="gate.activate">Activate remote access</span></button>
               <button class="button danger subtle full-row hidden" id="close-button" type="button" data-i18n="gate.close">Close access now</button>
             </div>
           </div>

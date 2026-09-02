@@ -56,7 +56,7 @@ Do not reopen these without a new regression:
 - Client-source feedback-loop protection with active source pinning: PASS.
 - Current real-device dashboard data for Client IPv4, Access Endpoint, Internet Exit and WAN list was user-confirmed normal before the current Internet Exit UI refactor.
 
-The current Internet Exit UI refactor is software/contract work only; it does not create a new hardware PASS claim.
+The current responsive Internet Exit/Gate presentation work is software/contract work only; it does not create a new hardware PASS claim.
 
 ## Canonical browser ownership
 
@@ -81,9 +81,16 @@ endpoint-picker.js
 app.js
   -> API/dashboard state
   -> refresh
-  -> general dashboard rendering
+  -> general dashboard presentation
+  -> read-only Current WireGuard Public Endpoint projection from Gate structured rows
   -> no Access/Exit policy owner
+
+theme-bootstrap.js
+  -> pre-paint theme/favicon setup
+  -> early presentation-module asset loading only
 ```
+
+`theme-bootstrap.js` must not mutate Gate structure, wrap `window.fetch`, install a Gate `MutationObserver`, resolve selected endpoint policy or become a second Gate presentation/data owner. Canonical GateStatusHero/current-public-endpoint markup belongs in `dashboard.html`. `app.js` may display the already-selected structured PathCard row but may not re-filter or re-rank endpoints.
 
 When a new canonical implementation replaces an old runtime implementation, remove the old owner, shadow state, obsolete DOM contract and tests that preserve the old behavior in the same issue chain. Do not keep two implementations alive through version files, CSS overrides, MutationObserver or indefinite compatibility adapters.
 
@@ -167,18 +174,50 @@ Therefore:
 
 `gate-controls.js` is the sole InternetExitPlan owner. `app.js` must not contain a second `egressSelections`/`egressWan` state implementation.
 
-## Internet Exit rendering
+## Responsive Internet Exit rendering
 
 Reuse existing primitives only:
 
 - `segment` for `LAN / IPv4 / IPv6 / Dual` mode;
-- `EndpointPicker` for each visible WAN selector;
+- `EndpointPicker` for every visible WAN selector;
 - one single-family `FamilyPathBlock` for each Exit WAN option;
 - `fit-text.js` for all network identity fitting.
+
+Single-family behavior is strict:
+
+```text
+IPv4 mode -> only IPv4 trigger/options are visible
+IPv6 mode -> only IPv6 trigger/options are visible
+Dual mode -> the same IPv4 trigger + the same IPv6 trigger, independently
+```
+
+An Internet Exit option contains family + logical WAN + WAN address only. It must not show the opposite family and must not display Access endpoint/service/Mapping port identity. Access Endpoint remains the component that may show `<address>:<port>` because that port is part of the inbound service identity.
+
+Phone and desktop have one semantic implementation. On phone the existing `EndpointPicker` becomes its established bottom sheet; on desktop the same picker becomes its established popover. There is no mobile-only Exit planner, select model or card framework.
 
 Dual Access still uses one PathCard with two FamilyPathBlocks. Dual Internet Exit is different: it uses two independent single-family WAN pickers, not a generated two-family combination card.
 
 Do not create Exit-specific picker/card/fitting frameworks.
+
+## Current WireGuard Public Endpoint presentation
+
+The Current WireGuard Public Endpoint is a read-only projection of the currently selected eligible Access PathCard row. It does not have a second endpoint-selection algorithm.
+
+Healthy presentation is deliberately quiet:
+
+```text
+Current WireGuard Public Endpoint
+<current endpoint value>
+```
+
+Do not restore a persistent line such as:
+
+```text
+IPv4 Direct · OpenWrt currently reports
+IPv6 Direct · OpenWrt currently reports
+```
+
+or equivalent Chinese text. Actionable capability/source/endpoint errors belong to the existing Gate/family status surfaces.
 
 ## Quiet healthy state
 
@@ -215,20 +254,25 @@ real-device hardware
 
 Routine `dev` CI executes Python/static/runtime checks and JavaScript syntax checks. Release Playwright scripts may be syntax-checked on `dev`, but executable Browser Matrix remains `main`-only/manual.
 
-The Internet Exit mode-first refactor has focused coverage for:
+Focused coverage for the Internet Exit/Gate presentation chain now includes:
 
 - one canonical `mode + wan4 + wan6` owner;
 - removal of old `egressPlans()` Cartesian-product planning;
 - removal of `app.js` shadow Exit state;
 - generic EndpointPicker consumer semantics surviving field normalization;
+- mobile IPv4 Exit exposes only the IPv4 picker/FamilyPathBlock;
+- mobile IPv6 Exit exposes only IPv6;
+- Dual uses the same two scalar pickers;
+- desktop consumes the same semantic controls through the existing picker popover;
+- Exit PathCards reject Access-style address+port identity;
+- Current WireGuard Public Endpoint has no permanent Direct/OpenWrt-report note;
+- old `theme-bootstrap.js` Gate DOM/fetch/Observer owner is absent;
 - quiet ready family-note behavior;
 - IPv4/IPv6/Dual default recommendations;
-- independent single-family and Dual WAN selection;
 - invalid manual WAN fallback without resurrection;
 - split Access with independent same-WAN Exit default;
 - mixed Access-family / Exit-family Activate payloads;
-- zero auto-Activate during selection changes;
-- mobile/desktop browser-regression syntax coverage.
+- zero auto-Activate during selection changes.
 
 Do not call those Browser Matrix PASS until the release workflow actually executes them.
 
@@ -239,13 +283,16 @@ Do not call those Browser Matrix PASS until the release workflow actually execut
 1. network fact != capability != recommendation != user plan != runtime authority;
 2. AccessPlan != InternetExitPlan;
 3. Dual Access endpoint pairing != Dual Internet Exit WAN-pair enumeration;
-4. recommendation/default != authorization;
-5. Mapping active != Gate OPEN;
-6. external Mapping port != ingress port != WireGuard service port;
-7. stale browser/dashboard data != current authority;
-8. one function must not have multiple live Current Owners;
-9. healthy state should be quiet instead of accumulating redundant status prose;
-10. CI/browser evidence != real hardware evidence.
+4. Access endpoint/service-port identity != Internet Exit WAN identity;
+5. recommendation/default != authorization;
+6. Mapping active != Gate OPEN;
+7. external Mapping port != ingress port != WireGuard service port;
+8. stale browser/dashboard data != current authority;
+9. one function must not have multiple live Current Owners;
+10. healthy state should be quiet instead of accumulating redundant status prose;
+11. bootstrap/presentation helpers must not rediscover policy owned by Gate controls;
+12. mobile/desktop presentation must not become separate semantic implementations;
+13. CI/browser evidence != real hardware evidence.
 
 ## Real-device items still pending
 
@@ -254,7 +301,7 @@ Do not claim PASS for:
 ```text
 manual endpoint-selection persistence on real hardware
 multiple registered WireGuard service selection on real hardware
-mode-first Internet Exit UI behavior on real hardware
+mode-first/family-pure Internet Exit UI behavior on real hardware
 IPv6 Gate Activate/handshake/Close data plane
 same-WAN Dual data plane
 split-WAN Dual data plane
