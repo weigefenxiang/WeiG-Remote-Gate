@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from server.app.endpoints import build_endpoints
-from server.app.gate import GateError, ack_command, gate_view, pull_command, queue_activate, queue_close, valid_ttl
+from server.app.gate import CLOSE_COMMAND_TTL, GateError, ack_command, gate_view, pull_command, queue_activate, queue_close, valid_ttl
 from server.app.store import JsonStore
 
 
@@ -131,6 +131,59 @@ class GateTests(unittest.TestCase):
         self.assertEqual(queue["next"], [])
         self.assertEqual(queue["last"]["state"], "failed")
         self.assertEqual(queue["last"]["detail"], "failed-v4")
+
+    def test_failed_followup_batch_command_queues_rollback_close(self):
+        now = int(time.time())
+        first = {
+            "id": "first",
+            "action": "activate",
+            "family": "ipv4",
+            "batch_id": "batch",
+            "batch_index": 0,
+            "batch_count": 2,
+            "state": "done",
+            "created_at": now - 5,
+            "expires_at": now + 55,
+            "acked_at": now - 1,
+        }
+        second = {
+            "schema": 3,
+            "id": "second",
+            "action": "activate",
+            "family": "ipv6",
+            "source_ip": "2001:4860:4860::8888",
+            "batch_id": "batch",
+            "batch_index": 1,
+            "batch_count": 2,
+            "ttl": 300,
+            "state": "pending",
+            "created_at": now,
+            "expires_at": now + 60,
+        }
+        self.store.write("commands.json", {"pending": second, "next": [], "last": first})
+
+        self.assertTrue(ack_command(self.store, "second", False, "service-not-registered"))
+        queue = self.store.read("commands.json", {})
+        rollback = queue["pending"]
+        self.assertEqual(queue["last"]["id"], "second")
+        self.assertEqual(queue["last"]["state"], "failed")
+        self.assertEqual(queue["next"], [])
+        self.assertEqual(rollback["action"], "close")
+        self.assertEqual(rollback["rollback_for_command"], "second")
+        self.assertEqual(rollback["rollback_for_batch"], "batch")
+        self.assertEqual(rollback["expires_at"] - rollback["created_at"], CLOSE_COMMAND_TTL)
+        self.assertFalse(ack_command(self.store, "second", True, "late-success"))
+
+        with self.assertRaisesRegex(GateError, "command_pending"):
+            self.activate()
+        self.assertEqual(self.store.read("commands.json", {})["pending"]["id"], rollback["id"])
+        events = self.store.read("activity.json", [])
+        self.assertTrue(any(
+            item.get("type") == "batch_rollback_queued"
+            and item.get("batch_id") == "batch"
+            and item.get("failed_command_id") == "second"
+            for item in events
+        ))
 
     def test_expired_followup_batch_command_queues_rollback_close(self):
         now = int(time.time())

@@ -220,6 +220,20 @@ def _rollback_command_for_expired_activate(command: dict[str, Any], now: int) ->
     return rollback
 
 
+def _rollback_command_for_failed_batch(command: dict[str, Any], now: int) -> dict[str, Any] | None:
+    batch_id = str(command.get("batch_id") or "").strip()
+    try:
+        batch_index = int(command.get("batch_index", 0) or 0)
+    except (TypeError, ValueError):
+        return None
+    if command.get("action") != "activate" or not batch_id or batch_index <= 0:
+        return None
+    rollback = _rollback_command_for_expired_activate(command, now)
+    if rollback is not None:
+        rollback["expires_at"] = now + CLOSE_COMMAND_TTL
+    return rollback
+
+
 def _archive_expired_pending(
     store: JsonStore,
     queue: dict[str, Any],
@@ -664,9 +678,13 @@ def ack_command(store: JsonStore, command_id: str, ok: bool, detail: str = "") -
         command["acked_at"] = now
         command["detail"] = detail[:240]
         queue["last"] = command
+        rollback = _rollback_command_for_failed_batch(command, now) if not ok else None
 
         next_commands = queue.get("next") if isinstance(queue.get("next"), list) else []
-        if ok and next_commands:
+        if rollback is not None:
+            queue["pending"] = rollback
+            queue["next"] = []
+        elif ok and next_commands:
             next_command = next_commands.pop(0)
             if isinstance(next_command, dict):
                 next_command["created_at"] = now
@@ -691,6 +709,16 @@ def ack_command(store: JsonStore, command_id: str, ok: bool, detail: str = "") -
                 "detail": detail[:120],
             }
         )
+        if rollback is not None:
+            store.append_activity(
+                {
+                    "type": "batch_rollback_queued",
+                    "batch_id": rollback.get("rollback_for_batch", ""),
+                    "command_id": rollback.get("id", ""),
+                    "failed_command_id": command_id,
+                    "detail": detail[:120],
+                }
+            )
         return True
 
 
