@@ -160,6 +160,10 @@ Manual endpoint-selection persistence now has a software implementation and auto
 
 Dynamic WireGuard service-port handling now has explicit non-default automated coverage on `dev`: schema-3 Direct/Mapped endpoint and activation-command tests use UDP `41194`, while OpenWrt contract tests lock discovery through `wg show <name> listen-port`, Mapping propagation through `--service-port`, and Agent revalidation through the Service Registry. This is CI/contract evidence only; the real-device `WG_HOME / UDP 51820` path has not yet been changed to a non-51820 listener, so the hardware item remains pending.
 
+Access family and Internet Exit family independence now has explicit software coverage on `dev`. Server tests already accept IPv4 Access with IPv6-only or split-Dual Exit plans; the browser regression additionally verifies the actual Activate payload for IPv4 Access -> IPv6-only/Dual Exit and IPv6 Access -> IPv4-only/Dual Exit, including independent `egress_wans.ipv4` / `egress_wans.ipv6` fields and no browser-supplied authorization source. Routine `dev` CI checks the browser-test syntax, while the executable Playwright regression remains wired to the `main`-only/manual release Browser Matrix. The corresponding hardware paths remain pending.
+
+fw4/nftables Mapped restore now has an executable CI harness on `dev`, not only static source assertions. With fake `fw4`/`nft` commands and an isolated injected state directory, the real shell `restore` path is executed to verify that the current mapped `(ifname, ingress_port)` tuple, exact STUN control tuple and current mapped authorization source/device/port are rebuilt into nft set commands, while stale authorization and stale STUN tuples from a changed Mapping are discarded. This is software state-machine/command-generation evidence only; no real fw4/nftables router data plane has been validated, so the hardware item remains pending.
+
 ## Approved design target that is not yet hardware validation
 
 The next implementation is expected to follow these documented rules:
