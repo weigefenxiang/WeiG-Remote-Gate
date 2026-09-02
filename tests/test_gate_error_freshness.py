@@ -10,7 +10,10 @@ class GateErrorFreshnessTests(unittest.TestCase):
         source = GATE.read_text(encoding="utf-8")
         self.assertIn("function recentTerminalFailure(last)", source)
         self.assertIn("last.acked_at || last.expires_at || last.created_at", source)
-        self.assertIn("return age <= 120", source)
+        self.assertRegex(
+            source,
+            r"Math\.max\(0,\s*Math\.floor\(Date\.now\(\) / 1000\) - terminalAt\)\s*<=\s*120",
+        )
         self.assertIn("else if (recentTerminalFailure(last))", source)
         self.assertNotIn("else if (last?.state === 'failed' || last?.state === 'expired')", source)
 
