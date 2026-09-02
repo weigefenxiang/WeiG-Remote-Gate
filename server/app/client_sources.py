@@ -46,19 +46,34 @@ def agent_status_is_fresh(value: object, *, now: int | None = None) -> bool:
     return current - reported_at <= AGENT_STATUS_FRESH_SECONDS
 
 
+def _runtime_may_be_active(value: object) -> bool:
+    item = value if isinstance(value, dict) else {}
+    firewall = item.get("firewall") if isinstance(item.get("firewall"), dict) else {}
+    families = firewall.get("families") if isinstance(firewall.get("families"), dict) else {}
+    if bool(firewall.get("active")):
+        return True
+    if any(isinstance(state, dict) and bool(state.get("active")) for state in families.values()):
+        return True
+    egress = item.get("egress") if isinstance(item.get("egress"), dict) else {}
+    return bool(egress.get("active")) or str(egress.get("state") or "") == "active"
+
+
 def fail_closed_agent_status(value: object, *, now: int | None = None) -> dict[str, Any]:
     """Return current Agent authority, or an inactive diagnostic shell when unavailable.
 
     A stale or inventory-unsynced report is useful only for diagnostics such as
-    the last report time or firewall backend name. Runtime claims must fail
-    closed so cached Gate, WireGuard, egress, mapping and transport state cannot
-    remain authoritative without current OpenWrt facts.
+    the last report time, firewall backend name and whether a safe Close may
+    still be warranted. Runtime claims must fail closed so cached Gate,
+    WireGuard, egress, mapping and transport state cannot remain authoritative
+    without current OpenWrt facts.
     """
     item = value if isinstance(value, dict) else {}
+    may_have_active_runtime = _runtime_may_be_active(item)
     if agent_status_is_fresh(item, now=now):
         result = dict(item)
         result.setdefault("inventory_synced", True)
         result["fresh"] = True
+        result["may_have_active_runtime"] = may_have_active_runtime
         return result
 
     try:
@@ -100,6 +115,7 @@ def fail_closed_agent_status(value: object, *, now: int | None = None) -> dict[s
         "reported_at": reported_at,
         "inventory_synced": inventory_synced,
         "fresh": False,
+        "may_have_active_runtime": may_have_active_runtime,
         "wireguard": [],
         "firewall": {
             "backend": backend,
