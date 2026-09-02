@@ -21,6 +21,9 @@
       wan: safeText(value.wan, 64),
       wan4: safeText(value.wan4, 64),
       wan6: safeText(value.wan6, 64),
+      method: safeText(value.method, 32),
+      method4: safeText(value.method4, 32),
+      method6: safeText(value.method6, 32),
     };
     return selection.value ? selection : null;
   }
