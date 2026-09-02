@@ -9,6 +9,7 @@ from server.app.client_sources import (
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVER = ROOT / "server/remote-gate.py"
+MAIN = ROOT / "server/app/main.py"
 APP = ROOT / "server/app/static/js/app.js"
 
 
@@ -117,8 +118,15 @@ class AgentStatusFreshnessTests(unittest.TestCase):
             activate.index('agent_status_is_fresh(STORE.read("agent-status.json", {}))'),
             activate.index("observe_source(STORE, session.token, current_source)"),
         )
-        close_route = source.split('if path == "/api/v1/gate/activate":', 1)[1]
-        self.assertNotIn("agent_status_is_fresh", close_route.split('if path == "/api/v1/inventory":', 1)[0])
+
+        production_post = source.split("def do_POST(self) -> None:", 1)[1].split("def run() -> None:", 1)[0]
+        self.assertNotIn('if path == "/api/v1/gate/close":', production_post)
+        self.assertIn("super().do_POST()", production_post)
+
+        base = MAIN.read_text(encoding="utf-8")
+        close_route = base.split('if path == "/api/v1/gate/close":', 1)[1].split('if path == "/api/v1/update":', 1)[0]
+        self.assertIn("queue_close(STORE, source_ip=source)", close_route)
+        self.assertNotIn("agent_status_is_fresh", close_route)
 
 
 if __name__ == "__main__":
