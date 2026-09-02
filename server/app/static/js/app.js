@@ -394,8 +394,7 @@
   }
 
   function renderSystem(data) {
-    const reportedAt = Number(data?.agent?.reported_at || 0);
-    const fresh = reportedAt && (Date.now() / 1000 - reportedAt) < 45;
+    const fresh = Boolean(data?.agent?.fresh);
     const caps = data?.inventory?.capabilities || {};
     const transport = data?.agent?.transport || {};
     const firewall = data?.agent?.firewall || {};
