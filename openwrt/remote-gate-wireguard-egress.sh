@@ -169,9 +169,9 @@ fw3_cleanup4_verified() {
     filter_rules="$(xtables4 -S 2>/dev/null)" || return 1
     nat_rules="$(xtables4 -t nat -S 2>/dev/null)" || return 1
     printf '%s\n' "$filter_rules" | grep -Fq -- "-N $FW3_FILTER_CHAIN" && return 1
-    printf '%s\n' "$filter_rules" | grep -Eq -- "^-A [^ ]+ .* -j ${FW3_FILTER_CHAIN}([[:space:]]|$)" && return 1
+    printf '%s\n' "$filter_rules" | grep -Eq -- "^-A .* -j ${FW3_FILTER_CHAIN}([[:space:]]|$)" && return 1
     printf '%s\n' "$nat_rules" | grep -Fq -- "-N $FW3_NAT_CHAIN" && return 1
-    printf '%s\n' "$nat_rules" | grep -Eq -- "^-A [^ ]+ .* -j ${FW3_NAT_CHAIN}([[:space:]]|$)" && return 1
+    printf '%s\n' "$nat_rules" | grep -Eq -- "^-A .* -j ${FW3_NAT_CHAIN}([[:space:]]|$)" && return 1
     return 0
 }
 
@@ -180,9 +180,9 @@ fw3_cleanup6_verified() {
     filter_rules="$(xtables6 -S 2>/dev/null)" || return 1
     nat_rules="$(xtables6 -t nat -S 2>/dev/null)" || return 1
     printf '%s\n' "$filter_rules" | grep -Fq -- "-N $FW3_FILTER_CHAIN6" && return 1
-    printf '%s\n' "$filter_rules" | grep -Eq -- "^-A [^ ]+ .* -j ${FW3_FILTER_CHAIN6}([[:space:]]|$)" && return 1
+    printf '%s\n' "$filter_rules" | grep -Eq -- "^-A .* -j ${FW3_FILTER_CHAIN6}([[:space:]]|$)" && return 1
     printf '%s\n' "$nat_rules" | grep -Fq -- "-N $FW3_NAT_CHAIN6" && return 1
-    printf '%s\n' "$nat_rules" | grep -Eq -- "^-A [^ ]+ .* -j ${FW3_NAT_CHAIN6}([[:space:]]|$)" && return 1
+    printf '%s\n' "$nat_rules" | grep -Eq -- "^-A .* -j ${FW3_NAT_CHAIN6}([[:space:]]|$)" && return 1
     return 0
 }
 
@@ -400,31 +400,41 @@ remove_rules_from_state() {
     [ -r "$STATE_FILE" ] || return 0
     # shellcheck disable=SC1090
     . "$STATE_FILE"
+    state_mode="${MODE:-ipv4}"
+    valid_mode "$state_mode" || return 1
     cleanup_ok=true
-    if mode_has_v4 "${MODE:-ipv4}" && valid_uint "${RULE_BASE4:-}" && valid_uint "${ROUTE_TABLE4:-}" && [ -n "${WG_DEVICE:-}" ] && [ -n "${WG_SUBNET4:-}" ]; then
-        base="$RULE_BASE4"; table="$ROUTE_TABLE4"; wg="$WG_DEVICE"; subnet="$WG_SUBNET4"
-        ip -4 rule del priority "$((base + 0))" iif "$wg" to 10.0.0.0/8 lookup main >/dev/null 2>&1 || true
-        ip -4 rule del priority "$((base + 1))" iif "$wg" to 100.64.0.0/10 lookup main >/dev/null 2>&1 || true
-        ip -4 rule del priority "$((base + 2))" iif "$wg" to 169.254.0.0/16 lookup main >/dev/null 2>&1 || true
-        ip -4 rule del priority "$((base + 3))" iif "$wg" to 172.16.0.0/12 lookup main >/dev/null 2>&1 || true
-        ip -4 rule del priority "$((base + 4))" iif "$wg" to 192.168.0.0/16 lookup main >/dev/null 2>&1 || true
-        ip -4 rule del priority "$((base + 10))" from "$subnet" iif "$wg" lookup "$table" >/dev/null 2>&1 || true
-        ip -4 route flush table "$table" >/dev/null 2>&1 || true
-        ip -4 route flush cache >/dev/null 2>&1 || true
-        for offset in 0 1 2 3 4 10; do rule_priority_clear -4 "$((base + offset))" || cleanup_ok=false; done
-        route_table_clear -4 "$table" || cleanup_ok=false
+    if mode_has_v4 "$state_mode"; then
+        if valid_uint "${RULE_BASE4:-}" && valid_uint "${ROUTE_TABLE4:-}" && [ -n "${WG_DEVICE:-}" ] && [ -n "${WG_SUBNET4:-}" ]; then
+            base="$RULE_BASE4"; table="$ROUTE_TABLE4"; wg="$WG_DEVICE"; subnet="$WG_SUBNET4"
+            ip -4 rule del priority "$((base + 0))" iif "$wg" to 10.0.0.0/8 lookup main >/dev/null 2>&1 || true
+            ip -4 rule del priority "$((base + 1))" iif "$wg" to 100.64.0.0/10 lookup main >/dev/null 2>&1 || true
+            ip -4 rule del priority "$((base + 2))" iif "$wg" to 169.254.0.0/16 lookup main >/dev/null 2>&1 || true
+            ip -4 rule del priority "$((base + 3))" iif "$wg" to 172.16.0.0/12 lookup main >/dev/null 2>&1 || true
+            ip -4 rule del priority "$((base + 4))" iif "$wg" to 192.168.0.0/16 lookup main >/dev/null 2>&1 || true
+            ip -4 rule del priority "$((base + 10))" from "$subnet" iif "$wg" lookup "$table" >/dev/null 2>&1 || true
+            ip -4 route flush table "$table" >/dev/null 2>&1 || true
+            ip -4 route flush cache >/dev/null 2>&1 || true
+            for offset in 0 1 2 3 4 10; do rule_priority_clear -4 "$((base + offset))" || cleanup_ok=false; done
+            route_table_clear -4 "$table" || cleanup_ok=false
+        else
+            cleanup_ok=false
+        fi
     fi
-    if mode_has_v6 "${MODE:-ipv4}" && valid_uint "${RULE_BASE6:-}" && valid_uint "${ROUTE_TABLE6:-}" && [ -n "${WG_DEVICE:-}" ] && [ -n "${WG_SUBNET6:-}" ]; then
-        base="$RULE_BASE6"; table="$ROUTE_TABLE6"; wg="$WG_DEVICE"; subnet="$WG_SUBNET6"
-        ip -6 rule del priority "$((base + 0))" iif "$wg" to ::1/128 lookup main >/dev/null 2>&1 || true
-        ip -6 rule del priority "$((base + 1))" iif "$wg" to fc00::/7 lookup main >/dev/null 2>&1 || true
-        ip -6 rule del priority "$((base + 2))" iif "$wg" to fe80::/10 lookup main >/dev/null 2>&1 || true
-        ip -6 rule del priority "$((base + 3))" iif "$wg" to ff00::/8 lookup main >/dev/null 2>&1 || true
-        ip -6 rule del priority "$((base + 10))" from "$subnet" iif "$wg" lookup "$table" >/dev/null 2>&1 || true
-        ip -6 route flush table "$table" >/dev/null 2>&1 || true
-        ip -6 route flush cache >/dev/null 2>&1 || true
-        for offset in 0 1 2 3 10; do rule_priority_clear -6 "$((base + offset))" || cleanup_ok=false; done
-        route_table_clear -6 "$table" || cleanup_ok=false
+    if mode_has_v6 "$state_mode"; then
+        if valid_uint "${RULE_BASE6:-}" && valid_uint "${ROUTE_TABLE6:-}" && [ -n "${WG_DEVICE:-}" ] && [ -n "${WG_SUBNET6:-}" ]; then
+            base="$RULE_BASE6"; table="$ROUTE_TABLE6"; wg="$WG_DEVICE"; subnet="$WG_SUBNET6"
+            ip -6 rule del priority "$((base + 0))" iif "$wg" to ::1/128 lookup main >/dev/null 2>&1 || true
+            ip -6 rule del priority "$((base + 1))" iif "$wg" to fc00::/7 lookup main >/dev/null 2>&1 || true
+            ip -6 rule del priority "$((base + 2))" iif "$wg" to fe80::/10 lookup main >/dev/null 2>&1 || true
+            ip -6 rule del priority "$((base + 3))" iif "$wg" to ff00::/8 lookup main >/dev/null 2>&1 || true
+            ip -6 rule del priority "$((base + 10))" from "$subnet" iif "$wg" lookup "$table" >/dev/null 2>&1 || true
+            ip -6 route flush table "$table" >/dev/null 2>&1 || true
+            ip -6 route flush cache >/dev/null 2>&1 || true
+            for offset in 0 1 2 3 10; do rule_priority_clear -6 "$((base + offset))" || cleanup_ok=false; done
+            route_table_clear -6 "$table" || cleanup_ok=false
+        else
+            cleanup_ok=false
+        fi
     fi
     [ "$cleanup_ok" = true ]
 }
