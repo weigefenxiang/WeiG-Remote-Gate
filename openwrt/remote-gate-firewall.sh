@@ -182,8 +182,9 @@ LIB_DIR="${REMOTE_GATE_LIB_DIR:-$(CDPATH= cd -- "$(dirname "$0")" && pwd)}"
 . "$LIB_DIR/remote-gate-wireguard-verify.sh"
 
 flush_fw3_auth_set() {
-    local rg_set="$1"
-    ipset list "$rg_set" >/dev/null 2>&1 || return 0
+    local rg_set="$1" rg_sets
+    rg_sets="$(ipset list -name 2>/dev/null)" || return 1
+    printf '%s\n' "$rg_sets" | grep -Fqx "$rg_set" || return 0
     ipset flush "$rg_set" >/dev/null 2>&1
 }
 
@@ -191,6 +192,27 @@ flush_fw4_auth_set() {
     local rg_set="$1"
     nft list set inet fw4 "$rg_set" >/dev/null 2>&1 || return 1
     nft flush set inet fw4 "$rg_set" >/dev/null 2>&1
+}
+
+auth_family_state_empty() {
+    local rg_family="$1" rg_file rg_dir rg_entry
+    rg_file="$(family_auth_file "$rg_family")" || return 1
+    rg_dir="$(family_auth_dir "$rg_family")" || return 1
+    [ ! -e "$rg_file" ] || return 1
+    for rg_entry in "$rg_dir"/*; do
+        [ -f "$rg_entry" ] && return 1
+    done
+    return 0
+}
+
+authorization_state_empty() {
+    local rg_family="${1:-all}"
+    case "$rg_family" in
+        ipv4) auth_family_state_empty ipv4 ;;
+        ipv6) auth_family_state_empty ipv6 ;;
+        all|'') auth_family_state_empty ipv4 && auth_family_state_empty ipv6 ;;
+        *) return 1 ;;
+    esac
 }
 
 clear_kernel_authorization() {
@@ -228,6 +250,7 @@ verified_clear_auth() {
     clear_kernel_authorization "$rg_family" || rg_rc=1
     clear_auth "$rg_family" || rg_rc=1
     clear_kernel_authorization "$rg_family" || rg_rc=1
+    authorization_state_empty "$rg_family" || rg_rc=1
     if [ "$rg_rc" -ne 0 ]; then
         logger -t "$TAG" "authorization cleanup incomplete ($rg_family)" 2>/dev/null || true
         return 1
