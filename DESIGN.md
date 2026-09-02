@@ -1,5 +1,5 @@
 ---
-version: 9
+version: 10
 name: WeiG-Remote-Gate
 description: "A dense, tactile, adaptive network-security workspace with standardized spatial depth, modular controls, and a distinct Wei.G security identity."
 ---
@@ -18,6 +18,7 @@ Principles:
 - Never expose secrets, tokens or private keys in the UI.
 - Never trade readability for an artificial one-screen requirement.
 - Prefer larger typography and tighter information structure over tiny text and excessive whitespace.
+- Healthy/ready state is visually quiet; explanatory copy is reserved for actionable exceptions rather than repeating normal OpenWrt reports.
 
 ## Design review gate
 
@@ -110,9 +111,9 @@ A complete IPv6 address must remain on exactly one line. It must never wrap, ell
 
 ## NetworkIdentityText
 
-Machine-identifying network values use one shared responsive text primitive. This includes public WireGuard endpoints, Current Client addresses, authorization sources, Access Endpoint WAN identities and addresses, EndpointPicker cards, Multi-WAN/WAN PATH identities and addresses, and equivalent future network identifiers.
+Machine-identifying network values use one shared responsive text primitive. This includes public WireGuard endpoints, Current Client addresses, authorization sources, Access Endpoint WAN identities and addresses, EndpointPicker cards, Multi-WAN/WAN PATH identities and addresses, Internet Exit WAN identities/addresses and equivalent future network identifiers.
 
-The only fitting engine is `server/app/static/js/fit-text.js`. Do not create IPv6-, Endpoint-, WAN- or Dual-specific fitting utilities.
+The only fitting engine is `server/app/static/js/fit-text.js`. Do not create IPv6-, Endpoint-, WAN-, Exit- or Dual-specific fitting utilities.
 
 Canonical contract:
 - new consumers declare `fit-single-line` and a semantic `data-fit-profile` when the default is not sufficient;
@@ -149,15 +150,17 @@ The same asset is used for favicon and the persistent header brand control. Do n
 
 Primary action target: approximately 50-54px high. Normal touch controls are 44px-class or larger on mobile.
 
-Segmented controls use a recessed base; the selected item appears physically raised. IP Family, Access Scope, TTL presets, Language, Theme and feedback toggles share this interaction language.
+Segmented controls use a recessed base; the selected item appears physically raised. IP Family, Internet Exit mode, Access Scope, TTL presets, Language, Theme and feedback toggles share this interaction language.
 
 Unavailable IP families remain visible when that helps explain device capability, but are disabled before interaction. Dual is disabled when either required Gate family capability is unavailable.
 
+A healthy IP Family selection does not need a permanent prose line below the segmented control. The family note appears only for actionable unavailable/missing conditions.
+
 # 7. EndpointPicker and PathCard
 
-The browser-native `<select>` may remain as an internal state bridge, but it must not be the visible endpoint/exit chooser.
+The browser-native `<select>` may remain as an internal state bridge, but it must not be the visible endpoint/exit WAN chooser.
 
-`EndpointPicker` is the one interaction framework for both Access Endpoint and Internet Exit. Do not create separate Dual, IPv6, Mapped or Exit picker systems.
+`EndpointPicker` is the one interaction framework for both Access Endpoint and Internet Exit WAN fields. Do not create separate Dual, IPv6, Mapped or Exit picker systems.
 
 Desktop:
 - opens a compact spatial picker/popover appropriate to the available viewport.
@@ -178,14 +181,14 @@ WireGuard service selection uses progressive disclosure and the existing standar
 - Service selection, disappearance and fallback never auto-Activate.
 - Do not create a second WireGuard picker, a WireGuard-specific PathCard, or a MutationObserver-based visibility mechanism.
 
-## PathCard
+## Access PathCard
 
-`PathCard` is the one option-card presentation primitive. It contains one or two `FamilyPathBlock` records:
+`PathCard` is the one option-card presentation primitive for Access paths. It contains one or two `FamilyPathBlock` records:
 
 ```text
 PathCard
-  -> FamilyPathBlock[1] for IPv4 or IPv6
-  -> FamilyPathBlock[2] for Dual
+  -> FamilyPathBlock[1] for IPv4 or IPv6 Access
+  -> FamilyPathBlock[2] for Dual Access
 ```
 
 A `FamilyPathBlock` has exactly these semantic fields:
@@ -244,15 +247,44 @@ IPv6   WAN                         Global Direct
 [240e:....]:51820
 ```
 
-Same-WAN and split-WAN Dual use the exact same DOM/component structure. The WAN values communicate the topology, so do not repeat `Dual`, `Split WAN` or `Split Exit` inside the card.
+Same-WAN and split-WAN Dual Access use the exact same DOM/component structure. The WAN values communicate the topology, so do not repeat `Dual` or `Split WAN` inside the card.
 
-Internet Exit consumes the same PathCard renderer. Exit rows show family, WAN and observed/known address value; they do not expose `Private/CGNAT` as a product role. A private/CGNAT local IPv4 WAN may still be a valid outbound exit when routing capability is valid.
+## Internet Exit mode and WAN selectors
+
+Internet Exit is mode-first rather than a generated list of complete combinations.
+
+The only visible mode choices are:
+
+```text
+LAN only
+IPv4
+IPv6
+Dual
+```
+
+Interaction contract:
+
+```text
+LAN only -> no WAN picker
+IPv4     -> one IPv4 WAN picker
+IPv6     -> one IPv6 WAN picker
+Dual     -> one IPv4 WAN picker + one IPv6 WAN picker
+```
+
+Each Internet Exit WAN picker is a normal `EndpointPicker` consumer and each option renders exactly one single-family `FamilyPathBlock` containing family, WAN and observed/known address. Dual Exit does **not** render a generated two-family combination option/card; the two independent scalar selectors already express the plan.
+
+This is an intentional scalability rule: adding WAN3/WAN4 adds rows to the relevant family picker, not `n4 × n6` Dual combinations.
+
+Internet Exit rows do not expose `Private/CGNAT` as a product role. A private/CGNAT local IPv4 WAN may still be a valid outbound exit when routing capability is valid.
+
+Automatic recommendation should prefer one best shared dual-capable WAN for applicable IPv4/IPv6 fields when available. If no shared WAN is eligible, the two family fields recommend independently. Access Endpoint selection and split/same-WAN Access topology must not rewrite these Exit choices.
 
 Structured ownership is mandatory:
-- `gate-controls.js` is the browser owner of Access Endpoint eligibility, ranking, option creation and PathCard row data;
-- it writes structured `data-path-rows` and recommendation metadata (`data-path-primary`) onto the internal select options;
-- `endpoint-picker.js` is render/interaction only: it consumes those structured records and must not parse `option.textContent`, infer Access roles from strings/order, or use `MutationObserver` to rediscover policy state;
-- `app.js` must not re-filter, re-rank or relabel Access Endpoint options.
+- `gate-controls.js` is the browser Current Owner of Access Endpoint eligibility/ranking and the complete `InternetExitPlan {mode, wan4, wan6}` state/recommendation;
+- it writes structured `data-path-rows` and recommendation metadata (`data-path-primary`) onto internal select options;
+- `endpoint-picker.js` is render/interaction only: it consumes those structured records and must not parse `option.textContent`, infer policy from strings/order, or use `MutationObserver` to rediscover policy state;
+- `app.js` must not re-filter, re-rank, relabel or store a second Access/Exit plan;
+- when an old owner is replaced, its old runtime state/DOM/test contract is removed rather than hidden under CSS or compatibility logic.
 
 Responsive rules:
 - family and optional role remain compact anchors;
@@ -379,7 +411,8 @@ Mobile persistent header contains BrandIcon, product name and the circular resol
 - EndpointPicker becomes a bottom sheet;
 - custom duration remains comfortably draggable without horizontal page overflow;
 - full network identities, including IPv6 endpoints, remain one line by dynamic fitting;
-- Dual PathCard remains two FamilyPathBlocks/four information lines rather than collapsing into one overloaded line.
+- Dual Access PathCard remains two FamilyPathBlocks/four information lines;
+- Dual Internet Exit remains two independent single-family WAN controls, never a combinatorial card list.
 
 # 17. Accessibility
 
@@ -414,12 +447,12 @@ JavaScript:
 - `activity.js`: event summaries/expansion.
 - `motion-feedback.js`: sound/haptic feedback abstraction.
 - `client-sources.js`: missing-family IPv4/IPv6 probe completion.
-- `endpoint-picker.js`: the one custom picker and PathCard renderer for Access Endpoint and Internet Exit; also owns progressive visibility of the existing WireGuard service selector; render/interaction only, with no policy inference from label text or DOM mutation observation.
+- `endpoint-picker.js`: the one custom picker and PathCard renderer for Access Endpoint and Internet Exit family WANs; also owns progressive visibility of the existing WireGuard service selector; render/interaction only, with no policy inference from label text or DOM mutation observation.
 - `duration-control.js`: presets-to-Custom bridge, range/detent/feedback.
-- `gate-controls.js`: Family/Scope/TTL state, capability/eligibility, AccessPlan, InternetExitPlan, Access Endpoint option creation, structured PathCard view-model data and the single activation path.
-- `app.js`: API state, refresh and general data rendering orchestration; it does not own Access Endpoint filtering/ranking/labels/options.
+- `gate-controls.js`: Family/Scope/TTL state, capability/eligibility, AccessPlan, canonical InternetExitPlan mode/family-WAN state, structured PathCard view-model data and the single activation path.
+- `app.js`: API state, refresh and general data rendering orchestration; it does not own Access Endpoint filtering/ranking/labels/options or Internet Exit selection state.
 
-Do not put component-specific interaction code back into `app.js` when a dedicated module owns it. Do not create separate Dual/IPv6/Mapped/Exit picker, card or fitting frameworks.
+Do not put component-specific interaction code back into `app.js` when a dedicated module owns it. Do not create separate Dual/IPv6/Mapped/Exit picker, card, fitting or plan frameworks.
 
 # 19. Do / Don't
 
@@ -431,6 +464,7 @@ Do:
 - expose the existing WireGuard service selector when multiple registered services make the choice non-redundant;
 - reuse PathCard, component/elevation/motion/text-fit primitives;
 - keep AccessPlan independent from InternetExitPlan;
+- represent Internet Exit as mode plus at most one WAN scalar per family;
 - derive WireGuard service port from runtime service identity;
 - test mobile and desktop interactions before release.
 
@@ -440,16 +474,18 @@ Don't:
 - create a second WireGuard-specific picker or PathCard framework;
 - show Private/CGNAT as a selectable public Access Endpoint;
 - expose Private/CGNAT as an Internet Exit product mode/role;
-- make `app.js` a second Access Endpoint policy/label owner;
+- generate IPv4×IPv6 WAN combinations for Dual Internet Exit;
+- make `app.js` a second Access Endpoint or Internet Exit state/policy owner;
 - let EndpointPicker parse option display text or observe mutations to infer policy semantics;
-- repeat `Dual`, `Split WAN` or `Split Exit` when PathCard rows already express the topology;
+- repeat `Dual`, `Split WAN` or `Split Exit` when family controls already express the topology;
 - add a 1h preset to the duration group;
 - allow Custom duration above 12h or off the 0.5h detents;
 - delete IPv6 merely because IPv4 becomes available, or vice versa;
 - add decorative neon everywhere;
 - force a one-screen layout by globally shrinking typography;
 - allow whole-page horizontal scrolling;
-- create per-component IPv6/WAN/Endpoint fitting utilities;
+- create per-component IPv6/WAN/Endpoint/Exit fitting utilities;
 - hard-code WAN2, wg0 or UDP 51820 in frontend business logic;
 - create a second activation/planning implementation;
+- keep an obsolete runtime owner hidden behind CSS/version/Observer compatibility tricks;
 - expose WRITE_TOKEN, session secret or WireGuard private keys.

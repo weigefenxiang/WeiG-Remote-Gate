@@ -28,6 +28,22 @@ Read:
 
 Visual work must follow the local `DESIGN.md` and use the `awesome-design-md` methodology as a consistency discipline. Do not copy another site's identity; use the methodology to keep this project's own tokens, components and responsive behavior coherent.
 
+## One Current Owner
+
+Every runtime decision/function has exactly one Current Owner.
+
+When a new implementation becomes canonical, the superseded runtime owner must leave runtime in the same issue chain. Remove its shadow state, obsolete DOM contract and tests that preserve its old behavior.
+
+Forbidden ways to keep a second owner alive include:
+
+- version-file or build-id switching between two implementations;
+- CSS overrides that leave obsolete runtime markup/logic active underneath;
+- `MutationObserver` used to discover or repair policy state owned elsewhere;
+- duplicated browser state that mirrors the canonical plan owner;
+- indefinite compatibility adapters for an internal implementation boundary.
+
+Compatibility code is justified only for a real external/protocol/rolling-upgrade boundary and must not become a second product-policy owner.
+
 ## Stable product vocabulary
 
 User-facing Access Methods are:
@@ -62,6 +78,7 @@ Rules:
 - InternetExitPlan answers which WireGuard traffic families leave through which WANs.
 - A default/recommendation is never runtime authority.
 - Mapping existence is never Gate authorization.
+- Access topology must never silently become Internet Exit topology.
 
 ## Access Endpoint rules
 
@@ -89,11 +106,13 @@ Do not hardcode WAN names or require Dual to share one WAN.
 
 Unavailable IPv6 Gate capability must disable IPv6 interaction with a reason. Dual must be disabled when either required Gate family capability is unavailable. An unavailable family remains visible when useful for explaining device capability, but it must not behave like a valid selectable action.
 
+Normal ready family state is quiet. Do not show a persistent “OpenWrt currently reports/ready” row merely to restate healthy capability. Family explanatory text is for actionable exceptions such as unavailable capability, missing Source or missing Endpoint.
+
 Automatic endpoint selection is `auto`; explicit user selection is `manual`. Refresh or topology churn may recompute a recommendation but must not auto-Activate or migrate authorization.
 
 ## Internet Exit rules
 
-Internet Exit is independent from the Access Gate family.
+Internet Exit is independent from the Access Gate family and Access Endpoint topology.
 
 Canonical modes:
 
@@ -104,7 +123,7 @@ ipv6
 dual
 ```
 
-Default recommendation:
+Default mode recommendation:
 
 ```text
 IPv4 Access -> ipv4 exit
@@ -122,6 +141,19 @@ wan4
 wan6
 source = auto | manual
 ```
+
+Canonical interaction is exactly:
+
+```text
+none -> no WAN selector
+ipv4 -> one IPv4 WAN selector
+ipv6 -> one IPv6 WAN selector
+dual -> one IPv4 WAN selector + one IPv6 WAN selector
+```
+
+Never enumerate IPv4-WAN × IPv6-WAN pair combinations for Internet Exit. Adding more WANs must add eligible rows to family selectors, not multiply Dual plan options. Dual has exactly two scalar family choices regardless of WAN count.
+
+Automatic WAN recommendation is independent from Access Endpoint selection. If the best current WAN is eligible for both IPv4 and IPv6, recommend that same WAN for IPv4, IPv6 and both Dual family fields. Otherwise select the best current WAN independently for each family. A split-WAN AccessPlan therefore does not imply a split-WAN InternetExitPlan.
 
 IPv4 egress requires an up WAN with a current IPv4 default route. Its local address may be public, RFC1918 or CGNAT; that classification does not by itself disqualify outbound Internet use.
 
@@ -231,15 +263,15 @@ Target the OpenWrt family by capabilities, not branding/version allowlists. Open
 
 Do not build separate interaction systems for IPv4, IPv6, Dual, Direct, Mapped or Exit when the same component can represent them.
 
-Approved generic UI model:
+Approved Access presentation:
 
 ```text
 PathCard
-  -> one FamilyPathBlock for single-family path
-  -> two FamilyPathBlocks for Dual path
+  -> one FamilyPathBlock for single-family Access
+  -> two FamilyPathBlocks for Dual Access
 ```
 
-Dual card presentation is four information lines:
+Dual Access card presentation is four information lines:
 
 ```text
 IPv4   <WAN>   <Access Method when applicable>
@@ -248,13 +280,16 @@ IPv6   <WAN>   <Access Method when applicable>
 <IPv6 endpoint/address>
 ```
 
-Do not add redundant `Dual`, `Split WAN` or `Split Exit` text where the two rows already express the topology.
+Internet Exit reuses the same `EndpointPicker`/single-family `FamilyPathBlock` renderer for each WAN field. Dual Exit is two independent family pickers, not one generated two-family combination card.
+
+Do not add redundant `Dual`, `Split WAN` or `Split Exit` text where family controls already express the topology.
 
 Module ownership:
 
-- `gate-controls.js`: policy/state/plan/view-model;
-- `endpoint-picker.js`: picker/Card rendering and interaction;
+- `gate-controls.js`: sole browser policy/state/AccessPlan/InternetExitPlan/view-model owner;
+- `endpoint-picker.js`: picker/Card rendering and interaction only;
 - `fit-text.js`: only NetworkIdentityText fitting engine;
+- `app.js`: refresh/general dashboard rendering only; never a second Access/Exit selection owner;
 - `interaction.css`: generic PathCard/EndpointPicker interaction styling;
 - `DESIGN.md`: visual contract.
 

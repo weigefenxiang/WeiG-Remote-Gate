@@ -103,11 +103,16 @@ async function openScenario(browser, mutate = () => {}) {
   };
 }
 
+async function chooseLanOnly(page) {
+  await page.locator('#egress-mode-segment [data-egress-mode="none"]').click();
+  await page.waitForFunction(() => document.querySelector('#egress-mode-segment .active')?.dataset.egressMode === 'none');
+}
+
 async function selectIpv4(page) {
   await page.locator('[data-family="ipv4"]').click();
   await page.waitForFunction(() => document.querySelector('#wg-select')?.value === 'WG_HOME');
   await page.waitForFunction(() => document.querySelector('#endpoint-select')?.value === 'ep-wan2-v4');
-  await page.locator('#egress-select').selectOption('__lan__');
+  await chooseLanOnly(page);
 }
 
 async function assertCloseOnly(page, expectedBadge, context) {
@@ -170,7 +175,7 @@ try {
     const scenario = await openScenario(browser);
     const {page} = scenario;
     await page.locator('[data-family="dual"]').click();
-    await page.locator('#egress-select').selectOption('__lan__');
+    await chooseLanOnly(page);
     await page.waitForFunction(() => document.querySelector('#gate-state')?.textContent === 'OPEN · PARTIAL ACCESS');
     await assertCloseOnly(page, 'PARTIAL OPEN', 'Dual one-family partial runtime');
     assert(scenario.activatePosts() === 0, `Dual partial state posted Activate (${scenario.activatePosts()})`);
@@ -193,7 +198,7 @@ try {
     await page.close();
   }
 
-  console.log('Browser Gate profile authority regression passed: exact source/profile OPEN, global close-before-switch, Dual partial handling, and failed-refresh fail-closed behavior all preserve zero auto-Activate.');
+  console.log('Browser Gate profile authority regression passed with mode-first LAN-only Internet Exit selection and zero auto-Activate.');
 } finally {
   await browser.close();
 }

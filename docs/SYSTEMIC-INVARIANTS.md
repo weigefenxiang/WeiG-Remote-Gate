@@ -40,6 +40,8 @@ Examples of wrong reasoning:
 - a CI contract failure is not a real-router data-plane failure;
 - a browser rendering test is not hardware validation.
 
+A recurring UI form of the same mistake is letting Access topology drive Internet Exit topology. A split-WAN AccessPlan does not imply a split-WAN InternetExitPlan, and changing the Access Endpoint must not silently rewrite a manually or automatically selected Internet Exit WAN.
+
 ## 2. Product concepts must not leak implementation facts
 
 User-facing concepts are intentionally small and stable.
@@ -68,7 +70,7 @@ An IPv4 WAN behind CGNAT may still be a valid Internet Exit when it is up and ha
 
 > After WireGuard is established, which address families leave through which validated WANs?
 
-They may default to related WANs for convenience, but neither derives runtime authority from the other.
+They may share current network facts, but neither derives runtime authority or selected topology from the other.
 
 Canonical Internet Exit modes are:
 
@@ -97,6 +99,19 @@ wan4: logical WAN or empty
 wan6: logical WAN or empty
 source: auto | manual
 ```
+
+The UI representation is also canonical and intentionally linear:
+
+```text
+none -> no WAN selector
+ipv4 -> exactly one IPv4 WAN selector
+ipv6 -> exactly one IPv6 WAN selector
+dual -> exactly one IPv4 WAN selector + exactly one IPv6 WAN selector
+```
+
+Never generate an IPv4-WAN × IPv6-WAN Cartesian product as selectable Internet Exit plans. Adding a third, fourth or later WAN may add rows to each family picker, but must not multiply Dual choices. Dual egress is one transaction containing two scalar family choices, not a list of precomputed pair combinations.
+
+Automatic WAN recommendation is independent of the Access Endpoint. When one currently eligible WAN is the best shared IPv4+IPv6 exit, all three non-LAN modes should naturally recommend that same WAN for their applicable family fields. If no shared WAN exists, Dual independently recommends the best current IPv4 WAN and best current IPv6 WAN.
 
 Dual egress is one transaction. Same-WAN Dual and split-WAN Dual are two forms of the same plan, not separate subsystems.
 
@@ -129,6 +144,8 @@ For IP Family controls:
 
 Capability changes never auto-Activate.
 
+A normal/ready capability is the quiet default state. Do not spend a persistent explanatory row saying that OpenWrt currently reports a normal IPv4/IPv6 path. Family notes are reserved for actionable exceptions such as unavailable capability, missing current Source or missing reachable Endpoint.
+
 ## 6. One policy engine per decision
 
 Do not create parallel implementations for the same policy.
@@ -137,9 +154,11 @@ Hard examples:
 
 - `endpointScore()` remains the shared endpoint ordering primitive;
 - Access eligibility must have one canonical decision path, not one filter in `app.js` and another contradictory filter in `gate-controls.js`;
-- Internet Exit planning must use one canonical plan validator, not separate IPv4/IPv6/Dual planners;
+- Internet Exit planning is owned by `gate-controls.js` as `mode + wan4 + wan6`; `app.js` must not keep a second `egressSelections`/`egressWan` state owner;
 - `fit-text.js` remains the only NetworkIdentityText fitting engine;
 - EndpointPicker remains the visible picker infrastructure; do not create separate Dual, IPv6, Mapped or Exit picker frameworks.
+
+When a new canonical owner replaces an old implementation, the old runtime implementation must be removed in the same issue chain. Do not keep it alive behind version files, CSS overrides, MutationObserver, shadow state, legacy DOM ids or a permanent compatibility adapter. Compatibility is allowed only at a real external/protocol boundary with an explicit retirement reason; it is not a justification for two live browser owners.
 
 A helper inside the owning module is preferred over a new single-purpose module when the responsibility already belongs to that module.
 
@@ -154,7 +173,7 @@ The approved presentation primitive is:
 ```text
 PathCard
   -> FamilyPathBlock[1] for IPv4 or IPv6
-  -> FamilyPathBlock[2] for Dual
+  -> FamilyPathBlock[2] for Dual Access
 ```
 
 A Dual Access card uses four information lines:
@@ -166,9 +185,11 @@ IPv6   WAN    Direct
 [240e:....]:51820
 ```
 
-The same structure applies to same-WAN and split-WAN plans. Do not create different DOM/component trees for them.
+The same structure applies to same-WAN and split-WAN Access plans. Do not create different DOM/component trees for them.
 
-Do not repeat low-value labels such as `Dual`, `Split WAN` or `Split Exit` inside a card when the two family rows already express that fact.
+Internet Exit is different in interaction shape even though it reuses the same PathCard renderer: each family WAN selector is a scalar picker and therefore renders one FamilyPathBlock. Dual Exit displays two independent family pickers rather than one generated two-family combination card.
+
+Do not repeat low-value labels such as `Dual`, `Split WAN` or `Split Exit` when the family selectors/rows already express the fact.
 
 Access rows may show `Direct`, `Mapped` or another real Access Method. Internet Exit rows show family/WAN/address information without leaking `Private/CGNAT` as a product label.
 
@@ -192,13 +213,16 @@ The system may recommend:
 IPv4 Access: Public Direct -> Mapped -> observed NAT egress Try
 IPv6 Access: preferred IPv4 WAN when it also has usable Global IPv6 -> best Global IPv6 Direct
 Dual Access: same-WAN Public+IPv6 -> same-WAN Mapped+IPv6 -> split best pair
+Internet Exit: best shared dual-capable WAN when available -> otherwise best WAN independently per family
 ```
 
 There is no user-facing `Private/CGNAT Try` Access Endpoint.
 
-A manual selection is remembered while it remains valid. When a dynamic Endpoint id changes, a browser-local fallback may preserve the same user intent only if the stable logical WAN **and Access Method** still match; for Dual, both family WANs and both family Access Methods must match. WAN identity alone is insufficient when Direct, Mapped or future Relay candidates coexist on the same WAN. Older preferences that do not yet contain a method hint may use the historical WAN-only compatibility fallback, but the current eligible selection must enrich the stored hint for subsequent churn. These hints remain non-authoritative UI state: refresh, PPPoE churn, mapping changes or a new recommendation must not create or migrate authorization automatically.
+A manual selection is remembered while it remains valid. When a dynamic Endpoint id changes, a browser-local fallback may preserve the same user intent only if the stable logical WAN **and Access Method** still match; for Dual Access, both family WANs and both family Access Methods must match. WAN identity alone is insufficient when Direct, Mapped or future Relay candidates coexist on the same WAN. Older preferences that do not yet contain a method hint may use the historical WAN-only compatibility fallback, but the current eligible selection must enrich the stored hint for subsequent churn. These hints remain non-authoritative UI state: refresh, PPPoE churn, mapping changes or a new recommendation must not create or migrate authorization automatically.
 
-Registered service identity is part of that manual Access intent. A manual Endpoint hint for one WireGuard service must never be WAN/method-fallback-migrated to another service. If the selected service changes or disappears, discard the incompatible manual hint and return to the canonical automatic recommendation for the newly selected service. When there is only one registered WireGuard service, its selector may be hidden as redundant; when multiple valid services exist, the existing service selector must be visible and user-operable. Service Registry/list ordering is discovery output, not user intent. Service switching and service disappearance never auto-Activate.
+Internet Exit manual state is simpler: each family has at most one selected logical WAN. If that WAN becomes ineligible, clear that manual family choice and fall back to the current canonical recommendation; a later topology recovery must not resurrect the invalidated choice automatically.
+
+Registered service identity is part of manual Access intent. A manual Endpoint hint for one WireGuard service must never be WAN/method-fallback-migrated to another service. If the selected service changes or disappears, discard the incompatible manual hint and return to the canonical automatic recommendation for the newly selected service. When there is only one registered WireGuard service, its selector may be hidden as redundant; when multiple valid services exist, the existing service selector must be visible and user-operable. Service Registry/list ordering is discovery output, not user intent. Service switching and service disappearance never auto-Activate.
 
 `Activate` remains the authority boundary.
 
@@ -359,3 +383,6 @@ Before implementing any network/UI change, answer all of these:
 14. Does every expired unacknowledged Activate converge through a Close rollback, and does a failed Close stay retryable until success or its existing Close deadline?
 15. Are pre-Activate cleanup and rollback themselves journal-covered, verified to completion, and retry-only when convergence is incomplete?
 16. Does any Gate OPEN indicator require the current source **and** the current family `device + ingress_port + scope` profile, with mismatched active profiles forced through Close-before-switch?
+17. Does Internet Exit remain `mode + wan4 + wan6` with at most one WAN selection per family, rather than generated pair combinations?
+18. If a new canonical owner was introduced, did the previous runtime owner and its old state/DOM/test contract exit in the same change?
+19. Is normal ready state quiet, with persistent explanatory UI reserved for actionable exceptions rather than repeating current OpenWrt reports?

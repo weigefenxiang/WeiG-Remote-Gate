@@ -33,8 +33,10 @@
     })[char]);
   }
 
+  function isEgressSelect(selectId) { return String(selectId || '').startsWith('egress-'); }
+
   function defaultConfig(selectId) {
-    if (selectId === 'egress-select') {
+    if (isEgressSelect(selectId)) {
       return {
         eyebrow: 'INTERNET EXIT',
         title: () => zh() ? '选择上网出口' : 'Choose Internet exit',
@@ -51,7 +53,7 @@
   function configFor(selectId) { return {...defaultConfig(selectId), ...(configs.get(selectId) || {})}; }
   function triggerId(selectId) { return selectId === 'endpoint-select' ? 'endpoint-picker-trigger' : `${selectId}-picker-trigger`; }
   function selectedOption(selectId) { return $(selectId)?.selectedOptions?.[0] || null; }
-  function emptyTriggerLabel(selectId) { return selectId === 'egress-select' ? (zh() ? '选择 Internet 出口' : 'Choose Internet exit') : (zh() ? '请选择 WAN Endpoint' : 'Choose WAN endpoint'); }
+  function emptyTriggerLabel(selectId) { return isEgressSelect(selectId) ? (zh() ? '选择 Internet 出口' : 'Choose Internet exit') : (zh() ? '请选择 WAN Endpoint' : 'Choose WAN endpoint'); }
   function recommendedText() { return zh() ? '推荐' : 'Recommended'; }
 
   function normalizeField(select) {
@@ -59,6 +61,7 @@
     if (!label) return;
     const wrapper = document.createElement('div');
     wrapper.className = label.className;
+    Object.entries(label.dataset).forEach(([key, value]) => { wrapper.dataset[key] = value; });
     while (label.firstChild) wrapper.append(label.firstChild);
     label.replaceWith(wrapper);
   }
@@ -177,20 +180,6 @@
     })).join('');
   }
 
-  function renderLanOption(button, option, selected) {
-    button.classList.add('path-card-option', 'path-card-local');
-    button.innerHTML = `
-      <span class="endpoint-option-main path-card-stack">
-        <span class="path-family-block">
-          <span class="path-family-head">
-            <strong class="path-family-wan">${escapeHtml(zh() ? '本地网络' : 'LAN only')}</strong>
-          </span>
-          <span class="path-family-value">${escapeHtml(zh() ? '仅访问家庭网络，不代理 Internet' : 'Private access · No Internet exit')}</span>
-        </span>
-      </span>
-      <span class="endpoint-option-check" aria-hidden="true">${selected ? '●' : '○'}</span>`;
-  }
-
   function renderOptions() {
     ensureLayer();
     const select = $(activeSelectId);
@@ -201,28 +190,21 @@
     [...select.options].forEach((option) => {
       if (!option.value) return;
       const rows = pathRows(option);
+      if (!rows.length) return;
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = 'endpoint-option-card';
+      button.className = 'endpoint-option-card path-card-option';
       button.dataset.value = option.value;
       button.setAttribute('role', 'option');
       const selected = option.value === select.value;
       button.classList.toggle('selected', selected);
       button.setAttribute('aria-selected', selected ? 'true' : 'false');
-
-      if (rows.length) {
-        button.classList.add('path-card-option');
-        if (rows.some((row) => row.role === 'Try')) button.classList.add('experimental');
-        button.innerHTML = `
-          <span class="endpoint-option-main path-card-stack">
-            ${pathBlocksHtml(rows, option)}
-          </span>
-          <span class="endpoint-option-check" aria-hidden="true">${selected ? '●' : '○'}</span>`;
-      } else if (option.value === '__lan__') {
-        renderLanOption(button, option, selected);
-      } else {
-        return;
-      }
+      if (rows.some((row) => row.role === 'Try')) button.classList.add('experimental');
+      button.innerHTML = `
+        <span class="endpoint-option-main path-card-stack">
+          ${pathBlocksHtml(rows, option)}
+        </span>
+        <span class="endpoint-option-check" aria-hidden="true">${selected ? '●' : '○'}</span>`;
       button.addEventListener('click', () => choose(option.value));
       list.append(button);
     });
@@ -246,15 +228,9 @@
     trigger.setAttribute('aria-disabled', trigger.disabled ? 'true' : 'false');
     if (!copy) return;
 
-    if (!option?.value) {
-      copy.innerHTML = `<span class="endpoint-trigger-empty">${escapeHtml(emptyTriggerLabel(selectId))}</span>`;
-    } else {
-      const rows = pathRows(option);
-      if (rows.length) copy.innerHTML = pathBlocksHtml(rows, option, true, selectId);
-      else if (option.value === '__lan__') {
-        copy.innerHTML = `<span class="path-family-block path-family-block-trigger"><span class="path-family-head"><strong class="path-family-wan">${escapeHtml(zh() ? '本地网络' : 'LAN only')}</strong></span><span class="path-family-value">${escapeHtml(zh() ? '仅访问家庭网络' : 'No Internet exit')}</span></span>`;
-      } else copy.innerHTML = `<span class="endpoint-trigger-empty">${escapeHtml(emptyTriggerLabel(selectId))}</span>`;
-    }
+    const rows = pathRows(option);
+    if (option?.value && rows.length) copy.innerHTML = pathBlocksHtml(rows, option, true, selectId);
+    else copy.innerHTML = `<span class="endpoint-trigger-empty">${escapeHtml(emptyTriggerLabel(selectId))}</span>`;
     window.RemoteGateFit?.observe?.(copy);
   }
 
@@ -322,7 +298,6 @@
   function bind() {
     syncWireGuardSelectorVisibility();
     bindSelect('endpoint-select');
-    if ($('egress-select')) bindSelect('egress-select');
     window.addEventListener('remote-gate-language', () => sync());
     window.addEventListener('resize', positionLayer, {passive:true});
   }

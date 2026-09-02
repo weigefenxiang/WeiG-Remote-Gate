@@ -66,6 +66,8 @@ Capabilities answer what is currently possible: IPv4 Gate, IPv6 Gate, Mapped Acc
 
 A missing optional capability disables only that feature. Unsupported IPv6 Gate must disable IPv6/Dual interaction before Activate rather than allowing a late failure path.
 
+A normal capability state is intentionally quiet in the primary Gate form. A persistent family note is reserved for an actionable exception such as missing capability, missing current Source or no eligible Endpoint; a normal OpenWrt report is not itself a user decision.
+
 ## AccessPlan
 
 AccessPlan answers how an external client reaches one locally registered service.
@@ -114,7 +116,7 @@ WireGuard service identity follows the same recommendation-versus-authority boun
 
 ## InternetExitPlan
 
-Internet Exit is an independent outbound plan. It is not part of Access Endpoint selection and is not constrained to the Access Gate family.
+Internet Exit is an independent outbound plan. It is not part of Access Endpoint selection and is not constrained to the Access Gate family or topology.
 
 Canonical form:
 
@@ -125,7 +127,26 @@ wan6: validated logical WAN or empty
 source: auto | manual
 ```
 
-Default recommendation follows the current Access family for convenience:
+The browser interaction maps directly to this plan shape:
+
+```text
+none
+  -> no WAN choice
+
+ipv4
+  -> one IPv4 WAN choice
+
+ipv6
+  -> one IPv6 WAN choice
+
+dual
+  -> one IPv4 WAN choice
+  -> one IPv6 WAN choice
+```
+
+There is no canonical `IPv4 WAN × IPv6 WAN` combination object or selectable pair list. With three, four or more WANs the UI grows only by adding eligible WAN rows to the relevant family selector. It must never generate a Cartesian product or cap an exploding pair list.
+
+Default recommendation follows the current Access family for the **mode** only:
 
 ```text
 IPv4 Access -> ipv4 exit
@@ -133,13 +154,24 @@ IPv6 Access -> ipv6 exit
 Dual Access -> dual exit
 ```
 
+WAN recommendation is computed independently from Access Endpoint choice. The current route/capability model determines the best outbound WAN(s):
+
+```text
+if one best WAN is eligible for both IPv4 and IPv6
+  -> recommend that WAN for IPv4, IPv6 and both Dual fields
+else
+  -> recommend the best eligible IPv4 WAN and IPv6 WAN independently
+```
+
+Therefore a split-WAN AccessPlan may correctly coexist with a same-WAN Dual InternetExitPlan, and changing the Access Endpoint must not silently rewrite an Internet Exit WAN choice.
+
 The user may explicitly select another supported mode. For example, an IPv4 Access Gate may coexist with IPv6-only or Dual Internet Exit if the WireGuard client configuration and selected WAN capabilities support that traffic.
 
 Egress eligibility is route-based, not public-address-based:
 
 - IPv4: WAN up + current IPv4 default route;
 - IPv6: WAN up + current IPv6 default route + usable Global IPv6;
-- Dual: both family plans validate; same WAN or split WAN.
+- Dual: both family scalar selections validate; same WAN or split WAN.
 
 A CGNAT/RFC1918 local IPv4 WAN can therefore be a valid IPv4 Internet Exit even though it is not a public Access Endpoint.
 
@@ -312,9 +344,9 @@ PathCard
   -> FamilyPathBlock[]
 ```
 
-Single-family path: one block.
+Single-family Access path: one block.
 
-Dual path: two blocks, rendered as four information lines:
+Dual Access path: two blocks, rendered as four information lines:
 
 ```text
 IPv4   WAN2   Direct
@@ -323,20 +355,25 @@ IPv6   WAN    Direct
 [240e:....]:51820
 ```
 
-Same-WAN, split-WAN, Direct and Mapped use the same component tree. Differences are data, not component families.
+Same-WAN, split-WAN, Direct and Mapped Access use the same component tree. Differences are data, not component families.
 
-Do not repeat `Dual`, `Split WAN` or `Split Exit` labels when the two family rows already communicate the topology.
+Internet Exit reuses the same `EndpointPicker` and single-family `FamilyPathBlock` renderer for WAN choice, but its interaction is mode-first. IPv4 and IPv6 modes each expose one family picker; Dual exposes both independent family pickers. A generated two-family Exit combination card is not part of the architecture.
 
-Internet Exit uses the same PathCard structure but does not expose internal `Private/CGNAT` classification as a user-facing role.
+Do not repeat `Dual`, `Split WAN` or `Split Exit` labels when the family controls already communicate the topology.
+
+Internet Exit rows do not expose internal `Private/CGNAT` classification as a user-facing role.
 
 ### Browser module ownership
 
-- `gate-controls.js`: endpoint eligibility, endpoint ordering, capability, AccessPlan, InternetExitPlan, auto/manual selection and structured view model;
-- `plan-preferences.js`: browser-only persistence adapter for non-authoritative manual plan hints; it never decides endpoint eligibility and never creates authorization;
-- `endpoint-picker.js`: visible picker trigger, desktop popover/mobile sheet, PathCard rendering, selected/focus state;
+- `gate-controls.js`: **sole Current Owner** of endpoint eligibility, endpoint ordering, capability, AccessPlan, InternetExitPlan (`mode + wan4 + wan6`), auto/manual selection and structured view model;
+- `plan-preferences.js`: browser-only persistence adapter for non-authoritative manual Access plan hints; it never decides endpoint eligibility and never creates authorization;
+- `endpoint-picker.js`: visible picker trigger, desktop popover/mobile sheet, PathCard rendering and selected/focus state only;
 - `fit-text.js`: the only NetworkIdentityText fitting engine;
+- `app.js`: API refresh and general dashboard rendering only; it does not own Internet Exit selections or Access Endpoint policy;
 - `interaction.css`: generic EndpointPicker/PathCard interaction styling;
 - root `DESIGN.md`: visual tokens/component/responsive rules.
+
+One decision has one Current Owner. When a new canonical runtime owner replaces an old implementation, the old owner, old shadow state and obsolete DOM/test contract leave runtime in the same issue chain. Do not preserve a second implementation through CSS overrides, MutationObserver, version-file switching or indefinite compatibility adapters.
 
 Do not add separate `dual-*`, `ipv6-*`, `mapped-*` or `exit-*` frameworks when the owning generic module can express the behavior.
 

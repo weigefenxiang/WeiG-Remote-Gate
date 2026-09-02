@@ -4,6 +4,11 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+async function selectExitMode(page, mode) {
+  await page.locator(`#egress-mode-segment [data-egress-mode="${mode}"]`).click();
+  await page.waitForFunction((value) => document.querySelector('#egress-mode-segment .active')?.dataset.egressMode === value, mode);
+}
+
 const browser = await chromium.launch({headless: true});
 try {
   const page = await browser.newPage({viewport: {width: 390, height: 844}});
@@ -25,31 +30,40 @@ try {
   });
 
   await page.goto('http://127.0.0.1:8765/', {waitUntil: 'networkidle'});
-  await page.waitForFunction(() => document.querySelector('#egress-select')?.value === 'ipv4:WAN2');
+  await page.waitForFunction(() => document.querySelector('#egress-mode-segment .active')?.dataset.egressMode === 'ipv4');
+  await page.waitForFunction(() => document.querySelector('#egress-ipv4-select')?.value === 'WAN2');
 
-  await page.selectOption('#egress-select', 'ipv4:WAN');
-  await page.waitForFunction(() => document.querySelector('#egress-select')?.value === 'ipv4:WAN');
+  await page.selectOption('#egress-ipv4-select', 'WAN');
+  await page.waitForFunction(() => document.querySelector('#egress-ipv4-select')?.value === 'WAN');
   await page.waitForTimeout(100);
-  assert(await page.locator('#egress-select').inputValue() === 'ipv4:WAN', 'manual IPv4 Internet Exit was overwritten by its own render');
+  assert(await page.locator('#egress-ipv4-select').inputValue() === 'WAN', 'manual IPv4 Internet Exit was overwritten by its own render');
 
   await page.locator('[data-family="ipv6"]').click();
-  await page.waitForFunction(() => document.querySelector('#egress-select')?.value === 'ipv6:WAN2');
+  await page.waitForFunction(() => document.querySelector('#egress-mode-segment .active')?.dataset.egressMode === 'ipv6');
+  await page.waitForFunction(() => document.querySelector('#egress-ipv6-select')?.value === 'WAN2');
   await page.locator('[data-family="ipv4"]').click();
-  await page.waitForFunction(() => document.querySelector('#egress-select')?.value === 'ipv4:WAN');
-  assert(await page.locator('#egress-select').inputValue() === 'ipv4:WAN', 'manual IPv4 Internet Exit was not restored after family switching');
+  await page.waitForFunction(() => document.querySelector('#egress-mode-segment .active')?.dataset.egressMode === 'ipv4');
+  await page.waitForFunction(() => document.querySelector('#egress-ipv4-select')?.value === 'WAN');
+  assert(await page.locator('#egress-ipv4-select').inputValue() === 'WAN', 'manual IPv4 Internet Exit was not restored after Access-family switching');
 
+  await selectExitMode(page, 'dual');
+  await page.waitForFunction(() => !document.querySelector('#egress-ipv4-select')?.closest('.field')?.hidden && !document.querySelector('#egress-ipv6-select')?.closest('.field')?.hidden);
+  assert(await page.locator('#egress-ipv4-select').inputValue() === 'WAN', 'Dual did not retain the explicit IPv4 WAN scalar');
+  assert(await page.locator('#egress-ipv6-select').inputValue() === 'WAN2', 'Dual did not use the independently recommended IPv6 WAN scalar');
+
+  await selectExitMode(page, 'ipv4');
   topology = 'wan-v4-down';
   await page.evaluate(() => window.RemoteGateApp?.refresh?.());
-  await page.waitForFunction(() => document.querySelector('#egress-select')?.value === 'ipv4:WAN2');
-  assert(await page.locator('#egress-select').inputValue() === 'ipv4:WAN2', 'invalid manual Internet Exit did not fail back to a current plan');
+  await page.waitForFunction(() => document.querySelector('#egress-ipv4-select')?.value === 'WAN2');
+  assert(await page.locator('#egress-ipv4-select').inputValue() === 'WAN2', 'invalid manual Internet Exit did not fail back to a current WAN');
 
   topology = 'normal';
   await page.evaluate(() => window.RemoteGateApp?.refresh?.());
-  await page.waitForFunction(() => document.querySelector('#egress-select')?.value === 'ipv4:WAN2');
-  assert(await page.locator('#egress-select').inputValue() === 'ipv4:WAN2', 'invalidated manual Internet Exit reappeared after topology recovery');
+  await page.waitForFunction(() => document.querySelector('#egress-ipv4-select')?.value === 'WAN2');
+  assert(await page.locator('#egress-ipv4-select').inputValue() === 'WAN2', 'invalidated manual Internet Exit reappeared after topology recovery');
   assert(activatePosts === 0, `manual Internet Exit state changes posted Activate (${activatePosts})`);
 
-  console.log('Browser manual Internet Exit regression passed: immediate retention, per-family restore, invalidation, and zero auto-Activate.');
+  console.log('Browser manual Internet Exit regression passed: mode-first selection, independent family WAN scalars, invalidation, and zero auto-Activate.');
   await page.close();
 } finally {
   await browser.close();

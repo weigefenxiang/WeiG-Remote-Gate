@@ -62,7 +62,6 @@
       'gate.familySourceMissing': '{family} cannot be selected until this signed-in session is recently observed over {family}.',
       'gate.ipv6Unavailable': 'IPv6 Gate is disabled or unavailable on this OpenWrt.',
       'gate.familyEndpointMissing': 'No reachable {family} WireGuard endpoint is currently reported.',
-      'gate.familyReady': '{family} ready · trusted source {source} · {count} reachable endpoint(s) · current request {request}.',
 
       'client.eyebrow': 'CURRENT CLIENT',
       'client.title': 'Trusted sources',
@@ -208,7 +207,6 @@
       'gate.familySourceMissing': '当前登录 Session 最近没有通过 {family} 被 VPS 可信观察到，因此暂不能选择 {family}。',
       'gate.ipv6Unavailable': '此 OpenWrt 的 IPv6 Gate 已禁用或当前不可用。',
       'gate.familyEndpointMissing': '当前没有上报可达的 {family} WireGuard Endpoint。',
-      'gate.familyReady': '{family} Ready · 可信 Source {source} · {count} 个可达 Endpoint · 当前网页请求 {request}。',
 
       'client.eyebrow': 'CURRENT CLIENT',
       'client.title': '可信 Source',
