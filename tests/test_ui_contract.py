@@ -131,7 +131,7 @@ class UIContractTests(unittest.TestCase):
         self.assertNotIn('"source_ip"', probe)
         self.assertIn("body: JSON.stringify({family, address})", probe)
 
-    def test_ipv4_ipv6_and_split_dual_activate_are_supported_in_one_compact_row(self):
+    def test_ipv4_ipv6_and_dual_activate_use_shared_path_rows(self):
         gate = GATE.read_text(encoding="utf-8")
         template = TEMPLATE.read_text(encoding="utf-8")
         css = COMPONENTS_CSS.read_text(encoding="utf-8")
@@ -139,8 +139,11 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("endpoint_ids:{ipv4:pair.ipv4.id,ipv6:pair.ipv6.id}", gate)
         self.assertIn("egress_wans:{ipv4:egressPlan.ipv4,ipv6:egressPlan.ipv6}", gate)
         self.assertIn("dualEndpointPairs", gate)
-        self.assertIn("Dual · Split WAN", gate)
-        self.assertIn("Split Exit", gate)
+        self.assertIn("setPathRows(option, [", gate)
+        self.assertIn("pathRow('ipv4', pair.wan4", gate)
+        self.assertIn("pathRow('ipv6', pair.wan6", gate)
+        self.assertNotIn("Dual · Split WAN", gate)
+        self.assertNotIn("Split Exit", gate)
         self.assertIn("same WireGuard service", gate)
         self.assertIn("双栈就绪 · IPv4 + IPv6 已识别", gate)
         self.assertIn("Dual stack ready · IPv4 + IPv6 detected", gate)
@@ -150,7 +153,8 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("option.dataset.ipv6Wan", gate)
         self.assertIn("queueMicrotask(syncDualEndpointSelect)", gate)
         self.assertIn("family === 'dual'", gate)
-        self.assertIn("{ipv4: 'IPv4', ipv6: 'IPv6', dual: 'Dual'}", gate)
+        self.assertIn("const compactLabel", gate)
+        self.assertIn("dual:'Dual'", gate)
         self.assertIn('data-family="ipv4"', template)
         self.assertIn('data-family="ipv6"', template)
         self.assertIn('data-family="dual"', template)
@@ -158,10 +162,11 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("white-space: nowrap", css)
         self.assertIn(".family-segment button", css)
 
-    def test_mobile_endpoint_picker_fits_long_addresses_without_chevron(self):
+    def test_mobile_endpoint_picker_uses_shared_fit_profiles_without_chevron(self):
         source = ENDPOINT_PICKER.read_text(encoding="utf-8")
         self.assertIn('endpoint-trigger-address fit-single-line', source)
-        self.assertIn('data-fit-min="7.5"', source)
+        self.assertIn('data-fit-profile="compact"', source)
+        self.assertIn('data-fit-profile="identity"', source)
         self.assertIn("RemoteGateFit?.fit?.(address)", source)
         self.assertIn("trigger.style.gridTemplateColumns = 'minmax(0, 1fr)'", source)
         self.assertIn("trigger.addEventListener('click', () => open(selectId))", source)
@@ -192,7 +197,7 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("transactionGuard", gate)
         self.assertIn("form.inert = Boolean(locked)", gate)
         self.assertIn("control.disabled = true;", gate)
-        self.assertIn("orb.disabled = !orbEnabled", gate)
+        self.assertRegex(gate, r"orb\.disabled\s*=\s*!orbEnabled")
         self.assertIn("['done', 'failed', 'expired']", gate)
         self.assertNotIn("65000", gate)
         self.assertIn("setInterval(() => window.RemoteGateApp?.refresh?.(), 1000)", gate)
@@ -204,7 +209,7 @@ class UIContractTests(unittest.TestCase):
     def test_gate_orb_toggles_activate_and_close(self):
         gate = GATE.read_text(encoding="utf-8")
         self.assertIn("function toggleAccess()", gate)
-        self.assertIn("activeFamilyState(fw, context.state.family)", gate)
+        self.assertRegex(gate, r"activeFamilyState\(fw,\s*context\.state\.family\)")
         self.assertIn("closeAccess();", gate)
         self.assertIn("else activate();", gate)
         self.assertIn("addEventListener('click',toggleAccess)", gate)
@@ -238,13 +243,15 @@ class UIContractTests(unittest.TestCase):
         self.assertNotIn("syncEndpointSelect(data)", tail)
         self.assertNotIn("renderClient(data)", tail)
 
-    def test_private_and_egress_paths_remain_available_for_manual_try(self):
+    def test_access_excludes_private_but_keeps_observed_nat_try(self):
         app = APP.read_text(encoding="utf-8")
         gate = GATE.read_text(encoding="utf-8")
-        self.assertIn("['direct', 'mapped', 'private', 'egress_probe']", app)
-        self.assertIn("['direct','mapped','private','egress_probe']", gate)
-        self.assertIn("Private/CGNAT · Try", app)
+        self.assertIn("['direct', 'mapped', 'egress_probe']", app)
+        self.assertIn("['direct','mapped','egress_probe']", gate)
+        self.assertNotIn("Private/CGNAT · Try", app)
+        self.assertNotIn("Private/CGNAT · Try", gate)
         self.assertIn("NAT egress · Try", app)
+        self.assertIn("NAT egress · Try", gate)
 
     def test_runtime_wireguard_egress_reboots_off_and_supports_split_dual(self):
         egress = OPENWRT_EGRESS.read_text(encoding="utf-8")
