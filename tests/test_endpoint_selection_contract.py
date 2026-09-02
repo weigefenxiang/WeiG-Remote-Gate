@@ -42,12 +42,15 @@ class EndpointSelectionContractTests(unittest.TestCase):
         self.assertIn("a?.wan === preferredV4Wan", preferred)
         self.assertIn("b?.wan === preferredV4Wan", preferred)
 
-    def test_manual_endpoint_override_is_preserved_until_it_disappears(self):
+    def test_manual_endpoint_override_preserves_access_method_until_it_disappears(self):
         gate = GATE.read_text(encoding="utf-8")
         restore = gate.split("function restoreEndpointSelection", 1)[1].split("function syncDualEndpointSelect", 1)[0]
         self.assertIn("endpointSelectionIsManual(family) && saved", restore)
         self.assertIn("option.value === saved.value", restore)
-        self.assertIn("endpointWanForSelection(family, option.value) === saved.wan", restore)
+        self.assertIn("endpointWanForSelection(family, option.value) !== saved.wan", restore)
+        self.assertIn("if (!saved.method) return true", restore)
+        self.assertIn("endpointMethodsForSelection(family, option.value).method === saved.method", restore)
+        self.assertIn("context.state.endpointSelections[family] = endpointSelectionRecord(family, fallback.value)", restore)
         self.assertIn("context.state.endpointManualSelections[family] = false", restore)
         self.assertIn("const preferred = preferredSelection(family);", restore)
 
