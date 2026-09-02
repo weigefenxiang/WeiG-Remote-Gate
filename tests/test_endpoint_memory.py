@@ -16,9 +16,13 @@ class EndpointMemoryTests(unittest.TestCase):
         self.assertIn("function rememberEndpointSelection", source)
         self.assertIn("function restoreEndpointSelection", source)
         self.assertIn("function syncEndpointSelect", source)
+        self.assertIn("function endpointSelectionRecord", source)
         self.assertIn("const wans = endpointWansForSelection(family, value)", source)
-        self.assertIn("wan4: wans.ipv4", source)
-        self.assertIn("wan6: wans.ipv6", source)
+        self.assertIn("wan4:wans.ipv4", source)
+        self.assertIn("wan6:wans.ipv6", source)
+        self.assertIn("method:methods.method", source)
+        self.assertIn("method4:methods.method4", source)
+        self.assertIn("method6:methods.method6", source)
         self.assertIn("rememberEndpointSelection(state.family)", source)
         self.assertIn("syncEndpointSelect(state.family)", source)
         self.assertIn("else if (['ipv4','ipv6'].includes(family)) restoreEndpointSelection(family);", source)
@@ -26,14 +30,23 @@ class EndpointMemoryTests(unittest.TestCase):
         self.assertIn("select.dataset.selectionSource = confirmed ? source : ''", source)
         self.assertIn("const source = endpointSelectionIsManual(family) ? 'manual' : 'auto'", source)
 
-    def test_dynamic_endpoint_id_preserves_same_wan_intent_then_returns_to_auto(self):
+    def test_dynamic_endpoint_id_preserves_same_wan_and_access_method_intent(self):
         source = GATE.read_text(encoding="utf-8")
         restore = source.split("function restoreEndpointSelection", 1)[1].split("function syncDualEndpointSelect", 1)[0]
+        dual = source.split("function syncDualEndpointSelect", 1)[1].split("function syncEndpointSelect", 1)[0]
         self.assertIn("saved.wan ? options.find", restore)
-        self.assertIn("endpointWanForSelection(family, option.value) === saved.wan", restore)
+        self.assertIn("endpointWanForSelection(family, option.value) !== saved.wan", restore)
+        self.assertIn("if (!saved.method) return true", restore)
+        self.assertIn("endpointMethodsForSelection(family, option.value).method === saved.method", restore)
+        self.assertIn("context.state.endpointSelections[family] = endpointSelectionRecord(family, fallback.value)", restore)
         self.assertIn("context.state.endpointManualSelections[family] = false", restore)
         self.assertIn("delete context.state.endpointSelections[family]", restore)
         self.assertIn("const preferred = preferredSelection(family)", restore)
+        self.assertIn("const priorMethod4", dual)
+        self.assertIn("const priorMethod6", dual)
+        self.assertIn("endpointMethod(item.ipv4) === priorMethod4", dual)
+        self.assertIn("endpointMethod(item.ipv6) === priorMethod6", dual)
+        self.assertIn("endpointSelectionRecord('dual', pair.id)", dual)
 
     def test_each_access_family_keeps_its_internet_exit_plan_choice(self):
         source = APP.read_text(encoding="utf-8")
