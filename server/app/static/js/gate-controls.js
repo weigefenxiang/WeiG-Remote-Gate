@@ -15,7 +15,7 @@
     return list.filter((item) =>
       item &&
       item.family === family &&
-      ['direct','mapped','private','egress_probe'].includes(item.reachability) &&
+      ['direct','mapped','egress_probe'].includes(item.reachability) &&
       (!selectedWg || item.wireguard === selectedWg)
     );
   }
@@ -26,7 +26,6 @@
     if (item.family === 'ipv4' && item.reachability === 'mapped') return 20;
     if (item.family === 'ipv4' && item.reachability === 'egress_probe') return 30;
     if (item.family === 'ipv6' && item.reachability === 'direct') return 10;
-    if (item.reachability === 'private') return 90;
     return Number(item.priority || 999);
   }
 
@@ -119,8 +118,7 @@
     const item = pair?.ipv4;
     if (item?.reachability === 'direct') return 'Direct';
     if (item?.access_method === 'mapped' || item?.reachability === 'mapped' || item?.provider === 'natmap') return 'Mapped';
-    if (item?.provider === 'egress_probe' || item?.reachability === 'egress_probe') return 'NAT egress · Try';
-    return 'Private/CGNAT · Try';
+    return 'NAT egress · Try';
   }
 
   function endpointWansForSelection(family, value) {
@@ -484,7 +482,10 @@
     return ['ipv4','ipv6'].includes(family);
   }
   function familySelectable(family) {
-    return ['ipv4','ipv6','dual'].includes(family);
+    if (family === 'ipv4') return gateCapability('ipv4');
+    if (family === 'ipv6') return gateCapability('ipv6');
+    if (family === 'dual') return gateCapability('ipv4') && gateCapability('ipv6');
+    return false;
   }
   function singleReady(family) {
     return singleSelectable(family) && gateCapability(family) && endpointsFor(family).length > 0;
@@ -511,11 +512,14 @@
     if (singleAvailable('ipv6')) return 'ipv6';
     if (singleReady('ipv4')) return 'ipv4';
     if (singleReady('ipv6')) return 'ipv6';
-    return ['ipv4','ipv6'].includes(state.family) ? state.family : 'ipv4';
+    if (familySelectable('ipv4')) return 'ipv4';
+    if (familySelectable('ipv6')) return 'ipv6';
+    return 'ipv4';
   }
   function familyReason(family) {
     const t = context.t;
     if (family === 'dual') {
+      if (!gateCapability('ipv4')) return zh() ? '此 OpenWrt 的 IPv4 Gate 已禁用。' : 'IPv4 Gate is disabled on this OpenWrt device.';
       if (!gateCapability('ipv6')) return t('gate.ipv6Unavailable');
       if (!dualEndpointPairs().length) return zh() ? 'Dual 需要同一 WireGuard 服务同时存在可用的 IPv4 与 IPv6 Endpoint。' : 'Dual requires available IPv4 and IPv6 endpoints for the same WireGuard service.';
       if (!sourceFor('ipv4') || !sourceFor('ipv6')) return zh() ? 'IPv4 与 IPv6 Source 都就绪后可同时授权。' : 'Both IPv4 and IPv6 sources are required for dual-stack authorization.';
@@ -525,6 +529,7 @@
         ? `双栈就绪 · IPv4 + IPv6 已识别 · ${label}`
         : `Dual stack ready · IPv4 + IPv6 detected · ${label}`;
     }
+    if (family === 'ipv4' && !gateCapability('ipv4')) return zh() ? '此 OpenWrt 的 IPv4 Gate 已禁用。' : 'IPv4 Gate is disabled on this OpenWrt device.';
     if (family === 'ipv6' && !gateCapability('ipv6')) return t('gate.ipv6Unavailable');
     const endpoints = endpointsFor(family);
     if (!endpoints.length) return t('gate.familyEndpointMissing', {family: family.toUpperCase()});
@@ -648,12 +653,13 @@
     familyRoot.querySelectorAll('[data-family]').forEach((button) => {
       const family = button.dataset.family;
       if (!['ipv4','ipv6','dual'].includes(family)) return;
+      const selectable = familySelectable(family);
       button.hidden = false;
       button.textContent = compactLabel[family];
-      button.disabled = false;
+      button.disabled = !selectable;
       button.classList.toggle('active', family === state.family);
       button.setAttribute('aria-pressed', family === state.family ? 'true' : 'false');
-      button.setAttribute('aria-disabled', 'false');
+      button.setAttribute('aria-disabled', selectable ? 'false' : 'true');
       button.title = familyReason(family);
     });
     const note = $('family-note'); if (note) note.textContent = familyReason(state.family);
@@ -917,7 +923,7 @@
     gateCard?.addEventListener('click',transactionGuard,true);
     gateCard?.addEventListener('change',transactionGuard,true);
     $('ttl-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-ttl]'); if(!button||transactionLocked())return; state.ttl=Number(button.dataset.ttl); $('ttl-segment').querySelectorAll('button').forEach((item)=>{item.classList.toggle('active',item===button);item.setAttribute('aria-pressed',item===button?'true':'false');});});
-    $('family-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-family]'); if(!button||transactionLocked()||!['ipv4','ipv6','dual'].includes(button.dataset.family))return;rememberEndpointSelection(state.family);state.familyManual=true;state.family=button.dataset.family;context.onFamilyChange?.(state.family);if(state.family==='dual')syncDualEndpointSelect();else restoreEndpointSelection(state.family);syncEgressSelect();render();});
+    $('family-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-family]'); if(!button||button.disabled||transactionLocked()||!familySelectable(button.dataset.family))return;rememberEndpointSelection(state.family);state.familyManual=true;state.family=button.dataset.family;context.onFamilyChange?.(state.family);if(state.family==='dual')syncDualEndpointSelect();else restoreEndpointSelection(state.family);syncEgressSelect();render();});
     $('scope-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-scope]');if(!button||transactionLocked()||!['wg','wg_ping'].includes(button.dataset.scope))return;state.scope=button.dataset.scope;syncScope();});
     endpointSelect()?.addEventListener('change',()=>{if(transactionLocked())return;const select=endpointSelect();state.endpointManualSelections[state.family]=Boolean(select?.value);if(!select?.value)delete state.endpointSelections[state.family];rememberEndpointSelection(state.family);publishEndpointSelection(state.family);syncEgressSelect();render();});
     egressSelect()?.addEventListener('change',()=>{if(transactionLocked())return;state.egressWan=egressSelect().value||'__lan__';state.egressManualSelections[state.family]=true;render();});

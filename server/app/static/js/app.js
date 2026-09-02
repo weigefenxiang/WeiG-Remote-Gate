@@ -75,7 +75,7 @@
     return list.filter((item) =>
       item &&
       item.family === family &&
-      ['direct', 'mapped', 'private', 'egress_probe'].includes(item.reachability) &&
+      ['direct', 'mapped', 'egress_probe'].includes(item.reachability) &&
       (!wgName || item.wireguard === wgName)
     );
   }
@@ -97,7 +97,6 @@
     if (item.access_method === 'mapped' || item.reachability === 'mapped') method = 'Mapped';
     else if (item.access_method === 'relay' || item.reachability === 'relay') method = 'Relay';
     else if (item.reachability === 'egress_probe') method = 'NAT egress · Try';
-    else if (item.reachability === 'private') method = 'Private/CGNAT · Try';
     return `${item.wan} · ${family} · ${method} · ${endpointAddress(item)}`;
   }
 
