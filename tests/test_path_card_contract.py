@@ -63,7 +63,7 @@ class PathCardContractTests(unittest.TestCase):
         self.assertIn("PathCard", DESIGN)
         self.assertIn("FamilyPathBlock", DESIGN)
         self.assertIn("theme-bootstrap", DESIGN)
-        self.assertIn("must not re-filter, re-rank or relabel Access Endpoint options", DESIGN)
+        self.assertIn("must not re-filter, re-rank, relabel or store a second Access/Exit plan", DESIGN)
 
 
 if __name__ == "__main__":

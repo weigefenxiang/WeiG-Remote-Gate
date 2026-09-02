@@ -114,7 +114,7 @@ class MappedAccessContractTests(unittest.TestCase):
         self.assertIn("setProperty('font-size', `${Math.max(1, size).toFixed(1)}px`, 'important')", FIT_TEXT)
         self.assertIn("{subtree: true, childList: true, characterData: true}", FIT_TEXT)
         self.assertIn('NetworkIdentityText', DESIGN)
-        self.assertIn('Do not create IPv6-, Endpoint-, WAN- or Dual-specific fitting utilities.', DESIGN)
+        self.assertIn('Do not create IPv6-, Endpoint-, WAN-, Exit- or Dual-specific fitting utilities.', DESIGN)
         self.assertIn('whole-page horizontal overflow is a contract failure', DESIGN)
 
     def test_activate_resolves_latest_mapping_on_openwrt(self):
