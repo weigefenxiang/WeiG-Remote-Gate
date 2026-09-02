@@ -156,19 +156,20 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(command["device"], "pppoe-WAN")
         self.assertEqual(command["wg_port"], 51820)
 
-    def test_private_ipv4_endpoint_can_be_attempted_manually(self):
+    def test_private_ipv4_remains_network_fact_but_is_not_activatable(self):
         endpoint = [x for x in build_endpoints(self.store) if x["wan"] == "WAN" and x["family"] == "ipv4"][0]
-        command = queue_activate(
-            self.store,
-            source_ip="1.1.1.1",
-            endpoint_id=endpoint["id"],
-            family="ipv4",
-            scope="wg",
-            ttl=300,
-        )
-        self.assertEqual(command["reachability"], "private")
-        self.assertEqual(command["device"], "pppoe-WAN")
-        self.assertEqual(command["external_address"], "172.20.111.32")
+        self.assertEqual(endpoint["reachability"], "private")
+        self.assertEqual(endpoint["external_address"], "172.20.111.32")
+
+        with self.assertRaisesRegex(ValueError, "endpoint_not_reachable"):
+            queue_activate(
+                self.store,
+                source_ip="1.1.1.1",
+                endpoint_id=endpoint["id"],
+                family="ipv4",
+                scope="wg",
+                ttl=300,
+            )
 
     def test_advanced_gate_waits_for_schema2_agent(self):
         self.store.write("agent-status.json", {
