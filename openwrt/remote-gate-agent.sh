@@ -502,12 +502,14 @@ egress_json() {
 }
 
 post_status() {
+    inventory_synced="${1:-true}"
+    case "$inventory_synced" in true|false) ;; *) inventory_synced=false ;; esac
     fw="$("$FIREWALL" status-json 2>/dev/null || printf '{"backend":"unsupported","ready":false,"active":false,"source_ip":"","device":"","ingress_port":0,"wg_port":0,"expires_in":0,"protected_devices_v4":0,"protected_devices_v6":0,"protected_ports":0,"protected_mapped_ingress_v4":0}')"
     wg_json="$(wireguard_json)"
     egress="$(egress_json)"
     mapping="$(mapping_status_json)"
     transport="$(transport_json)"
-    payload="{\"schema\":3,\"wireguard\":${wg_json},\"firewall\":${fw},\"egress\":${egress},\"mapping\":${mapping},\"transport\":${transport}}"
+    payload="{\"schema\":3,\"inventory_synced\":${inventory_synced},\"wireguard\":${wg_json},\"firewall\":${fw},\"egress\":${egress},\"mapping\":${mapping},\"transport\":${transport}}"
     control_request POST "/api/v1/agent/status" "$BODY" "$payload" >/dev/null 2>&1 || true
 }
 
@@ -707,19 +709,26 @@ pull_once() {
 report_only() {
     sync_firewall_policy || true
     sync_egress
-    maybe_post_inventory || true
-    post_status
+    if maybe_post_inventory; then
+        post_status true
+    else
+        post_status false
+    fi
 }
 
 run_once() {
     sync_firewall_policy || true
     sync_egress
-    maybe_post_inventory || true
-    post_status
+    if ! maybe_post_inventory; then
+        post_status false
+        logger -t "$TAG" "inventory not synchronized; command pull skipped" 2>/dev/null || true
+        return 0
+    fi
+    post_status true
     pull_rc=0
     pull_once || pull_rc=$?
     sync_egress
-    post_status
+    post_status true
     return "$pull_rc"
 }
 
