@@ -562,7 +562,7 @@
   function lockAction(currentData = data()) { return transaction?.action || pendingCommand(currentData)?.action || ''; }
   function lockMessage(currentData = data()) {
     if (lockAction(currentData) === 'close') return zh() ? '正在关闭远程访问，请等待操作完成。' : 'Closing remote access. Please wait for the operation to finish.';
-    return zh() ? '正在激活远程访问，请等待 OpenWrt 应用临时授权。' : 'Activating remote access. Waiting for OpenWrt to apply the authorization.';
+    return zh() ? '正在激活远程访问，请等待 OpenWrt 应用授权。' : 'Activating remote access. Waiting for OpenWrt to apply the authorization.';
   }
   function startTransactionPoll() { if (!transactionPoll) transactionPoll = window.setInterval(() => window.RemoteGateApp?.refresh?.(), 1000); }
   function stopTransactionPoll() { if (transactionPoll) window.clearInterval(transactionPoll); transactionPoll = 0; }
