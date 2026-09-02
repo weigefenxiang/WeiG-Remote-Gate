@@ -82,18 +82,53 @@ def _known_router_external_addresses(store: JsonStore, current: int) -> set[str]
     return result
 
 
-def _active_authorized_source(store: JsonStore, family: str) -> str:
+def _active_authorized_sources(store: JsonStore, family: str) -> set[str]:
+    """Return active authorized sources for one firewall family.
+
+    Current agents report independent family status under ``firewall.families``
+    and may authorize multiple sources per family. Older agents exposed only a
+    single top-level ``family/source_ip`` summary, so keep that shape as a
+    rolling-upgrade fallback.
+    """
     agent = store.read("agent-status.json", {})
     firewall = agent.get("firewall") if isinstance(agent, dict) else None
-    if not isinstance(firewall, dict) or not firewall.get("active"):
-        return ""
-    if str(firewall.get("family") or "") != family:
-        return ""
-    value = str(firewall.get("source_ip") or "").strip()
+    if not isinstance(firewall, dict):
+        return set()
+
+    family_state: dict[str, Any] | None = None
+    families = firewall.get("families")
+    if isinstance(families, dict):
+        candidate = families.get(family)
+        if isinstance(candidate, dict):
+            family_state = candidate
+
+    state = family_state if family_state is not None else firewall
+    if not state.get("active"):
+        return set()
+    if family_state is None and str(state.get("family") or "") != family:
+        return set()
+
     version = 4 if family == "ipv4" else 6
-    if not _globally_reachable_unicast(value, version):
-        return ""
-    return str(ipaddress.ip_address(value))
+    result: set[str] = set()
+
+    def add(value: object) -> None:
+        if not _globally_reachable_unicast(value, version):
+            return
+        result.add(str(ipaddress.ip_address(str(value).strip())))
+
+    sources = state.get("authorized_sources")
+    if isinstance(sources, list):
+        for value in sources:
+            add(value)
+
+    authorizations = state.get("authorizations")
+    if isinstance(authorizations, list):
+        for item in authorizations:
+            if isinstance(item, dict):
+                add(item.get("source_ip"))
+
+    add(state.get("source_ip"))
+    return result
 
 
 def _state(store: JsonStore, current: int) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -113,9 +148,9 @@ def _state(store: JsonStore, current: int) -> tuple[dict[str, Any], dict[str, An
             sessions.pop(sid, None)
             continue
         for family, item in list(families.items()):
-            active_source = _active_authorized_source(store, family)
+            active_sources = _active_authorized_sources(store, family)
             expired = int(item.get("expires_at", 0) or 0) <= current if isinstance(item, dict) else True
-            pinned = isinstance(item, dict) and active_source and str(item.get("address") or "") == active_source
+            pinned = isinstance(item, dict) and str(item.get("address") or "") in active_sources
             if not isinstance(item, dict) or (expired and not pinned):
                 families.pop(family, None)
         if not families:
@@ -155,12 +190,12 @@ def _record(
     families = record.setdefault("families", {})
     existing = families.get(family)
 
-    active_source = _active_authorized_source(store, family)
+    active_sources = _active_authorized_sources(store, family)
     if (
-        active_source
+        active_sources
         and isinstance(existing, dict)
-        and str(existing.get("address") or "") == active_source
-        and str(address) != active_source
+        and str(existing.get("address") or "") in active_sources
+        and str(address) != str(existing.get("address") or "")
     ):
         return {"family": family, **existing}
 
@@ -255,9 +290,9 @@ def trusted_sources(store: JsonStore, session_token: str, *, now: int | None = N
         item = families.get(family)
         if not isinstance(item, dict):
             continue
-        active_source = _active_authorized_source(store, family)
+        active_sources = _active_authorized_sources(store, family)
         expired = int(item.get("expires_at", 0) or 0) <= current
-        if expired and str(item.get("address") or "") != active_source:
+        if expired and str(item.get("address") or "") not in active_sources:
             continue
         try:
             address = _global_address(str(item.get("address") or ""), family)
