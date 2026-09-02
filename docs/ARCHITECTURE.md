@@ -108,6 +108,8 @@ Split-WAN is normal plan data, not a different subsystem.
 
 Automatic selection is recommendation only. Manual intent is preserved while valid. No plan change creates authorization until explicit Activate.
 
+Browser-only plan preference persistence may remember non-authoritative UI hints such as selected family, WireGuard name, Endpoint ID and WAN fallback identity. `plan-preferences.js` stores only those hints in browser `localStorage`; it must never persist session/CSRF data, client-source authority, Gate authorization or runtime TTL state. Every restore is revalidated through the current `gate-controls.js` option set. Missing or stale identities are discarded, and preference restore must never call Activate.
+
 ## InternetExitPlan
 
 Internet Exit is an independent outbound plan. It is not part of Access Endpoint selection and is not constrained to the Access Gate family.
@@ -328,6 +330,7 @@ Internet Exit uses the same PathCard structure but does not expose internal `Pri
 ### Browser module ownership
 
 - `gate-controls.js`: endpoint eligibility, endpoint ordering, capability, AccessPlan, InternetExitPlan, auto/manual selection and structured view model;
+- `plan-preferences.js`: browser-only persistence adapter for non-authoritative manual plan hints; it never decides endpoint eligibility and never creates authorization;
 - `endpoint-picker.js`: visible picker trigger, desktop popover/mobile sheet, PathCard rendering, selected/focus state;
 - `fit-text.js`: the only NetworkIdentityText fitting engine;
 - `interaction.css`: generic EndpointPicker/PathCard interaction styling;
