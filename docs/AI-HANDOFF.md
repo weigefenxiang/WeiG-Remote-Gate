@@ -13,7 +13,7 @@ Before editing, read:
 5. `docs/SECURITY-MODEL.md`
 6. root `DESIGN.md` for visual/UI work.
 
-Do not rely on an old handoff SHA. Query the current `dev` HEAD before every write.
+Do not rely on a handoff SHA as branch authority. Query the current `dev` HEAD before every write.
 
 ## Git workflow
 
@@ -24,14 +24,7 @@ Do not rely on an old handoff SHA. Query the current `dev` HEAD before every wri
 - Commit messages are English.
 - Never force-update refs.
 - If `dev` advances concurrently, fetch/compare changed paths and rebase intended changes onto the latest HEAD. Never overwrite unknown commits.
-
-The runtime-code baseline immediately before the current docs consolidation is:
-
-```text
-ed837796e30ede137ca5671db7f683df1675039d
-```
-
-That commit standardized responsive network identity fitting. The docs commit that contains this handoff will be newer while the runtime code may still be unchanged.
+- Routine `dev` CI is lightweight; full Browser Matrix is `main`-only/manual Release Browser Validation.
 
 ## Current real hardware
 
@@ -51,7 +44,7 @@ WAN  / pppoe-WAN   -> private/CGNAT upstream; Mapped candidate
 WAN2 / pppoe-WAN2  -> public IPv4; Direct candidate
 ```
 
-Never encode those literal names as policy.
+Never encode those literal names, addresses or ports as policy.
 
 ## Closed hardware work: do not reopen without a regression
 
@@ -86,7 +79,7 @@ Do not require the remap tuple to be numerically different. Current runtime owne
 
 ## User-confirmed current dashboard state
 
-The user explicitly confirmed that these real-device values are normal:
+The user explicitly confirmed the current real-device IPv4 dashboard data is normal for:
 
 ```text
 Client IPv4
@@ -95,64 +88,131 @@ Internet Exit
 WAN list
 ```
 
-Do not reopen the generic claim that current IPv4 dashboard data is wrong unless a new regression is shown.
+Do not reopen the generic claim that current IPv4 dashboard data/default selection is wrong unless a new regression is shown.
 
 Manual endpoint-selection persistence on real hardware is still not separately confirmed.
 
-## Approved next architecture/UI target
+## Current implemented architecture/UI state
 
-The next implementation must follow the contracts already written in `SYSTEMIC-INVARIANTS.md`, `PROJECT-RULES.md` and `ARCHITECTURE.md`.
+The following items are now implemented in `dev` and covered by contract/static CI. They are no longer merely design targets.
 
-Key points:
+### Capability-aware Family control
 
-1. **Capability-aware Family control**
-   - current device IPv6 Gate is disabled;
-   - IPv6 remains explainable/visible but disabled;
-   - Dual is disabled when IPv6 Gate is unavailable;
-   - unavailable capability must not lead to a selectable-but-unactivatable dead end.
+- IPv4/IPv6/Dual controls remain visible where useful for explanation.
+- IPv6 interaction requires current `gate_ipv6` capability.
+- Dual requires both IPv4 and IPv6 Gate capability.
+- unavailable capability is disabled with a reason instead of creating a selectable-but-unactivatable dead end.
 
-2. **Dual PathCard**
-   - one generic `PathCard` with two `FamilyPathBlock`s;
-   - four information lines:
+Current known hardware still has IPv6 Gate disabled; this implementation status is not IPv6 hardware PASS.
 
-   ```text
-   IPv4   <WAN>   <Direct|Mapped|...>
-   <IPv4 endpoint>
-   IPv6   <WAN>   <Direct|...>
-   <IPv6 endpoint>
-   ```
+### Access eligibility
 
-   - same DOM/component for same-WAN and split-WAN;
-   - remove redundant `Dual`, `Split WAN` and `Split Exit` presentation.
+User-facing Access candidates currently include:
 
-3. **Internet Exit decoupled from Access family**
-   - modes: `none / ipv4 / ipv6 / dual`;
-   - IPv4 Access defaults to IPv4 Exit, IPv6 to IPv6 Exit, Dual to Dual Exit;
-   - this is recommendation only; user may select another supported mode;
-   - same-WAN/split-WAN Dual are one InternetExitPlan model;
-   - backend/API/OpenWrt validation must treat the egress plan as independent authority.
+```text
+Public IPv4 Direct
+Mapped IPv4
+observed NAT egress Try
+Global IPv6 Direct when capability is available
+Relay (future)
+```
 
-4. **Private/CGNAT presentation**
-   - keep classification internally when needed;
-   - remove user-facing `Private/CGNAT Try` Access Endpoint;
-   - do not show `Private/CGNAT` as an Internet Exit product label;
-   - a CGNAT WAN can still be a valid IPv4 outbound exit when routing prerequisites are valid.
+`Private/CGNAT` may remain internal inventory/network classification but is not a selectable public Access Endpoint.
 
-5. **Dynamic WireGuard service port**
-   - do not hardcode `51820`;
-   - Service Registry remains the only authority for current WireGuard listen port;
-   - keep `external_port`, `ingress_port`, `service_port` distinct;
-   - add non-51820 regression coverage.
+### Internet Exit is an independent plan
 
-6. **No new wheels**
-   - `gate-controls.js` owns policy/plans/view model;
-   - `endpoint-picker.js` owns picker/PathCard rendering;
-   - `fit-text.js` remains the only fitting engine;
-   - `interaction.css` owns generic PathCard/EndpointPicker interaction styling;
-   - use root `DESIGN.md` and awesome-design-md methodology for visual consistency;
-   - do not create Dual/IPv6/Mapped/Exit-specific replacement frameworks.
+Canonical modes:
 
-These are approved targets, not claims that current deployed code/hardware already implements or validates them.
+```text
+none
+ipv4
+ipv6
+dual
+```
+
+- default recommendation follows the Access family;
+- manual user choice may select another supported mode;
+- a single-family Access Gate does not force the same Internet Exit family;
+- same-WAN and split-WAN Dual are one `InternetExitPlan` model;
+- IPv4 outbound eligibility depends on WAN up/default-route authority, not whether the WAN's local IPv4 is public/RFC1918/CGNAT;
+- IPv6 outbound eligibility requires WAN up + IPv6 default route + usable Global IPv6;
+- Dual remains atomic/fail-closed.
+
+The VPS/API accepts explicit `egress_mode`; legacy requests that omit it retain backward-compatible derivation. Existing OpenWrt execution primitives are reused rather than creating a second egress executor.
+
+### Shared PathCard
+
+Access Endpoint and Internet Exit reuse the same picker/card renderer:
+
+```text
+PathCard
+  -> one FamilyPathBlock for IPv4 or IPv6
+  -> two FamilyPathBlocks for Dual
+```
+
+Dual presentation is four information lines:
+
+```text
+IPv4   <WAN>   <Access Method when applicable>
+<IPv4 endpoint/address>
+IPv6   <WAN>   <Access Method when applicable>
+<IPv6 endpoint/address>
+```
+
+Same-WAN and split-WAN use the same DOM. Do not restore redundant `Dual · Split WAN` / `Split Exit` presentation.
+
+Module ownership remains:
+
+- `gate-controls.js`: policy/state/plan/view-model;
+- `endpoint-picker.js`: shared picker/PathCard rendering;
+- `fit-text.js`: only NetworkIdentityText fitting engine;
+- `interaction.css`: generic PathCard/EndpointPicker interaction styling;
+- `DESIGN.md`: visual contract.
+
+Do not create Dual/IPv6/Mapped/Exit-specific replacement frameworks.
+
+### NetworkIdentityText
+
+`fit-text.js` is the single fitting engine for public WG Endpoint, Client IPs, authorization source, WAN identities/addresses, picker cards and equivalent network identities.
+
+Long values start at normal semantic size and shrink only when actual overflow occurs. Do not reintroduce component-local IPv6/WAN/Dual fitting utilities.
+
+### Dynamic WireGuard service port
+
+Service Registry remains authority for the actual WireGuard listen port.
+
+Keep these identities distinct:
+
+```text
+external_port
+ingress_port
+service_port
+```
+
+Do not hardcode `51820`. Automated coverage includes a non-51820 WireGuard service-port path; hardware validation of a non-51820 listener remains pending.
+
+## Automated validation state
+
+Routine `dev` CI covers:
+
+- Python contract tests;
+- Python compile;
+- shell syntax;
+- native mapper host build/check;
+- production JavaScript syntax;
+- syntax of `tests/browser_layout.mjs` and `tests/browser_split_dual.mjs`.
+
+The release browser tests were updated for the current plan encoding:
+
+```text
+ipv4:<WAN>
+ipv6:<WAN>
+dual:<WAN4>|<WAN6>
+```
+
+They also assert one FamilyPathBlock for single-family PathCard and two for Dual PathCard. Routine `dev` CI only syntax-checks those browser scripts; it does **not** execute the full Browser Matrix. Full Linux/Windows Chromium execution remains `main`-only/manual Release Browser Validation.
+
+README and Chinese README are guarded by `tests/test_documentation_contract.py` so old Private/CGNAT Try, old source terminology and obsolete routine-Chromium-CI wording do not silently return.
 
 ## Systemic investigation mistakes
 
@@ -161,7 +221,7 @@ Do not duplicate the full list here. `SYSTEMIC-INVARIANTS.md` is canonical.
 Highest-frequency reminders:
 
 - Access Endpoint != Internet Exit;
-- network fact != user product option != runtime authority;
+- network fact != capability != user plan != runtime authority;
 - external Mapping port != mapper ingress port != WireGuard service port;
 - recommendation/default != authorization;
 - Mapping active != Gate open;
