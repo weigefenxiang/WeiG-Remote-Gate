@@ -251,16 +251,25 @@ Known examples:
 
 An ACK timeout is not proof that an Activate command never executed on the router. Expiry of any unacknowledged Activate is therefore an uncertain-runtime condition: the Server archives that Activate, queues a Close rollback and blocks replacement Activate commands until the Close is resolved. For a multi-family batch, the remaining batch tail is also discarded. Expired Close commands do not recursively create more Close commands.
 
-OpenWrt command delivery is effectively at-least-once until the Server accepts an ACK, so an Activate command must also be replay-safe on the Agent. Before any Gate or Internet Exit side effect, the Agent records the command id as `pending` in its runtime command-result journal. After local execution converges, the final `true` or `false` result replaces `pending` before the ACK is sent.
+OpenWrt command delivery is effectively at-least-once until the Server accepts an ACK, so an Activate command and its ACK must both be replay-safe. Before any Gate or Internet Exit side effect, the Agent records the command id as `pending` in its runtime command-result journal. After local execution converges, the final `true` or `false` result replaces `pending` before the ACK is sent.
+
+A successful Activate result has one additional ordering boundary: the Agent must publish the post-side-effect synchronized runtime status before sending the success ACK. If that status publication fails, the saved `true` journal remains authoritative for retry and the success ACK is deferred. This prevents the Server from advancing the transaction while its current Agent authority still describes the pre-Activate runtime.
+
+The Server ACK endpoint is idempotent only for an exact replay of the most recent terminal result: the command id must match `queue.last`, and the repeated boolean must match the stored terminal state (`done` for `true`, `failed` for `false`). Such a replay returns success without advancing `pending`/`next` again and without duplicating activity. A repeated ACK with the opposite boolean remains a conflict.
+
+When an accepted successful ACK advances a multi-command batch, the Server stamps the successor with `predecessor_command_id` at that moment. That field is Server-generated evidence that the predecessor success was already consumed. It is not present merely because two commands were originally placed in the same batch.
 
 The journal follows these fail-closed rules:
 
-- if the first ACK is lost, the same command id only replays the saved final ACK and must not repeat Gate or egress side effects;
+- if the first ACK response is lost, the same command id only replays the saved final ACK and must not repeat Gate or egress side effects;
+- a finalized journal is retried even when the next command pull is empty, so a single/final command does not depend on receiving the first ACK response to clear its local journal;
 - if the same command id is later found in `pending`, local execution is uncertain, so Gate authorization and Internet Exit are cleared before a failure result is journaled and ACKed;
-- if a journal belongs to a different command id, only a saved `false` result is safe to discard without rollback; saved `true`, `pending` or invalid state may represent live unacknowledged runtime and must be rolled back before the new Activate may execute;
+- if a journal belongs to a different command id, a saved `false` result is safe to discard without rollback; a saved `true` result is also safe to preserve only when the current command explicitly names that exact saved id as `predecessor_command_id`; every other saved `true`, `pending` or invalid state may represent live unacknowledged runtime and must be rolled back before the new Activate may execute;
 - if the Agent cannot create the pre-side-effect journal, it must not perform Activate side effects;
 - if the Agent cannot persist the final result, it must roll back runtime rather than acknowledge a success that cannot be replayed safely;
 - rollback is part of the same Activate transaction: if Gate/egress cleanup is incomplete, keep the journal `pending` with rollback intent, do not ACK a final result, do not run a replacement Activate, and retry cleanup only until convergence.
+
+The `predecessor_command_id` exception does not weaken ordinary stale-journal handling. An unrelated or unproven prior success still rolls back first. The exception exists only because the Server can issue the successor proof after it has durably accepted the predecessor success.
 
 The journal belongs to the same runtime-authority lifetime as the firewall/egress state and therefore lives in the runtime namespace rather than becoming long-lived configuration state.
 
@@ -346,7 +355,7 @@ Before implementing any network/UI change, answer all of these:
 10. If the UI changed, does the design follow `DESIGN.md`, PathCard/NetworkIdentityText and the awesome-design-md methodology?
 11. Does Activate still require fresh, inventory-synchronized Agent authority while Close remains deliverable under degraded control-plane conditions?
 12. Is last-known diagnostic state kept separate from the projected authority view, with any stale runtime hint limited to safe Close behavior only?
-13. Can an Activate be retried, ACK-lost or interrupted without repeating uncertain side effects, and is its result journaled before Server acknowledgement?
+13. Can an Activate be retried, ACK-lost or interrupted without repeating uncertain side effects; is the final ACK idempotent, is success status published before success ACK, and is a batch predecessor preserved only through Server-generated accepted-predecessor proof?
 14. Does every expired unacknowledged Activate converge through a Close rollback, and does a failed Close stay retryable until success or its existing Close deadline?
 15. Are pre-Activate cleanup and rollback themselves journal-covered, verified to completion, and retry-only when convergence is incomplete?
 16. Does any Gate OPEN indicator require the current source **and** the current family `device + ingress_port + scope` profile, with mismatched active profiles forced through Close-before-switch?

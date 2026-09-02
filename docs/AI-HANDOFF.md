@@ -202,6 +202,20 @@ service_port
 
 Do not hardcode `51820`. Automated coverage includes a non-51820 WireGuard service-port path; hardware validation of a non-51820 listener remains pending.
 
+### At-least-once command / ACK transaction
+
+Activate delivery is replay-safe across lost ACK responses and multi-family batch advancement:
+
+- the Agent writes a runtime `pending` journal before Gate/egress side effects and replaces it with a final `true`/`false` result only after local convergence;
+- a successful final result is not ACKed until the Agent has successfully published post-side-effect synchronized status; if status publication fails, the `true` journal remains for retry;
+- the Server accepts a duplicate ACK only when it exactly matches the most recent terminal command id and boolean result, and such a replay never advances the queue or duplicates activity;
+- when a successful batch member advances its successor, the Server stamps the successor with `predecessor_command_id` only after accepting that predecessor success;
+- the Agent preserves an earlier successful runtime without stale rollback only when the current successor names that exact journal id as the accepted predecessor; unrelated `true`, `pending` or invalid journals remain rollback-first;
+- an empty command pull still retries a finalized journal, so single/final-command ACK response loss does not leave the journal stranded;
+- Close remains intentionally asymmetric and retryable because re-executing Close only reduces access.
+
+`tests/test_ack_delivery_semantics.py` provides executable Server/Agent regression coverage for duplicate ACK idempotency, failed-followup rollback preservation, accepted-predecessor successor execution, status-before-success-ACK ordering and empty-pull finalized-journal replay. Existing journal/rollback/Close runtime tests continue to guard the fail-closed paths. These are CI/runtime-simulator guarantees, not new real-device PASS claims.
+
 ## Automated validation state
 
 Routine `dev` CI covers:

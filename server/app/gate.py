@@ -644,6 +644,13 @@ def pull_command(store: JsonStore) -> dict[str, Any] | None:
         return command
 
 
+def _terminal_ack_matches(command: object, command_id: str, ok: bool) -> bool:
+    if not isinstance(command, dict) or command.get("id") != command_id:
+        return False
+    expected_state = "done" if ok else "failed"
+    return command.get("state") == expected_state
+
+
 def ack_command(store: JsonStore, command_id: str, ok: bool, detail: str = "") -> bool:
     with QUEUE_LOCK:
         queue = store.read("commands.json", _empty_queue())
@@ -651,7 +658,7 @@ def ack_command(store: JsonStore, command_id: str, ok: bool, detail: str = "") -
             return False
         command = queue.get("pending")
         if not isinstance(command, dict) or command.get("id") != command_id:
-            return False
+            return _terminal_ack_matches(queue.get("last"), command_id, ok)
 
         now = int(time.time())
         if not ok and command.get("action") == "close":
@@ -690,6 +697,7 @@ def ack_command(store: JsonStore, command_id: str, ok: bool, detail: str = "") -
                 next_command["created_at"] = now
                 next_command["expires_at"] = now + 60
                 next_command["state"] = "pending"
+                next_command["predecessor_command_id"] = command_id
                 queue["pending"] = next_command
             else:
                 queue["pending"] = None

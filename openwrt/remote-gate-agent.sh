@@ -556,6 +556,25 @@ write_activation_result() {
     mv -f "$result_tmp" "$COMMAND_RESULT_FILE"
 }
 
+publish_saved_activation_result() {
+    result_id="$1"; result_state="$2"; result_detail="$(sanitize_detail "$3")"
+    case "$result_state" in
+        true)
+            if ! post_status true; then
+                logger -t "$TAG" "activation runtime status publication failed before success ACK; keeping result journal" 2>/dev/null || true
+                return 1
+            fi
+            ;;
+        false) ;;
+        *) return 1 ;;
+    esac
+    if send_ack "$result_id" "$result_state" "$result_detail"; then
+        clear_activation_result "$result_id"
+        return 0
+    fi
+    return 1
+}
+
 prepare_activation_command() {
     write_activation_result "$1" pending "activation-in-progress"
 }
@@ -575,19 +594,36 @@ finish_activation_command() {
         fi
         return 1
     fi
-    if send_ack "$result_id" "$result_ok" "$result_detail"; then
-        clear_activation_result "$result_id"
-    fi
+    publish_saved_activation_result "$result_id" "$result_ok" "$result_detail" || true
     return 0
 }
 
+replay_finalized_activation_result() {
+    [ -r "$COMMAND_RESULT_FILE" ] || return 1
+    saved_id="$(sed -n '1p' "$COMMAND_RESULT_FILE" 2>/dev/null)"
+    saved_state="$(sed -n '2p' "$COMMAND_RESULT_FILE" 2>/dev/null)"
+    saved_detail="$(sed -n '3p' "$COMMAND_RESULT_FILE" 2>/dev/null)"
+    case "$saved_state" in
+        true|false)
+            publish_saved_activation_result "$saved_id" "$saved_state" "$saved_detail" || true
+            return 0
+            ;;
+        *) return 1 ;;
+    esac
+}
+
 replay_activation_result() {
-    expected="$1"
+    expected="$1"; predecessor="${2:-}"
     [ -r "$COMMAND_RESULT_FILE" ] || return 1
     saved_id="$(sed -n '1p' "$COMMAND_RESULT_FILE" 2>/dev/null)"
     saved_state="$(sed -n '2p' "$COMMAND_RESULT_FILE" 2>/dev/null)"
     saved_detail="$(sed -n '3p' "$COMMAND_RESULT_FILE" 2>/dev/null)"
     if [ "$saved_id" != "$expected" ]; then
+        if [ "$saved_state" = true ] && [ -n "$predecessor" ] && [ "$saved_id" = "$predecessor" ]; then
+            logger -t "$TAG" "activation result $saved_id already accepted before successor $expected; preserving runtime" 2>/dev/null || true
+            clear_activation_result "$saved_id"
+            return 1
+        fi
         if [ "$saved_state" = false ]; then
             rm -f "$COMMAND_RESULT_FILE"
             return 1
@@ -603,9 +639,7 @@ replay_activation_result() {
     fi
     case "$saved_state" in
         true|false)
-            if send_ack "$saved_id" "$saved_state" "$saved_detail"; then
-                clear_activation_result "$saved_id"
-            fi
+            publish_saved_activation_result "$saved_id" "$saved_state" "$saved_detail" || true
             ;;
         *)
             logger -t "$TAG" "activation command $saved_id had uncertain local result; rolling back before ACK" 2>/dev/null || true
@@ -615,9 +649,7 @@ replay_activation_result() {
             esac
             if rollback_active_access; then
                 if write_activation_result "$saved_id" false "$final_detail"; then
-                    if send_ack "$saved_id" false "$final_detail"; then
-                        clear_activation_result "$saved_id"
-                    fi
+                    publish_saved_activation_result "$saved_id" false "$final_detail" || true
                 fi
             else
                 write_activation_result "$saved_id" pending "rollback-pending:$final_detail" || true
@@ -670,7 +702,10 @@ pull_once() {
     case "$mode" in all|close-only) ;; *) mode=close-only ;; esac
     control_request GET "/api/v1/agent/pull" "$BODY" || return 1
     code="$CONTROL_CODE"
-    [ "$code" = "204" ] && return 0
+    if [ "$code" = "204" ]; then
+        replay_finalized_activation_result || true
+        return 0
+    fi
     [ "$code" = "200" ] || { logger -t "$TAG" "agent pull failed HTTP $code"; return 1; }
 
     id="$(jsonfilter -i "$BODY" -e '@.id' 2>/dev/null | sed -n '1p')"
@@ -680,7 +715,8 @@ pull_once() {
         return 0
     fi
     if [ "$action" = "activate" ]; then
-        if replay_activation_result "$id"; then
+        predecessor_command_id="$(jsonfilter -i "$BODY" -e '@.predecessor_command_id' 2>/dev/null | sed -n '1p')"
+        if replay_activation_result "$id" "$predecessor_command_id"; then
             logger -t "$TAG" "activation command $id result replayed without re-execution" 2>/dev/null || true
             return 0
         fi
