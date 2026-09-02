@@ -34,6 +34,8 @@ def _globally_reachable_unicast(value: object, version: int | None = None) -> bo
 def agent_status_is_fresh(value: object, *, now: int | None = None) -> bool:
     if not isinstance(value, dict):
         return False
+    if value.get("inventory_synced") is False:
+        return False
     current = int(time.time()) if now is None else int(now)
     try:
         reported_at = int(value.get("reported_at", 0) or 0)
@@ -45,16 +47,17 @@ def agent_status_is_fresh(value: object, *, now: int | None = None) -> bool:
 
 
 def fail_closed_agent_status(value: object, *, now: int | None = None) -> dict[str, Any]:
-    """Return current Agent authority, or an inactive diagnostic shell when stale.
+    """Return current Agent authority, or an inactive diagnostic shell when unavailable.
 
-    A stale report is useful only for diagnostics such as the last report time or
-    firewall backend name. Runtime claims must fail closed so cached Gate,
-    WireGuard, egress, mapping and transport state cannot remain authoritative
-    after the OpenWrt agent stops reporting.
+    A stale or inventory-unsynced report is useful only for diagnostics such as
+    the last report time or firewall backend name. Runtime claims must fail
+    closed so cached Gate, WireGuard, egress, mapping and transport state cannot
+    remain authoritative without current OpenWrt facts.
     """
     item = value if isinstance(value, dict) else {}
     if agent_status_is_fresh(item, now=now):
         result = dict(item)
+        result.setdefault("inventory_synced", True)
         result["fresh"] = True
         return result
 
@@ -66,6 +69,8 @@ def fail_closed_agent_status(value: object, *, now: int | None = None) -> dict[s
         reported_at = max(0, int(item.get("reported_at", 0) or 0))
     except (TypeError, ValueError):
         reported_at = 0
+    inventory_synced = item.get("inventory_synced") is not False
+    authority_detail = "stale_agent_status" if inventory_synced else "inventory_unsynced"
     firewall = item.get("firewall") if isinstance(item.get("firewall"), dict) else {}
     transport = item.get("transport") if isinstance(item.get("transport"), dict) else {}
     backend = str(firewall.get("backend") or "")[:32]
@@ -93,6 +98,7 @@ def fail_closed_agent_status(value: object, *, now: int | None = None) -> dict[s
     return {
         "schema": schema,
         "reported_at": reported_at,
+        "inventory_synced": inventory_synced,
         "fresh": False,
         "wireguard": [],
         "firewall": {
@@ -128,14 +134,14 @@ def fail_closed_agent_status(value: object, *, now: int | None = None) -> dict[s
             "wg": "",
             "ipv4_subnet": "",
             "ipv6_subnet": "",
-            "detail": "stale_agent_status",
+            "detail": authority_detail,
             "expires_in": 0,
         },
         "mapping": {
             "available": False,
             "state": "unavailable",
             "active_mappings": 0,
-            "detail": "stale_agent_status",
+            "detail": authority_detail,
         },
         "transport": {
             "active_family": "",
