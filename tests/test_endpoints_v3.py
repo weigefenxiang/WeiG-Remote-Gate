@@ -13,7 +13,7 @@ class EndpointV3Tests(unittest.TestCase):
         self.store = JsonStore(Path(self.tmp.name))
         self.store.write("agent-status.json", {
             "schema": 3,
-            "wireguard": [{"name": "WG_HOME", "listen_port": 51820}],
+            "wireguard": [{"name": "WG_HOME", "listen_port": 41194}],
         })
         self.inventory = {
             "schema": 3,
@@ -41,7 +41,7 @@ class EndpointV3Tests(unittest.TestCase):
                 "type": "wireguard",
                 "transport": "udp",
                 "name": "WG_HOME",
-                "service_port": 51820,
+                "service_port": 41194,
             }],
             "mappings": [{
                 "wan": "WAN",
@@ -67,7 +67,7 @@ class EndpointV3Tests(unittest.TestCase):
         self.assertEqual(endpoint["reachability"], "mapped")
         self.assertEqual(endpoint["external_port"], 43001)
         self.assertEqual(endpoint["ingress_port"], 30001)
-        self.assertEqual(endpoint["service_port"], 51820)
+        self.assertEqual(endpoint["service_port"], 41194)
         self.assertEqual(endpoint["service_id"], "wg.WG_HOME")
         self.assertEqual(endpoint["wireguard"], "WG_HOME")
 
@@ -84,7 +84,7 @@ class EndpointV3Tests(unittest.TestCase):
         self.assertEqual(command["schema"], 3)
         self.assertEqual(command["access_method"], "mapped")
         self.assertEqual(command["service_id"], "wg.WG_HOME")
-        self.assertEqual(command["service_port"], 51820)
+        self.assertEqual(command["service_port"], 41194)
         self.assertEqual(command["ingress_port"], 30001)
         self.assertEqual(command["external_port"], 43001)
         self.assertEqual(command["external_address"], "1.1.1.1")
@@ -107,6 +107,8 @@ class EndpointV3Tests(unittest.TestCase):
         mapped = [item for item in endpoints if item["access_method"] == "mapped"][0]
         self.assertEqual(direct["service_id"], mapped["service_id"])
         self.assertEqual(direct["service_port"], mapped["service_port"])
+        self.assertEqual(direct["service_port"], 41194)
+        self.assertEqual(direct["ingress_port"], 41194)
         self.assertNotEqual(direct["ingress_port"], mapped["ingress_port"])
 
 
