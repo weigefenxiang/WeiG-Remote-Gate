@@ -242,6 +242,18 @@ Known examples:
 
 An ACK timeout is not proof that an Activate command never executed on the router. For a multi-family batch, expiry of any unacknowledged member is therefore an uncertain-runtime condition and must reduce access through the Close rollback path rather than continuing the batch.
 
+OpenWrt command delivery is effectively at-least-once until the Server accepts an ACK, so an Activate command must also be replay-safe on the Agent. Before any Gate or Internet Exit side effect, the Agent records the command id as `pending` in its runtime command-result journal. After local execution converges, the final `true` or `false` result replaces `pending` before the ACK is sent.
+
+The journal follows these fail-closed rules:
+
+- if the first ACK is lost, the same command id only replays the saved final ACK and must not repeat Gate or egress side effects;
+- if the same command id is later found in `pending`, local execution is uncertain, so Gate authorization and Internet Exit are cleared before a failure result is journaled and ACKed;
+- if an old non-final journal belongs to a different command id, the uncertain old runtime is cleared before the new Activate may execute;
+- if the Agent cannot create the pre-side-effect journal, it must not perform Activate side effects;
+- if the Agent cannot persist the final result, it must roll back runtime rather than acknowledge a success that cannot be replayed safely.
+
+The journal belongs to the same runtime-authority lifetime as the firewall/egress state and therefore lives in the runtime namespace rather than becoming long-lived configuration state.
+
 Wait for the defined bounded settle/ACK boundary, then inspect authoritative state.
 
 ## 12. Validation categories must not be conflated
@@ -322,3 +334,4 @@ Before implementing any network/UI change, answer all of these:
 10. If the UI changed, does the design follow `DESIGN.md`, PathCard/NetworkIdentityText and the awesome-design-md methodology?
 11. Does Activate still require fresh, inventory-synchronized Agent authority while Close remains deliverable under degraded control-plane conditions?
 12. Is last-known diagnostic state kept separate from the projected authority view, with any stale runtime hint limited to safe Close behavior only?
+13. Can an Activate be retried, ACK-lost or interrupted without repeating uncertain side effects, and is its result journaled before Server acknowledgement?
