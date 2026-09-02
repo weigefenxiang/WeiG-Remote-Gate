@@ -1,3 +1,4 @@
+import copy
 import unittest
 from pathlib import Path
 
@@ -73,6 +74,15 @@ class AgentStatusFreshnessTests(unittest.TestCase):
         self.assertTrue(view["egress"]["active"])
         self.assertEqual(view["wireguard"][0]["name"], "WG_HOME")
         self.assertTrue(view["transport"]["healthy"])
+
+    def test_projection_does_not_mutate_raw_agent_report(self):
+        status = self.sample()
+        original = copy.deepcopy(status)
+        fresh = fail_closed_agent_status(status, now=1000)
+        stale = fail_closed_agent_status(status, now=1001 + AGENT_STATUS_FRESH_SECONDS)
+        self.assertEqual(status, original)
+        self.assertIsNot(fresh, status)
+        self.assertIsNot(stale, status)
 
     def test_stale_report_loses_all_runtime_authority_but_keeps_close_hint(self):
         status = self.sample()
