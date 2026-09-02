@@ -83,16 +83,16 @@ class MappedAccessContractTests(unittest.TestCase):
         self.assertIn("item.access_method === 'mapped'", APP)
         self.assertIn("method = 'Mapped'", APP)
         self.assertNotIn("provider === 'natmap'", APP)
-        self.assertNotIn("provider = 'NATMap'", APP)
-        self.assertIn(
-            "if (item?.access_method === 'mapped' || item?.reachability === 'mapped' || item?.provider === 'natmap') return 'Mapped';",
-            GATE_CONTROLS,
-        )
+        self.assertIn("item?.access_method === 'mapped' || item?.reachability === 'mapped'", GATE_CONTROLS)
+        self.assertNotIn("provider === 'natmap'", GATE_CONTROLS)
         self.assertNotIn("return 'NATMap'", GATE_CONTROLS)
-        self.assertIn('/Direct|Mapped/', ENDPOINT_PICKER)
+        self.assertIn("option?.dataset?.pathPrimary === '1'", ENDPOINT_PICKER)
         self.assertNotIn('/Direct|NATMap/', ENDPOINT_PICKER)
-        self.assertIn('Direct / Mapped / NAT egress / Private-CGNAT', DESIGN)
-        self.assertNotIn('Direct / NATMap / NAT egress / Private-CGNAT', DESIGN)
+        self.assertIn('Direct', DESIGN)
+        self.assertIn('Mapped', DESIGN)
+        self.assertIn('NAT egress', DESIGN)
+        self.assertIn("show Private/CGNAT as a selectable public Access Endpoint", DESIGN)
+        self.assertNotIn('Direct / Mapped / NAT egress / Private-CGNAT', DESIGN)
 
     def test_network_identity_text_uses_one_shared_fit_engine(self):
         self.assertIn("hero: {max: 22, min: 7.5, floor: 6}", FIT_TEXT)
