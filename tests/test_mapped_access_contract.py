@@ -80,10 +80,10 @@ class MappedAccessContractTests(unittest.TestCase):
         self.assertIn('service-wireguard-mismatch', AGENT)
 
     def test_ui_uses_access_method_not_natmap_branding(self):
-        self.assertIn("item.access_method === 'mapped'", APP)
-        self.assertIn("method = 'Mapped'", APP)
+        self.assertNotIn("function endpointLabel", APP)
         self.assertNotIn("provider === 'natmap'", APP)
         self.assertIn("item?.access_method === 'mapped' || item?.reachability === 'mapped'", GATE_CONTROLS)
+        self.assertIn("return 'Mapped'", GATE_CONTROLS)
         self.assertNotIn("provider === 'natmap'", GATE_CONTROLS)
         self.assertNotIn("return 'NATMap'", GATE_CONTROLS)
         self.assertIn("option?.dataset?.pathPrimary === '1'", ENDPOINT_PICKER)
