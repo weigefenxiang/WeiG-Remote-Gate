@@ -365,14 +365,15 @@
   }
 
   function renderSystem(data) {
-    const fresh = Boolean(state.dashboardAvailable && data?.agent?.fresh);
+    const fresh = Boolean(data?.agent?.fresh);
+    const current = Boolean(state.dashboardAvailable && fresh);
     const caps = data?.inventory?.capabilities || {};
     const transport = data?.agent?.transport || {};
     const firewall = data?.agent?.firewall || {};
 
-    if ($('agent-state')) $('agent-state').textContent = fresh ? t('common.online') : t('common.waiting');
-    if ($('system-dot')) $('system-dot').className = `status-dot ${fresh ? 'success' : 'neutral'}`;
-    if ($('system-state')) $('system-state').textContent = fresh ? t('header.openwrtOnline') : t('header.controlPlaneOnline');
+    if ($('agent-state')) $('agent-state').textContent = current ? t('common.online') : t('common.waiting');
+    if ($('system-dot')) $('system-dot').className = `status-dot ${current ? 'success' : 'neutral'}`;
+    if ($('system-state')) $('system-state').textContent = current ? t('header.openwrtOnline') : t('header.controlPlaneOnline');
     if ($('system-ipv4-gate')) $('system-ipv4-gate').textContent = caps.gate_ipv4 === false ? t('common.disabled') : t('common.ready');
     if ($('system-ipv6-gate')) $('system-ipv6-gate').textContent = caps.gate_ipv6 ? t('common.ready') : t('common.disabled');
     if ($('system-firewall')) $('system-firewall').textContent = firewall.backend || t('common.unknown');

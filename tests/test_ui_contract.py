@@ -222,12 +222,14 @@ class UIContractTests(unittest.TestCase):
     def test_gate_orb_toggles_activate_and_close(self):
         gate = GATE.read_text(encoding="utf-8")
         self.assertIn("function toggleAccess()", gate)
-        self.assertRegex(gate, r"activeFamilyState\(fw,\s*context\.state\.family\)")
+        self.assertIn("function hasActiveRuntime(fw)", gate)
+        self.assertIn("if(agentFresh()&&hasActiveRuntime(fw)) closeAccess(); else activate();", gate)
         self.assertIn("closeAccess();", gate)
         self.assertIn("else activate();", gate)
         self.assertIn("addEventListener('click',toggleAccess)", gate)
-        self.assertIn("closeRequired = active || profileConflict", gate)
+        self.assertIn("closeRequired = hasActiveRuntime(fw)", gate)
         self.assertIn("const orbLabel = closeRequired ? t('gate.close') : t('gate.activate')", gate)
+        self.assertNotIn("conflictingActiveProfile", gate)
 
     def test_gate_open_state_is_scoped_to_current_browser_source(self):
         gate = GATE.read_text(encoding="utf-8")
