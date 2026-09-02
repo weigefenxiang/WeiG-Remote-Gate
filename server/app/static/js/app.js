@@ -6,6 +6,7 @@
     csrf: '',
     ttl: 300,
     busy: false,
+    dashboardAvailable: false,
     family: '',
     scope: 'wg',
     requestFamily: 'unknown',
@@ -364,7 +365,7 @@
   }
 
   function renderSystem(data) {
-    const fresh = Boolean(data?.agent?.fresh);
+    const fresh = Boolean(state.dashboardAvailable && data?.agent?.fresh);
     const caps = data?.inventory?.capabilities || {};
     const transport = data?.agent?.transport || {};
     const firewall = data?.agent?.firewall || {};
@@ -407,8 +408,12 @@
         return;
       }
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      render(await response.json());
+      const payload = await response.json();
+      state.dashboardAvailable = true;
+      render(payload);
     } catch (_) {
+      state.dashboardAvailable = false;
+      if (state.data) window.RemoteGateGateControls?.render(state.data);
       if ($('system-state')) $('system-state').textContent = t('header.statusUnavailable');
       if ($('system-dot')) $('system-dot').className = 'status-dot danger';
     }

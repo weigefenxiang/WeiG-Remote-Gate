@@ -23,30 +23,32 @@ function addAltWireGuard(payload) {
   payload.endpoints.push(...altEndpoints);
 }
 
-function setIpv4GateOpen(payload) {
-  const source = payload.client_sources?.ipv4?.address;
-  if (!source) throw new Error('fixture is missing IPv4 client source');
+function setIpv4GateOpen(payload, sourceOverride = '') {
+  const selectedSource = payload.client_sources?.ipv4?.address;
+  if (!selectedSource) throw new Error('fixture is missing IPv4 client source');
+  const runtimeSource = sourceOverride || selectedSource;
   const family = {
     active: true,
     family: 'ipv4',
     scope: 'wg',
-    source_ip: source,
+    source_ip: runtimeSource,
     source_kind: 'web_candidate',
     device: 'pppoe-WAN2',
     ingress_port: 51820,
     wg_port: 51820,
     expires_in: 300,
     source_count: 1,
-    authorized_sources: [source],
-    authorizations: [{source_ip: source, source_kind: 'web_candidate', expires_in: 300}],
+    authorized_sources: [runtimeSource],
+    authorizations: [{source_ip: runtimeSource, source_kind: 'web_candidate', expires_in: 300}],
   };
   payload.agent.fresh = true;
+  payload.agent.may_have_active_runtime = true;
   payload.agent.firewall = {
     ...payload.agent.firewall,
     active: true,
     family: 'ipv4',
     scope: 'wg',
-    source_ip: source,
+    source_ip: runtimeSource,
     device: 'pppoe-WAN2',
     ingress_port: 51820,
     wg_port: 51820,
@@ -70,61 +72,128 @@ function setIpv4GateOpen(payload) {
   };
 }
 
-const browser = await chromium.launch({headless: true});
-try {
+async function openScenario(browser, mutate = () => {}) {
   const page = await browser.newPage({viewport: {width: 390, height: 844}});
   let activatePosts = 0;
+  let failDashboard = false;
 
   page.on('request', (request) => {
     if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/v1/gate/activate') activatePosts += 1;
   });
 
   await page.route('**/api/v1/dashboard', async (route) => {
+    if (failDashboard) {
+      await route.abort('failed');
+      return;
+    }
     const response = await route.fetch();
     const payload = await response.json();
     addAltWireGuard(payload);
     setIpv4GateOpen(payload);
+    mutate(payload);
     await route.fulfill({response, contentType: 'application/json', body: JSON.stringify(payload)});
   });
 
   await page.goto('http://127.0.0.1:8765/', {waitUntil: 'networkidle'});
   await page.waitForSelector('#endpoint-picker-trigger');
+  return {
+    page,
+    activatePosts: () => activatePosts,
+    failDashboard: () => { failDashboard = true; },
+  };
+}
+
+async function selectIpv4(page) {
   await page.locator('[data-family="ipv4"]').click();
   await page.waitForFunction(() => document.querySelector('#wg-select')?.value === 'WG_HOME');
   await page.waitForFunction(() => document.querySelector('#endpoint-select')?.value === 'ep-wan2-v4');
-  await page.waitForFunction(() => document.querySelector('#gate-state-badge')?.textContent === 'AUTHORIZED');
+  await page.locator('#egress-select').selectOption('__lan__');
+}
 
-  assert(await page.locator('#wg-select').isVisible(), 'two WireGuard services should expose the service selector');
-  assert(!(await page.locator('#close-button').evaluate((node) => node.classList.contains('hidden'))), 'matching active profile should expose Close');
-  assert(await page.locator('#activate-button').evaluate((node) => node.classList.contains('hidden')), 'matching active profile must hide Activate');
+async function assertCloseOnly(page, expectedBadge, context) {
+  if (expectedBadge) {
+    await page.waitForFunction((badge) => document.querySelector('#gate-state-badge')?.textContent === badge, expectedBadge);
+  }
+  assert(!(await page.locator('#close-button').evaluate((node) => node.classList.contains('hidden'))), `${context}: Close must remain available`);
+  assert(await page.locator('#activate-button').evaluate((node) => node.classList.contains('hidden')), `${context}: replacement Activate must remain hidden`);
+  assert((await page.locator('#gate-orb').getAttribute('aria-label')) === 'Close access now', `${context}: orb must Close the active runtime`);
+}
 
-  await page.locator('[data-scope="wg_ping"]').click();
-  await page.waitForFunction(() => document.querySelector('#gate-state')?.textContent === 'OPEN · OTHER ACCESS PATH');
-  assert((await page.locator('#gate-state-badge').textContent()) === 'OPEN ELSEWHERE', 'scope mismatch should be shown as an active profile elsewhere');
-  assert(!(await page.locator('#close-button').evaluate((node) => node.classList.contains('hidden'))), 'scope mismatch must keep Close available');
-  assert(await page.locator('#activate-button').evaluate((node) => node.classList.contains('hidden')), 'scope mismatch must not offer Activate');
-  assert((await page.locator('#gate-orb').getAttribute('aria-label')) === 'Close access now', 'orb must close a conflicting active profile');
+const browser = await chromium.launch({headless: true});
+try {
+  {
+    const scenario = await openScenario(browser);
+    const {page} = scenario;
+    await selectIpv4(page);
+    await page.waitForFunction(() => document.querySelector('#gate-state-badge')?.textContent === 'AUTHORIZED');
 
-  await page.locator('[data-scope="wg"]').click();
-  await page.waitForFunction(() => document.querySelector('#gate-state-badge')?.textContent === 'AUTHORIZED');
+    assert(await page.locator('#wg-select').isVisible(), 'two WireGuard services should expose the service selector');
+    await assertCloseOnly(page, 'AUTHORIZED', 'matching active profile');
 
-  await page.locator('#wg-select').selectOption('WG_ALT');
-  await page.waitForFunction(() => document.querySelector('#wg-select')?.value === 'WG_ALT');
-  await page.waitForFunction(() => document.querySelector('#endpoint-select')?.value === 'ep-wan2-v4-alt');
-  await page.waitForFunction(() => document.querySelector('#gate-state')?.textContent === 'OPEN · OTHER ACCESS PATH');
-  assert((await page.locator('#gate-state-badge').textContent()) === 'OPEN ELSEWHERE', 'different WireGuard ingress must not inherit OPEN state from the authorized source');
-  assert(!(await page.locator('#close-button').evaluate((node) => node.classList.contains('hidden'))), 'different WireGuard ingress must keep Close available');
-  assert(await page.locator('#activate-button').evaluate((node) => node.classList.contains('hidden')), 'different WireGuard ingress must block replacement Activate');
-  assert((await page.locator('#gate-orb').getAttribute('aria-label')) === 'Close access now', 'orb must close instead of activating across an active profile conflict');
+    await page.locator('[data-scope="wg_ping"]').click();
+    await page.evaluate(() => window.RemoteGateApp.refresh());
+    await page.waitForFunction(() => document.querySelector('#gate-state')?.textContent === 'OPEN · OTHER ACCESS PATH');
+    await assertCloseOnly(page, 'OPEN ELSEWHERE', 'scope mismatch');
 
-  await page.locator('#wg-select').selectOption('WG_HOME');
-  await page.waitForFunction(() => document.querySelector('#wg-select')?.value === 'WG_HOME');
-  await page.waitForFunction(() => document.querySelector('#endpoint-select')?.value === 'ep-wan2-v4');
-  await page.waitForFunction(() => document.querySelector('#gate-state-badge')?.textContent === 'AUTHORIZED');
-  assert(activatePosts === 0, `profile selection changes posted Activate (${activatePosts})`);
+    await page.locator('[data-scope="wg"]').click();
+    await page.evaluate(() => window.RemoteGateApp.refresh());
+    await page.waitForFunction(() => document.querySelector('#gate-state-badge')?.textContent === 'AUTHORIZED');
 
-  console.log('Browser Gate profile binding regression passed: OPEN requires source plus device/ingress/scope identity, conflicts stay close-only, and selection changes never auto-Activate.');
-  await page.close();
+    await page.locator('#wg-select').selectOption('WG_ALT');
+    await page.waitForFunction(() => document.querySelector('#endpoint-select')?.value === 'ep-wan2-v4-alt');
+    await page.waitForFunction(() => document.querySelector('#gate-state')?.textContent === 'OPEN · OTHER ACCESS PATH');
+    await assertCloseOnly(page, 'OPEN ELSEWHERE', 'WireGuard ingress mismatch');
+
+    await page.locator('#wg-select').selectOption('WG_HOME');
+    await page.waitForFunction(() => document.querySelector('#endpoint-select')?.value === 'ep-wan2-v4');
+    await page.waitForFunction(() => document.querySelector('#gate-state-badge')?.textContent === 'AUTHORIZED');
+
+    await page.locator('[data-family="ipv6"]').click();
+    await page.waitForFunction(() => document.querySelector('#gate-state')?.textContent === 'OPEN · OTHER ACCESS PATH');
+    await assertCloseOnly(page, 'OPEN ELSEWHERE', 'other-family active runtime');
+
+    assert(scenario.activatePosts() === 0, `profile/family selection changes posted Activate (${scenario.activatePosts()})`);
+    await page.close();
+  }
+
+  {
+    const scenario = await openScenario(browser, (payload) => setIpv4GateOpen(payload, '198.51.100.44'));
+    const {page} = scenario;
+    await selectIpv4(page);
+    await page.waitForFunction(() => document.querySelector('#gate-state')?.textContent === 'OPEN · OTHER ACCESS PATH');
+    await assertCloseOnly(page, 'OPEN ELSEWHERE', 'same-profile different-source runtime');
+    assert(scenario.activatePosts() === 0, `source mismatch posted Activate (${scenario.activatePosts()})`);
+    await page.close();
+  }
+
+  {
+    const scenario = await openScenario(browser);
+    const {page} = scenario;
+    await page.locator('[data-family="dual"]').click();
+    await page.locator('#egress-select').selectOption('__lan__');
+    await page.waitForFunction(() => document.querySelector('#gate-state')?.textContent === 'OPEN · PARTIAL ACCESS');
+    await assertCloseOnly(page, 'PARTIAL OPEN', 'Dual one-family partial runtime');
+    assert(scenario.activatePosts() === 0, `Dual partial state posted Activate (${scenario.activatePosts()})`);
+    await page.close();
+  }
+
+  {
+    const scenario = await openScenario(browser);
+    const {page} = scenario;
+    await selectIpv4(page);
+    await page.waitForFunction(() => document.querySelector('#gate-state-badge')?.textContent === 'AUTHORIZED');
+    scenario.failDashboard();
+    await page.evaluate(() => window.RemoteGateApp.refresh());
+    await page.waitForFunction(() => document.querySelector('#gate-state')?.textContent === 'STATUS UNKNOWN');
+    assert((await page.locator('#gate-state-badge').textContent()) === 'UNKNOWN', 'failed dashboard refresh must revoke cached OPEN authority');
+    assert(!(await page.locator('#close-button').evaluate((node) => node.classList.contains('hidden'))), 'failed refresh should preserve safe Close from last-known runtime hint');
+    assert(await page.locator('#activate-button').isDisabled(), 'failed refresh must keep Activate disabled');
+    assert(await page.locator('#gate-orb').isDisabled(), 'failed refresh must disable the Gate orb');
+    assert(scenario.activatePosts() === 0, `failed dashboard refresh posted Activate (${scenario.activatePosts()})`);
+    await page.close();
+  }
+
+  console.log('Browser Gate profile authority regression passed: exact source/profile OPEN, global close-before-switch, Dual partial handling, and failed-refresh fail-closed behavior all preserve zero auto-Activate.');
 } finally {
   await browser.close();
 }

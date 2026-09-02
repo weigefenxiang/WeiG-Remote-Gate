@@ -9,7 +9,7 @@
 
   function data() { return context?.getData?.() || {}; }
   function inventoryWans() { return Array.isArray(data()?.inventory?.wans) ? data().inventory.wans : []; }
-  function agentFresh(currentData = data()) { return Boolean(currentData?.agent?.fresh); }
+  function agentFresh(currentData = data()) { return Boolean(context?.state?.dashboardAvailable && currentData?.agent?.fresh); }
   function staleCloseRecommended(currentData = data()) { return !agentFresh(currentData) && Boolean(currentData?.agent?.may_have_active_runtime); }
 
   function endpointsFor(family) {
@@ -686,7 +686,7 @@
     const state = context.state;
     const fw = data()?.agent?.firewall || {};
     const endpointReady = state.family === 'dual' ? Boolean(selectedDualPair()) : Boolean(endpointSelect()?.value);
-    if (activeFamilyState(fw, state.family) || conflictingActiveProfile(fw, state.family)) return false;
+    if (hasActiveRuntime(fw)) return false;
     return Boolean(!state.busy && familyAvailable(state.family) && endpointReady && $('wg-select')?.value);
   }
 
@@ -811,16 +811,25 @@
       runtime.scope && runtime.scope === selected.scope
     );
   }
-  function conflictingActiveProfile(fw, family) {
-    const families = family === 'dual' ? ['ipv4','ipv6'] : [family];
-    return families.some((item) => {
-      const runtime = firewallFamilyProfile(fw, item);
-      return runtime.active && !activeProfileMatchesSelection(fw, item);
-    });
+  function expectedRuntimeFamilies(family) {
+    if (family === 'dual') return ['ipv4','ipv6'];
+    return ['ipv4','ipv6'].includes(family) ? [family] : [];
+  }
+  function activeRuntimeFamilies(fw) {
+    return ['ipv4','ipv6'].filter((family) => firewallFamilyProfile(fw, family).active);
+  }
+  function hasActiveRuntime(fw) { return activeRuntimeFamilies(fw).length > 0; }
+  function partialDualRuntime(fw, family) {
+    return family === 'dual' && activeRuntimeFamilies(fw).length === 1;
   }
   function activeFamilyState(fw, family) {
-    if (family === 'dual') return ['ipv4','ipv6'].every((item) => sourceAuthorized(fw, item) && activeProfileMatchesSelection(fw, item));
-    return sourceAuthorized(fw, family) && activeProfileMatchesSelection(fw, family);
+    const expected = expectedRuntimeFamilies(family);
+    const active = activeRuntimeFamilies(fw);
+    if (!expected.length || active.length !== expected.length || expected.some((item) => !active.includes(item))) return false;
+    return expected.every((item) => sourceAuthorized(fw, item) && activeProfileMatchesSelection(fw, item));
+  }
+  function conflictingActiveRuntime(fw, family) {
+    return hasActiveRuntime(fw) && !partialDualRuntime(fw, family) && !activeFamilyState(fw, family);
   }
 
   function setLockedControls(locked, action, active, activatable, currentData = data()) {
@@ -868,7 +877,8 @@
     const locked = syncTransaction(currentData);
     const pending = currentData?.gate?.queue?.pending, next = currentData?.gate?.queue?.next, last = currentData?.gate?.queue?.last;
     const fresh = agentFresh(currentData), safeClose = staleCloseRecommended(currentData);
-    const fw = currentData?.agent?.firewall || {}, active = activeFamilyState(fw, state.family), profileConflict = conflictingActiveProfile(fw, state.family), closeRequired = active || profileConflict, pendingAction = pending?.action, orb = $('gate-orb');
+    const fw = fresh ? (currentData?.agent?.firewall || {}) : {};
+    const active = activeFamilyState(fw, state.family), partialActive = partialDualRuntime(fw, state.family), activeConflict = conflictingActiveRuntime(fw, state.family), closeRequired = hasActiveRuntime(fw), pendingAction = pending?.action, orb = $('gate-orb');
     const egress = reportedEgress(currentData), selectedExitPlan = selectedEgressPlan(), selectedExit = egressPlanLabel(selectedExitPlan), selectedExitMatches = egressMatchesSelection(egress, selectedExitPlan);
     let mode='closed', title=t('gate.closed'), subtitle=t('gate.closedSub'), badge=t('gate.closedBadge');
     if (pendingAction === 'activate' || (locked && lockAction(currentData) === 'activate')) {
@@ -894,10 +904,15 @@
           title=zh() ? 'OPEN · 出口未生效' : 'OPEN · EXIT OFF'; subtitle=zh() ? 'Gate 已授权，但所选 Internet 出口当前未处于 Active。' : 'Gate access is open, but the selected Internet exit is not active.'; badge='EXIT OFF';
         }
       }
-    } else if (profileConflict) {
+    } else if (partialActive) {
+      mode='open';
+      title=zh() ? 'OPEN · 部分访问' : 'OPEN · PARTIAL ACCESS';
+      subtitle=zh() ? 'Dual 只剩一个协议族的 Gate 授权。请先 Close 清理实际运行态，再重新 Activate。' : 'Only one family of the selected Dual Gate remains active. Close the actual runtime before activating again.';
+      badge=zh() ? '部分开启' : 'PARTIAL OPEN';
+    } else if (activeConflict) {
       mode='open';
       title=zh() ? 'OPEN · 其它访问路径' : 'OPEN · OTHER ACCESS PATH';
-      subtitle=zh() ? '另一个 Access Endpoint 仍有 Gate 授权。请先 Close，再切换 WireGuard、WAN、入口或 Access Scope。' : 'Another Access Endpoint still has Gate authorization. Close it before switching WireGuard, WAN, ingress, or Access Scope.';
+      subtitle=zh() ? '现有 Gate 授权与当前 Source 或 Access profile 不一致。请先 Close，再切换协议族、WireGuard、WAN、入口或 Access Scope。' : 'An active Gate authorization does not match the current source or Access profile. Close it before switching family, WireGuard, WAN, ingress, or Access Scope.';
       badge=zh() ? '其它路径已开启' : 'OPEN ELSEWHERE';
     } else if (!fresh) {
       mode='closed';
@@ -969,7 +984,7 @@
   function toggleAccess() {
     if (!context || transactionLocked()) return;
     const fw=data()?.agent?.firewall||{};
-    if(activeFamilyState(fw,context.state.family)||conflictingActiveProfile(fw,context.state.family)) closeAccess(); else activate();
+    if(agentFresh()&&hasActiveRuntime(fw)) closeAccess(); else activate();
   }
   function guardedTarget(target) { return target?.closest?.('.gate-form button, .gate-form select, .gate-form input, #gate-orb'); }
   function transactionGuard(event) {

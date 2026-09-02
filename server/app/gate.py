@@ -168,6 +168,33 @@ def _empty_queue() -> dict[str, Any]:
     return {"pending": None, "next": [], "last": None}
 
 
+def _gate_runtime_active(store: JsonStore) -> bool:
+    """Return whether the last reported firewall state may still contain Gate authorization.
+
+    This is intentionally independent from Agent freshness. Freshness decides whether a
+    new Activate may be trusted at the HTTP authority boundary; the queue must also refuse
+    to replace any last-known active Gate runtime until an explicit Close has converged and
+    the Agent reports the firewall inactive again.
+    """
+    status = store.read("agent-status.json", {})
+    if not isinstance(status, dict):
+        return False
+    firewall = status.get("firewall")
+    if not isinstance(firewall, dict):
+        return False
+    if bool(firewall.get("active")):
+        return True
+    families = firewall.get("families")
+    if not isinstance(families, dict):
+        return False
+    return any(isinstance(item, dict) and bool(item.get("active")) for item in families.values())
+
+
+def _require_gate_closed_for_activate(store: JsonStore) -> None:
+    if _gate_runtime_active(store):
+        raise GateError("gate_close_required")
+
+
 def _rollback_command_for_expired_activate(command: dict[str, Any], now: int) -> dict[str, Any] | None:
     if command.get("action") != "activate":
         return None
@@ -480,6 +507,7 @@ def queue_activate(
     )
     with QUEUE_LOCK:
         _queue_for_write(store)
+        _require_gate_closed_for_activate(store)
         store.write("commands.json", {"pending": command, "next": [], "last": None})
         _append_gate_request(store, command)
     return command
@@ -532,6 +560,7 @@ def queue_activate_many(
 
     with QUEUE_LOCK:
         _queue_for_write(store)
+        _require_gate_closed_for_activate(store)
         store.write("commands.json", {"pending": commands[0], "next": commands[1:], "last": None})
         for command in commands:
             _append_gate_request(store, command)
