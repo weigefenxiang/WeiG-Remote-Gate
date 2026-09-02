@@ -249,11 +249,16 @@ pull_once all
         )
 
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(egress_calls, ["disable journal=pending"])
-        self.assertEqual(
-            firewall_calls,
-            ["activate 198.51.100.7 ipv4 wg pppoe-WAN2 41194 300 web_verified"],
+        self.assertEqual(egress_calls.count("disable journal=pending"), 1)
+        self.assertIn("status-json ", egress_calls)
+        self.assertLess(
+            egress_calls.index("disable journal=pending"),
+            egress_calls.index("status-json "),
         )
+        activate = "activate 198.51.100.7 ipv4 wg pppoe-WAN2 41194 300 web_verified"
+        self.assertEqual(firewall_calls.count(activate), 1)
+        self.assertIn("status-json", firewall_calls)
+        self.assertLess(firewall_calls.index(activate), firewall_calls.index("status-json"))
         self.assertEqual(len(ack_payloads), 1)
         self.assertIn('"id":"cmd-none-exit"', ack_payloads[0])
         self.assertIn('"ok":true', ack_payloads[0])

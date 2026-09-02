@@ -112,13 +112,14 @@ class GateTests(unittest.TestCase):
         command = self.activate(ttl=43200)
         self.assertEqual(command["ttl"], 43200)
 
-    def test_command_is_consumed_once(self):
+    def test_command_terminal_ack_is_idempotent(self):
         command = self.activate()
         pulled = pull_command(self.store)
         self.assertEqual(pulled["id"], command["id"])
         self.assertTrue(ack_command(self.store, command["id"], True, "ok"))
         self.assertIsNone(pull_command(self.store))
-        self.assertFalse(ack_command(self.store, command["id"], True, "again"))
+        self.assertTrue(ack_command(self.store, command["id"], True, "again"))
+        self.assertFalse(ack_command(self.store, command["id"], False, "opposite-result"))
 
     def test_failed_batch_command_cancels_remaining_family(self):
         now = int(time.time())
