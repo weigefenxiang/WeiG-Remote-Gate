@@ -151,7 +151,9 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("option.dataset.ipv6EndpointId", gate)
         self.assertIn("option.dataset.ipv4Wan", gate)
         self.assertIn("option.dataset.ipv6Wan", gate)
-        self.assertIn("queueMicrotask(syncDualEndpointSelect)", gate)
+        self.assertIn("function syncEndpointSelect", gate)
+        self.assertIn("if (family === 'dual') syncDualEndpointSelect();", gate)
+        self.assertIn("syncEndpointSelect(state.family)", gate)
         self.assertIn("family === 'dual'", gate)
         self.assertIn("const compactLabel", gate)
         self.assertIn("dual:'Dual'", gate)
@@ -164,14 +166,16 @@ class UIContractTests(unittest.TestCase):
 
     def test_mobile_endpoint_picker_uses_shared_fit_profiles_without_chevron(self):
         source = ENDPOINT_PICKER.read_text(encoding="utf-8")
-        self.assertIn('endpoint-trigger-address fit-single-line', source)
+        self.assertIn('path-family-block-trigger', source)
+        self.assertIn('path-family-wan fit-single-line', source)
+        self.assertIn('path-family-value fit-single-line', source)
         self.assertIn('data-fit-profile="compact"', source)
         self.assertIn('data-fit-profile="identity"', source)
-        self.assertIn("RemoteGateFit?.fit?.(address)", source)
-        self.assertIn("trigger.style.gridTemplateColumns = 'minmax(0, 1fr)'", source)
+        self.assertIn("RemoteGateFit?.observe?.(copy)", source)
         self.assertIn("trigger.addEventListener('click', () => open(selectId))", source)
         self.assertIn("bindSelect('endpoint-select')", source)
         self.assertNotIn("endpoint-trigger-chevron", source)
+        self.assertNotIn("MutationObserver", source)
 
     def test_internet_exit_reuses_the_existing_endpoint_picker(self):
         picker = ENDPOINT_PICKER.read_text(encoding="utf-8")
@@ -246,15 +250,16 @@ class UIContractTests(unittest.TestCase):
         self.assertNotIn("syncEndpointSelect(data)", tail)
         self.assertNotIn("renderClient(data)", tail)
 
-    def test_access_excludes_private_but_keeps_observed_nat_try(self):
+    def test_access_excludes_private_but_keeps_observed_try(self):
         app = APP.read_text(encoding="utf-8")
         gate = GATE.read_text(encoding="utf-8")
-        self.assertIn("['direct', 'mapped', 'egress_probe']", app)
         self.assertIn("['direct','mapped','egress_probe']", gate)
+        self.assertNotIn("function reachableEndpoints", app)
         self.assertNotIn("Private/CGNAT · Try", app)
         self.assertNotIn("Private/CGNAT · Try", gate)
-        self.assertIn("NAT egress · Try", app)
-        self.assertIn("NAT egress · Try", gate)
+        self.assertNotIn("NAT egress · Try", app)
+        self.assertNotIn("NAT egress · Try", gate)
+        self.assertIn("return 'Try'", gate)
 
     def test_runtime_wireguard_egress_reboots_off_and_supports_split_dual(self):
         egress = OPENWRT_EGRESS.read_text(encoding="utf-8")
