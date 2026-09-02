@@ -181,14 +181,40 @@ class GateTests(unittest.TestCase):
         self.assertIsNone(view["queue"]["pending"])
         self.assertEqual(view["queue"]["last"]["state"], "expired")
 
-    def test_pending_command_cannot_be_silently_overwritten(self):
+    def test_pending_activate_cannot_be_overwritten_by_another_activate(self):
         first = self.activate()
         with self.assertRaisesRegex(GateError, "command_pending"):
             self.activate()
-        with self.assertRaisesRegex(GateError, "command_pending"):
-            queue_close(self.store, source_ip="198.51.100.7")
         pending = self.store.read("commands.json", {})["pending"]
         self.assertEqual(pending["id"], first["id"])
+
+    def test_close_preempts_pending_activate_and_clears_batch_tail(self):
+        now = int(time.time())
+        first = {"id": "first", "action": "activate", "family": "ipv4", "batch_id": "batch", "state": "pending", "created_at": now, "expires_at": now + 60}
+        second = {"id": "second", "action": "activate", "family": "ipv6", "batch_id": "batch", "state": "pending", "created_at": now, "expires_at": now + 60}
+        self.store.write("commands.json", {"pending": first, "next": [second], "last": None})
+
+        close = queue_close(self.store, source_ip="198.51.100.7")
+        queue = self.store.read("commands.json", {})
+        self.assertEqual(queue["pending"]["id"], close["id"])
+        self.assertEqual(queue["pending"]["action"], "close")
+        self.assertEqual(queue["next"], [])
+        self.assertEqual(queue["last"]["id"], "first")
+        self.assertEqual(queue["last"]["state"], "cancelled")
+        self.assertEqual(queue["last"]["detail"], "preempted_by_close")
+        self.assertEqual(close["expires_at"] - close["created_at"], 43200)
+        self.assertFalse(ack_command(self.store, "first", True, "late-ack"))
+        events = self.store.read("activity.json", [])
+        self.assertTrue(any(item.get("type") == "command_cancelled" and item.get("command_id") == "first" for item in events))
+
+    def test_pending_close_is_idempotent_and_blocks_new_activation(self):
+        first = queue_close(self.store, source_ip="198.51.100.7")
+        second = queue_close(self.store, source_ip="198.51.100.7")
+        self.assertEqual(first["id"], second["id"])
+        self.assertEqual(second["expires_at"] - second["created_at"], 43200)
+        with self.assertRaisesRegex(GateError, "command_pending"):
+            self.activate()
+        self.assertEqual(self.store.read("commands.json", {})["pending"]["id"], first["id"])
 
     def test_expired_pending_command_is_archived_before_replacement(self):
         expired = {
