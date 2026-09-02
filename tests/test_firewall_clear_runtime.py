@@ -69,7 +69,7 @@ if [ "${1:-}" = "list" ] && [ "${2:-}" = "set" ]; then
     exit 0
 fi
 if [ "${1:-}" = "flush" ] && [ "${2:-}" = "set" ]; then
-    if [ "${6:-}" = "weig_remote_gate_auth_ipv4" ] && [ -f "$REMOTE_GATE_CLEAR_FAIL_MARKER" ]; then
+    if [ "${5:-}" = "weig_remote_gate_auth_ipv4" ] && [ -f "$REMOTE_GATE_CLEAR_FAIL_MARKER" ]; then
         rm -f "$REMOTE_GATE_CLEAR_FAIL_MARKER"
         exit 1
     fi
@@ -116,6 +116,10 @@ exit 0
                 fake_bin,
                 "ipset",
                 """printf '%s\n' "$*" >> "$REMOTE_GATE_CLEAR_LOG"
+if [ "${1:-}" = "list" ] && [ "${2:-}" = "-name" ]; then
+    printf '%s\n' weig_remote_gate_auth_v4 weig_remote_gate_verify_v4
+    exit 0
+fi
 if [ "${1:-}" = "list" ]; then exit 0; fi
 if [ "${1:-}" = "flush" ]; then
     if [ "${2:-}" = "weig_remote_gate_auth_v4" ] && [ -f "$REMOTE_GATE_CLEAR_FAIL_MARKER" ]; then
