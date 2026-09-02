@@ -1,5 +1,5 @@
 ---
-version: 8
+version: 9
 name: WeiG-Remote-Gate
 description: "A dense, tactile, adaptive network-security workspace with standardized spatial depth, modular controls, and a distinct Wei.G security identity."
 ---
@@ -166,6 +166,17 @@ Mobile:
 - opens a bottom sheet;
 - uses a backdrop and safe-area padding;
 - options are full-width tactile cards.
+
+## WireGuard service selector
+
+WireGuard service selection uses progressive disclosure and the existing standard field/select control. It is not another PathCard or EndpointPicker mode.
+
+- Zero or one registered WireGuard service makes the field redundant, so the selector may remain hidden while the internal selected service is preserved.
+- Two or more registered WireGuard services make service choice meaningful, so the existing selector must become visible, focusable and user-operable on both desktop and mobile.
+- Registry/list order is discovery output only and must never silently substitute for an explicit user choice when multiple services are available.
+- Switching services or losing the selected service discards any incompatible manual Access Endpoint hint and returns Endpoint selection to the current service's canonical automatic recommendation.
+- Service selection, disappearance and fallback never auto-Activate.
+- Do not create a second WireGuard picker, a WireGuard-specific PathCard, or a MutationObserver-based visibility mechanism.
 
 ## PathCard
 
@@ -403,7 +414,7 @@ JavaScript:
 - `activity.js`: event summaries/expansion.
 - `motion-feedback.js`: sound/haptic feedback abstraction.
 - `client-sources.js`: missing-family IPv4/IPv6 probe completion.
-- `endpoint-picker.js`: the one custom picker and PathCard renderer for Access Endpoint and Internet Exit; render/interaction only, with no policy inference from label text or DOM mutation observation.
+- `endpoint-picker.js`: the one custom picker and PathCard renderer for Access Endpoint and Internet Exit; also owns progressive visibility of the existing WireGuard service selector; render/interaction only, with no policy inference from label text or DOM mutation observation.
 - `duration-control.js`: presets-to-Custom bridge, range/detent/feedback.
 - `gate-controls.js`: Family/Scope/TTL state, capability/eligibility, AccessPlan, InternetExitPlan, Access Endpoint option creation, structured PathCard view-model data and the single activation path.
 - `app.js`: API state, refresh and general data rendering orchestration; it does not own Access Endpoint filtering/ranking/labels/options.
@@ -417,6 +428,7 @@ Do:
 - use the canonical Wei.G asset;
 - preserve both observed IP families;
 - make recommendation separate from user choice and from Access role;
+- expose the existing WireGuard service selector when multiple registered services make the choice non-redundant;
 - reuse PathCard, component/elevation/motion/text-fit primitives;
 - keep AccessPlan independent from InternetExitPlan;
 - derive WireGuard service port from runtime service identity;
@@ -424,6 +436,8 @@ Do:
 
 Don't:
 - expose a browser-native Endpoint dropdown as the final UI;
+- silently choose among multiple registered WireGuard services by registry/list order;
+- create a second WireGuard-specific picker or PathCard framework;
 - show Private/CGNAT as a selectable public Access Endpoint;
 - expose Private/CGNAT as an Internet Exit product mode/role;
 - make `app.js` a second Access Endpoint policy/label owner;
