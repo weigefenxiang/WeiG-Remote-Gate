@@ -5,6 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 APP = (ROOT / "server/app/static/js/app.js").read_text(encoding="utf-8")
 GATE = (ROOT / "server/app/static/js/gate-controls.js").read_text(encoding="utf-8")
 PICKER = (ROOT / "server/app/static/js/endpoint-picker.js").read_text(encoding="utf-8")
+BOOTSTRAP = (ROOT / "server/app/static/js/theme-bootstrap.js").read_text(encoding="utf-8")
 CSS = (ROOT / "server/app/static/css/interaction.css").read_text(encoding="utf-8")
 DESIGN = (ROOT / "DESIGN.md").read_text(encoding="utf-8")
 
@@ -29,6 +30,9 @@ class PathCardContractTests(unittest.TestCase):
         self.assertNotIn("function endpointLabel", APP)
         self.assertNotIn("function syncEndpointSelect", APP)
         self.assertNotIn("NAT egress · Try", APP)
+        self.assertNotIn("function rewriteMappedOptions", BOOTSTRAP)
+        self.assertNotIn("function observeMappedPicker", BOOTSTRAP)
+        self.assertNotIn("parts.indexOf('Mapped')", BOOTSTRAP)
 
     def test_picker_consumes_structured_rows_without_semantic_guessing(self):
         self.assertIn("function pathRows(option)", PICKER)
@@ -58,6 +62,8 @@ class PathCardContractTests(unittest.TestCase):
     def test_design_declares_shared_path_card(self):
         self.assertIn("PathCard", DESIGN)
         self.assertIn("FamilyPathBlock", DESIGN)
+        self.assertIn("theme-bootstrap", DESIGN)
+        self.assertIn("must not re-filter, re-rank or relabel Access Endpoint options", DESIGN)
 
 
 if __name__ == "__main__":
