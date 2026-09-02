@@ -59,7 +59,7 @@ class DualEgressRuntimeContractTests(unittest.TestCase):
         self.assertIn('egress="$(egress_json)"', agent)
         self.assertIn('\\"egress\\":${egress}', agent)
         self.assertIn('detail="wireguard-egress-activation-failed"', agent)
-        self.assertIn('ack "$id" false "$detail"', agent)
+        self.assertIn('finish_activation_command "$id" false "$detail"', agent)
 
     def test_agent_applies_one_split_dual_transaction(self):
         source = AGENT.read_text(encoding="utf-8")
