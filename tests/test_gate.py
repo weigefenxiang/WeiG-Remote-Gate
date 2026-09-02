@@ -153,6 +153,7 @@ class GateTests(unittest.TestCase):
         rollback = pull_command(self.store)
         self.assertIsNotNone(rollback)
         self.assertEqual(rollback["action"], "close")
+        self.assertEqual(rollback["rollback_for_command"], "second")
         self.assertEqual(rollback["rollback_for_batch"], "batch")
         self.assertEqual(rollback["expires_at"] - rollback["created_at"], 300)
         queue = self.store.read("commands.json", {})
@@ -202,6 +203,7 @@ class GateTests(unittest.TestCase):
         rollback = pull_command(self.store)
         self.assertIsNotNone(rollback)
         self.assertEqual(rollback["action"], "close")
+        self.assertEqual(rollback["rollback_for_command"], "first")
         self.assertEqual(rollback["rollback_for_batch"], "batch")
         queue = self.store.read("commands.json", {})
         self.assertEqual(queue["last"]["id"], "first")
@@ -212,19 +214,76 @@ class GateTests(unittest.TestCase):
         events = self.store.read("activity.json", [])
         self.assertTrue(any(item.get("type") == "batch_rollback_queued" and item.get("batch_id") == "batch" for item in events))
 
-    def test_dashboard_view_archives_expired_pending_command(self):
+    def test_expired_single_activate_queues_rollback_close(self):
+        now = int(time.time())
+        expired = {
+            "schema": 3,
+            "id": "single-expired",
+            "action": "activate",
+            "family": "ipv4",
+            "source_ip": "198.51.100.7",
+            "ttl": 300,
+            "state": "pending",
+            "created_at": now - 120,
+            "expires_at": now - 1,
+        }
+        self.store.write("commands.json", {"pending": expired, "next": [], "last": None})
+
+        rollback = pull_command(self.store)
+        self.assertIsNotNone(rollback)
+        self.assertEqual(rollback["action"], "close")
+        self.assertEqual(rollback["rollback_for_command"], "single-expired")
+        self.assertNotIn("rollback_for_batch", rollback)
+        self.assertEqual(rollback["expires_at"] - rollback["created_at"], 300)
+        self.assertFalse(ack_command(self.store, "single-expired", True, "late-ack"))
+        with self.assertRaisesRegex(GateError, "command_pending"):
+            self.activate()
+        events = self.store.read("activity.json", [])
+        self.assertTrue(any(
+            item.get("type") == "activation_rollback_queued"
+            and item.get("expired_command_id") == "single-expired"
+            for item in events
+        ))
+
+    def test_dashboard_view_queues_close_for_expired_activate(self):
         expired = {
             "schema": 2,
             "id": "dashboard-expired",
             "action": "activate",
+            "source_ip": "198.51.100.7",
+            "family": "ipv4",
+            "ttl": 300,
             "created_at": int(time.time()) - 120,
             "expires_at": int(time.time()) - 1,
             "state": "pending",
         }
         self.store.write("commands.json", {"pending": expired, "next": [], "last": None})
         view = gate_view(self.store)
-        self.assertIsNone(view["queue"]["pending"])
+        self.assertEqual(view["queue"]["pending"]["action"], "close")
+        self.assertEqual(view["queue"]["pending"]["rollback_for_command"], "dashboard-expired")
         self.assertEqual(view["queue"]["last"]["state"], "expired")
+
+    def test_expired_close_does_not_queue_recursive_close(self):
+        now = int(time.time())
+        expired = {
+            "schema": 2,
+            "id": "expired-close",
+            "action": "close",
+            "source_ip": "198.51.100.7",
+            "family": "ipv4",
+            "state": "pending",
+            "created_at": now - 43260,
+            "expires_at": now - 1,
+        }
+        self.store.write("commands.json", {"pending": expired, "next": [], "last": None})
+
+        self.assertIsNone(pull_command(self.store))
+        queue = self.store.read("commands.json", {})
+        self.assertIsNone(queue["pending"])
+        self.assertEqual(queue["last"]["id"], "expired-close")
+        self.assertEqual(queue["last"]["state"], "expired")
+        events = self.store.read("activity.json", [])
+        self.assertFalse(any(item.get("type") == "activation_rollback_queued" for item in events))
 
     def test_pending_activate_cannot_be_overwritten_by_another_activate(self):
         first = self.activate()
@@ -261,19 +320,26 @@ class GateTests(unittest.TestCase):
             self.activate()
         self.assertEqual(self.store.read("commands.json", {})["pending"]["id"], first["id"])
 
-    def test_expired_pending_command_is_archived_before_replacement(self):
+    def test_expired_activate_blocks_replacement_until_rollback_close(self):
         expired = {
             "schema": 2,
             "id": "expired-command",
             "action": "activate",
+            "source_ip": "198.51.100.7",
+            "family": "ipv4",
+            "ttl": 300,
             "created_at": int(time.time()) - 120,
             "expires_at": int(time.time()) - 60,
             "state": "pending",
         }
-        self.store.write("commands.json", {"pending": expired, "last": None})
-        replacement = self.activate()
+        self.store.write("commands.json", {"pending": expired, "next": [], "last": None})
+        with self.assertRaisesRegex(GateError, "command_pending"):
+            self.activate()
         queue = self.store.read("commands.json", {})
-        self.assertEqual(queue["pending"]["id"], replacement["id"])
+        self.assertEqual(queue["last"]["id"], "expired-command")
+        self.assertEqual(queue["last"]["state"], "expired")
+        self.assertEqual(queue["pending"]["action"], "close")
+        self.assertEqual(queue["pending"]["rollback_for_command"], "expired-command")
         events = self.store.read("activity.json", [])
         self.assertTrue(any(item.get("type") == "command_expired" for item in events))
 
