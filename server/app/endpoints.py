@@ -38,6 +38,15 @@ def _safe_port(value: object) -> int | None:
     return port if 1 <= port <= 65535 else None
 
 
+def _strict_bool(record: dict[str, Any], key: str, default: bool) -> bool:
+    if key not in record:
+        return default
+    value = record.get(key)
+    if not isinstance(value, bool):
+        raise ValueError("invalid_boolean")
+    return value
+
+
 def is_globally_reachable_unicast(value: object, *, version: int | None = None) -> bool:
     try:
         address = ipaddress.ip_address(str(value or "").strip())
@@ -140,9 +149,9 @@ def _clean_wans(data: object) -> tuple[list[dict[str, Any]], bool]:
             "name": name,
             "device": device,
             "logical_interfaces": logical,
-            "up": bool(raw.get("up")),
-            "default_route_v4": bool(raw.get("default_route_v4")),
-            "default_route_v6": bool(raw.get("default_route_v6")),
+            "up": _strict_bool(raw, "up", False),
+            "default_route_v4": _strict_bool(raw, "default_route_v4", False),
+            "default_route_v6": _strict_bool(raw, "default_route_v6", False),
             "ipv4": [],
             "ipv6": [],
         }
@@ -204,11 +213,11 @@ def validate_inventory_v2(data: object) -> dict[str, Any]:
         "wans": clean_wans,
         "natmap": clean_natmap,
         "capabilities": {
-            "gate_ipv4": bool(caps.get("gate_ipv4", True)),
-            "gate_ipv6": bool(caps.get("gate_ipv6", False)),
-            "control_ipv4": bool(caps.get("control_ipv4", True)),
-            "control_ipv6": bool(caps.get("control_ipv6", False) and has_global_v6),
-            "natmap": bool(caps.get("natmap", bool(clean_natmap))),
+            "gate_ipv4": _strict_bool(caps, "gate_ipv4", True),
+            "gate_ipv6": _strict_bool(caps, "gate_ipv6", False),
+            "control_ipv4": _strict_bool(caps, "control_ipv4", True),
+            "control_ipv6": _strict_bool(caps, "control_ipv6", False) and has_global_v6,
+            "natmap": _strict_bool(caps, "natmap", bool(clean_natmap)),
         },
     }
 
@@ -310,12 +319,12 @@ def validate_inventory_v3(data: object) -> dict[str, Any]:
         "services": services,
         "mappings": mappings,
         "capabilities": {
-            "gate_ipv4": bool(caps.get("gate_ipv4", True)),
-            "gate_ipv6": bool(caps.get("gate_ipv6", False)),
-            "control_ipv4": bool(caps.get("control_ipv4", True)),
-            "control_ipv6": bool(caps.get("control_ipv6", False) and has_global_v6),
-            "mapped_access": bool(caps.get("mapped_access", bool(mappings))),
-            "mapper_available": bool(caps.get("mapper_available", False)),
+            "gate_ipv4": _strict_bool(caps, "gate_ipv4", True),
+            "gate_ipv6": _strict_bool(caps, "gate_ipv6", False),
+            "control_ipv4": _strict_bool(caps, "control_ipv4", True),
+            "control_ipv6": _strict_bool(caps, "control_ipv6", False) and has_global_v6,
+            "mapped_access": _strict_bool(caps, "mapped_access", bool(mappings)),
+            "mapper_available": _strict_bool(caps, "mapper_available", False),
         },
     }
 
