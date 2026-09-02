@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SERVER = ROOT / "server/remote-gate.py"
 MAIN = ROOT / "server/app/main.py"
 APP = ROOT / "server/app/static/js/app.js"
+AGENT = ROOT / "openwrt/remote-gate-agent.sh"
 
 
 class AgentStatusFreshnessTests(unittest.TestCase):
@@ -65,6 +66,7 @@ class AgentStatusFreshnessTests(unittest.TestCase):
         self.assertTrue(agent_status_is_fresh(status, now=1000 + AGENT_STATUS_FRESH_SECONDS))
         view = fail_closed_agent_status(status, now=1000 + AGENT_STATUS_FRESH_SECONDS)
         self.assertTrue(view["fresh"])
+        self.assertTrue(view["inventory_synced"])
         self.assertTrue(view["firewall"]["active"])
         self.assertTrue(view["egress"]["active"])
         self.assertEqual(view["wireguard"][0]["name"], "WG_HOME")
@@ -74,6 +76,7 @@ class AgentStatusFreshnessTests(unittest.TestCase):
         status = self.sample()
         view = fail_closed_agent_status(status, now=1001 + AGENT_STATUS_FRESH_SECONDS)
         self.assertFalse(view["fresh"])
+        self.assertTrue(view["inventory_synced"])
         self.assertEqual(view["reported_at"], 1000)
         self.assertEqual(view["firewall"]["backend"], "fw3-iptables")
         self.assertFalse(view["firewall"]["ready"])
@@ -88,6 +91,18 @@ class AgentStatusFreshnessTests(unittest.TestCase):
         self.assertFalse(view["transport"]["healthy"])
         self.assertEqual(view["transport"]["active_family"], "")
         self.assertEqual(view["transport"]["active_device"], "")
+
+    def test_inventory_unsynced_report_is_never_authoritative(self):
+        status = self.sample()
+        status["inventory_synced"] = False
+        self.assertFalse(agent_status_is_fresh(status, now=1000))
+        view = fail_closed_agent_status(status, now=1000)
+        self.assertFalse(view["fresh"])
+        self.assertFalse(view["inventory_synced"])
+        self.assertFalse(view["firewall"]["active"])
+        self.assertEqual(view["wireguard"], [])
+        self.assertEqual(view["egress"]["detail"], "inventory_unsynced")
+        self.assertEqual(view["mapping"]["detail"], "inventory_unsynced")
 
     def test_future_report_outside_skew_window_is_not_authoritative(self):
         status = self.sample(reported_at=2000)
@@ -127,6 +142,30 @@ class AgentStatusFreshnessTests(unittest.TestCase):
         close_route = base.split('if path == "/api/v1/gate/close":', 1)[1].split('if path == "/api/v1/update":', 1)[0]
         self.assertIn("queue_close(STORE, source_ip=source)", close_route)
         self.assertNotIn("agent_status_is_fresh", close_route)
+
+    def test_status_api_persists_boolean_inventory_sync_authority(self):
+        source = SERVER.read_text(encoding="utf-8")
+        status_post = source.split("def _agent_status_post(self) -> None:", 1)[1].split("def do_POST(self) -> None:", 1)[0]
+        self.assertIn('data.get("inventory_synced", True)', status_post)
+        self.assertIn("isinstance(inventory_synced_raw, bool)", status_post)
+        self.assertIn('"inventory_synced": inventory_synced', status_post)
+
+    def test_agent_only_pulls_after_inventory_sync_and_reports_fail_closed_state(self):
+        source = AGENT.read_text(encoding="utf-8")
+        self.assertIn('payload="{\\"schema\\":3,\\"inventory_synced\\":${inventory_synced}', source)
+
+        report_only = source.split("report_only() {", 1)[1].split("run_once() {", 1)[0]
+        self.assertIn("if maybe_post_inventory; then", report_only)
+        self.assertIn("post_status true", report_only)
+        self.assertIn("post_status false", report_only)
+
+        run_once = source.split("run_once() {", 1)[1].split('case "${1:-once}"', 1)[0]
+        self.assertIn("if ! maybe_post_inventory; then", run_once)
+        self.assertIn("post_status false", run_once)
+        self.assertIn("inventory not synchronized; command pull skipped", run_once)
+        failure = run_once.split("if ! maybe_post_inventory; then", 1)[1].split("fi", 1)[0]
+        self.assertNotIn("pull_once", failure)
+        self.assertLess(run_once.index("post_status true"), run_once.index("pull_once"))
 
 
 if __name__ == "__main__":
