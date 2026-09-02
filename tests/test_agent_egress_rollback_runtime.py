@@ -302,6 +302,104 @@ pull_once all
             self.assertIn('"ok":true', ack_payloads[0])
             self.assertFalse((runtime_dir / "agent-command-result").exists())
 
+    def test_same_pending_command_rolls_back_without_reexecution(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            state_dir = root / "state"
+            config = root / "remote-gate.conf"
+            mapping = root / "mapping-missing"
+            tmp_base = root / "remote-gate-agent"
+            runtime_dir = root / "runtime"
+            firewall_log = root / "firewall.log"
+            egress_log = root / "egress.log"
+            ack_log = root / "ack.log"
+
+            runtime_dir.mkdir()
+            (runtime_dir / "agent-command-result").write_text(
+                "cmd-interrupted\npending\nactivation-in-progress\n", encoding="utf-8"
+            )
+            config.write_text(
+                "HOSTNAME='gate.example'\n"
+                "WRITE_TOKEN='test-token'\n"
+                "GATE_IPV6='disabled'\n"
+                "MAPPED_ACCESS='disabled'\n",
+                encoding="utf-8",
+            )
+            firewall = fake_cmd(
+                fake_bin,
+                "firewall",
+                """printf '%s\n' "$*" >> "$REMOTE_GATE_FIREWALL_LOG"
+exit 0
+""",
+            )
+            egress = fake_cmd(
+                fake_bin,
+                "egress",
+                """printf '%s\n' "$*" >> "$REMOTE_GATE_EGRESS_LOG"
+exit 0
+""",
+            )
+            services = fake_cmd(fake_bin, "services", "exit 0\n")
+            install_jsonfilter(fake_bin, "cmd-interrupted")
+
+            source = agent_harness_source(
+                config, firewall, egress, services, mapping, state_dir, tmp_base
+            )
+            source += r'''
+
+sync_firewall_policy() { return 0; }
+control_request() {
+    method="$1"; path="$2"; output="$3"; payload="${4:-}"
+    case "$method:$path" in
+        GET:/api/v1/agent/pull)
+            : > "$output"
+            CONTROL_CODE=200
+            CONTROL_FAMILY=ipv4
+            CONTROL_DEVICE=pppoe-WAN2
+            return 0
+            ;;
+        POST:/api/v1/agent/ack)
+            printf '%s\n' "$payload" >> "$REMOTE_GATE_ACK_LOG"
+            CONTROL_CODE=204
+            return 0
+            ;;
+        *)
+            CONTROL_CODE=204
+            return 0
+            ;;
+    esac
+}
+
+pull_once all
+'''
+            harness = root / "agent-harness.sh"
+            harness.write_text(source, encoding="utf-8")
+
+            env = os.environ.copy()
+            env["PATH"] = f"{fake_bin}:/usr/bin:/bin"
+            env["REMOTE_GATE_FIREWALL_LOG"] = str(firewall_log)
+            env["REMOTE_GATE_EGRESS_LOG"] = str(egress_log)
+            env["REMOTE_GATE_ACK_LOG"] = str(ack_log)
+            env["REMOTE_GATE_RUNTIME_DIR"] = str(runtime_dir)
+            proc = subprocess.run(
+                ["/bin/sh", str(harness)],
+                text=True,
+                capture_output=True,
+                env=env,
+                check=False,
+            )
+
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(firewall_log.read_text(encoding="utf-8").splitlines(), ["clear"])
+            self.assertEqual(egress_log.read_text(encoding="utf-8").splitlines(), ["disable"])
+            ack = ack_log.read_text(encoding="utf-8")
+            self.assertIn('"id":"cmd-interrupted"', ack)
+            self.assertIn('"ok":false', ack)
+            self.assertIn('"detail":"activation-result-uncertain"', ack)
+            self.assertFalse((runtime_dir / "agent-command-result").exists())
+
     def test_stale_pending_journal_rolls_back_before_new_activate(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
