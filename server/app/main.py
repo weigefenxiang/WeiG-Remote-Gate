@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from .client_sources import delete_sources, observe_network_probe, observe_source, source_for_family, trusted_sources
+from .client_sources import delete_sources, fail_closed_agent_status, observe_network_probe, observe_source, source_for_family, trusted_sources
 from .config import load_settings
 from .endpoints import build_endpoints, normalize_inventory, observe_wan_egress, validate_inventory_v2
 from .gate import GateError, ack_command, gate_view, pull_command, queue_activate, queue_close
@@ -269,9 +269,12 @@ class Handler(BaseHTTPRequestHandler):
             current = STORE.read("current.json", {"schema": 1, "interfaces": {}})
             inventory = normalize_inventory(STORE)
             endpoints = build_endpoints(STORE)
-            agent = STORE.read("agent-status.json", {})
+            raw_agent = STORE.read("agent-status.json", {})
+            agent = fail_closed_agent_status(raw_agent)
             activity = STORE.read("activity.json", [])
             gate = gate_view(STORE)
+            if isinstance(gate, dict):
+                gate["agent"] = agent
             self._json(
                 200,
                 {
