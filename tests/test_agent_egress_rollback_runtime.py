@@ -82,6 +82,47 @@ esac
     )
 
 
+def basic_config(path: Path) -> None:
+    path.write_text(
+        "HOSTNAME='gate.example'\n"
+        "WRITE_TOKEN='test-token'\n"
+        "GATE_IPV6='disabled'\n"
+        "MAPPED_ACCESS='disabled'\n",
+        encoding="utf-8",
+    )
+
+
+def two_pull_control_source() -> str:
+    return r'''
+
+sync_firewall_policy() { return 0; }
+control_request() {
+    method="$1"; path="$2"; output="$3"; payload="${4:-}"
+    case "$method:$path" in
+        GET:/api/v1/agent/pull)
+            : > "$output"
+            CONTROL_CODE=200
+            CONTROL_FAMILY=ipv4
+            CONTROL_DEVICE=pppoe-WAN2
+            return 0
+            ;;
+        POST:/api/v1/agent/ack)
+            printf '%s\n' "$payload" >> "$REMOTE_GATE_ACK_LOG"
+            CONTROL_CODE=204
+            return 0
+            ;;
+        *)
+            CONTROL_CODE=204
+            return 0
+            ;;
+    esac
+}
+
+pull_once all
+pull_once all
+'''
+
+
 class AgentEgressRollbackRuntimeTests(unittest.TestCase):
     def test_single_family_egress_failure_revokes_gate_authorization(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -96,13 +137,7 @@ class AgentEgressRollbackRuntimeTests(unittest.TestCase):
             egress_log = root / "egress.log"
             ack_log = root / "ack.log"
 
-            config.write_text(
-                "HOSTNAME='gate.example'\n"
-                "WRITE_TOKEN='test-token'\n"
-                "GATE_IPV6='disabled'\n"
-                "MAPPED_ACCESS='disabled'\n",
-                encoding="utf-8",
-            )
+            basic_config(config)
 
             firewall = fake_cmd(
                 fake_bin,
@@ -209,13 +244,7 @@ pull_once all
             ack_log = root / "ack.log"
             ack_count = root / "ack.count"
 
-            config.write_text(
-                "HOSTNAME='gate.example'\n"
-                "WRITE_TOKEN='test-token'\n"
-                "GATE_IPV6='disabled'\n"
-                "MAPPED_ACCESS='disabled'\n",
-                encoding="utf-8",
-            )
+            basic_config(config)
             firewall = fake_cmd(
                 fake_bin,
                 "firewall",
@@ -320,13 +349,7 @@ pull_once all
             (runtime_dir / "agent-command-result").write_text(
                 "cmd-interrupted\npending\nactivation-in-progress\n", encoding="utf-8"
             )
-            config.write_text(
-                "HOSTNAME='gate.example'\n"
-                "WRITE_TOKEN='test-token'\n"
-                "GATE_IPV6='disabled'\n"
-                "MAPPED_ACCESS='disabled'\n",
-                encoding="utf-8",
-            )
+            basic_config(config)
             firewall = fake_cmd(
                 fake_bin,
                 "firewall",
@@ -422,13 +445,7 @@ pull_once all
                 (runtime_dir / "agent-command-result").write_text(
                     f"old-cmd\n{saved_state}\n{saved_detail}\n", encoding="utf-8"
                 )
-                config.write_text(
-                    "HOSTNAME='gate.example'\n"
-                    "WRITE_TOKEN='test-token'\n"
-                    "GATE_IPV6='disabled'\n"
-                    "MAPPED_ACCESS='disabled'\n",
-                    encoding="utf-8",
-                )
+                basic_config(config)
                 firewall = fake_cmd(
                     fake_bin,
                     "firewall",
@@ -504,6 +521,221 @@ pull_once all
                 self.assertGreaterEqual(egress_calls.count("disable"), 2)
                 self.assertIn('"id":"new-cmd"', ack_log.read_text(encoding="utf-8"))
                 self.assertFalse((runtime_dir / "agent-command-result").exists())
+
+    def test_firewall_failure_waits_for_successful_cleanup_before_ack(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            state_dir = root / "state"
+            config = root / "remote-gate.conf"
+            mapping = root / "mapping-missing"
+            tmp_base = root / "remote-gate-agent"
+            runtime_dir = root / "runtime"
+            firewall_log = root / "firewall.log"
+            firewall_clear_count = root / "firewall-clear.count"
+            egress_log = root / "egress.log"
+            ack_log = root / "ack.log"
+
+            basic_config(config)
+            firewall = fake_cmd(
+                fake_bin,
+                "firewall",
+                """printf '%s\n' "$*" >> "$REMOTE_GATE_FIREWALL_LOG"
+case "${1:-}" in
+    activate)
+        printf 'ERROR: simulated-firewall-partial-failure\n' >&2
+        exit 1
+        ;;
+    clear)
+        count="$(cat "$REMOTE_GATE_FIREWALL_CLEAR_COUNT" 2>/dev/null || echo 0)"
+        count=$((count + 1))
+        printf '%s\n' "$count" > "$REMOTE_GATE_FIREWALL_CLEAR_COUNT"
+        [ "$count" -gt 1 ]
+        ;;
+    *) exit 0 ;;
+esac
+""",
+            )
+            egress = fake_cmd(
+                fake_bin,
+                "egress",
+                """printf '%s\n' "$*" >> "$REMOTE_GATE_EGRESS_LOG"
+exit 0
+""",
+            )
+            services = fake_cmd(fake_bin, "services", "exit 0\n")
+            install_jsonfilter(fake_bin, "cmd-fw-rollback")
+            source = agent_harness_source(
+                config, firewall, egress, services, mapping, state_dir, tmp_base
+            ) + two_pull_control_source()
+            harness = root / "agent-harness.sh"
+            harness.write_text(source, encoding="utf-8")
+
+            env = os.environ.copy()
+            env["PATH"] = f"{fake_bin}:/usr/bin:/bin"
+            env["REMOTE_GATE_FIREWALL_LOG"] = str(firewall_log)
+            env["REMOTE_GATE_FIREWALL_CLEAR_COUNT"] = str(firewall_clear_count)
+            env["REMOTE_GATE_EGRESS_LOG"] = str(egress_log)
+            env["REMOTE_GATE_ACK_LOG"] = str(ack_log)
+            env["REMOTE_GATE_RUNTIME_DIR"] = str(runtime_dir)
+            proc = subprocess.run(["/bin/sh", str(harness)], text=True, capture_output=True, env=env, check=False)
+
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            firewall_calls = firewall_log.read_text(encoding="utf-8").splitlines()
+            ack_payloads = ack_log.read_text(encoding="utf-8").splitlines()
+            activate = "activate 198.51.100.7 ipv4 wg pppoe-WAN2 41194 300 web_verified"
+            self.assertEqual(firewall_calls.count(activate), 1)
+            self.assertEqual(firewall_calls.count("clear"), 2)
+            self.assertLess(firewall_calls.index(activate), firewall_calls.index("clear"))
+            self.assertEqual(len(ack_payloads), 1)
+            self.assertIn('"ok":false', ack_payloads[0])
+            self.assertIn('"detail":"simulated-firewall-partial-failure"', ack_payloads[0])
+            self.assertFalse((runtime_dir / "agent-command-result").exists())
+
+    def test_egress_failure_retries_cleanup_without_reexecuting_activate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            state_dir = root / "state"
+            config = root / "remote-gate.conf"
+            mapping = root / "mapping-missing"
+            tmp_base = root / "remote-gate-agent"
+            runtime_dir = root / "runtime"
+            firewall_log = root / "firewall.log"
+            firewall_clear_count = root / "firewall-clear.count"
+            egress_log = root / "egress.log"
+            ack_log = root / "ack.log"
+
+            basic_config(config)
+            firewall = fake_cmd(
+                fake_bin,
+                "firewall",
+                """printf '%s\n' "$*" >> "$REMOTE_GATE_FIREWALL_LOG"
+if [ "${1:-}" = clear ]; then
+    count="$(cat "$REMOTE_GATE_FIREWALL_CLEAR_COUNT" 2>/dev/null || echo 0)"
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$REMOTE_GATE_FIREWALL_CLEAR_COUNT"
+    [ "$count" -gt 1 ]
+    exit $?
+fi
+exit 0
+""",
+            )
+            egress = fake_cmd(
+                fake_bin,
+                "egress",
+                """printf '%s\n' "$*" >> "$REMOTE_GATE_EGRESS_LOG"
+case "${1:-}" in
+    enable|enable-split)
+        printf 'ERROR: simulated-egress-failure\n' >&2
+        exit 1
+        ;;
+    *) exit 0 ;;
+esac
+""",
+            )
+            services = fake_cmd(fake_bin, "services", "exit 0\n")
+            install_jsonfilter(fake_bin, "cmd-egress-rollback")
+            source = agent_harness_source(
+                config, firewall, egress, services, mapping, state_dir, tmp_base
+            ) + two_pull_control_source()
+            harness = root / "agent-harness.sh"
+            harness.write_text(source, encoding="utf-8")
+
+            env = os.environ.copy()
+            env["PATH"] = f"{fake_bin}:/usr/bin:/bin"
+            env["REMOTE_GATE_FIREWALL_LOG"] = str(firewall_log)
+            env["REMOTE_GATE_FIREWALL_CLEAR_COUNT"] = str(firewall_clear_count)
+            env["REMOTE_GATE_EGRESS_LOG"] = str(egress_log)
+            env["REMOTE_GATE_ACK_LOG"] = str(ack_log)
+            env["REMOTE_GATE_RUNTIME_DIR"] = str(runtime_dir)
+            proc = subprocess.run(["/bin/sh", str(harness)], text=True, capture_output=True, env=env, check=False)
+
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            firewall_calls = firewall_log.read_text(encoding="utf-8").splitlines()
+            egress_calls = egress_log.read_text(encoding="utf-8").splitlines()
+            ack_payloads = ack_log.read_text(encoding="utf-8").splitlines()
+            activate = "activate 198.51.100.7 ipv4 wg pppoe-WAN2 41194 300 web_verified"
+            self.assertEqual(firewall_calls.count(activate), 1)
+            self.assertEqual(firewall_calls.count("clear"), 2)
+            self.assertEqual(egress_calls.count("enable WG_HOME WAN2 300 ipv4"), 1)
+            self.assertEqual(len(ack_payloads), 1)
+            self.assertIn('"ok":false', ack_payloads[0])
+            self.assertIn('"detail":"simulated-egress-failure"', ack_payloads[0])
+            self.assertFalse((runtime_dir / "agent-command-result").exists())
+
+    def test_stale_journal_blocks_new_activate_until_cleanup_succeeds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            state_dir = root / "state"
+            config = root / "remote-gate.conf"
+            mapping = root / "mapping-missing"
+            tmp_base = root / "remote-gate-agent"
+            runtime_dir = root / "runtime"
+            firewall_log = root / "firewall.log"
+            firewall_clear_count = root / "firewall-clear.count"
+            egress_log = root / "egress.log"
+            ack_log = root / "ack.log"
+
+            runtime_dir.mkdir()
+            (runtime_dir / "agent-command-result").write_text(
+                "old-cmd\ntrue\nweb-authorization-and-ipv4-egress-active\n", encoding="utf-8"
+            )
+            basic_config(config)
+            firewall = fake_cmd(
+                fake_bin,
+                "firewall",
+                """printf '%s\n' "$*" >> "$REMOTE_GATE_FIREWALL_LOG"
+if [ "${1:-}" = clear ]; then
+    count="$(cat "$REMOTE_GATE_FIREWALL_CLEAR_COUNT" 2>/dev/null || echo 0)"
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$REMOTE_GATE_FIREWALL_CLEAR_COUNT"
+    [ "$count" -gt 1 ]
+    exit $?
+fi
+exit 0
+""",
+            )
+            egress = fake_cmd(
+                fake_bin,
+                "egress",
+                """printf '%s\n' "$*" >> "$REMOTE_GATE_EGRESS_LOG"
+exit 0
+""",
+            )
+            services = fake_cmd(fake_bin, "services", "exit 0\n")
+            install_jsonfilter(fake_bin, "new-cmd")
+            source = agent_harness_source(
+                config, firewall, egress, services, mapping, state_dir, tmp_base
+            ) + two_pull_control_source()
+            harness = root / "agent-harness.sh"
+            harness.write_text(source, encoding="utf-8")
+
+            env = os.environ.copy()
+            env["PATH"] = f"{fake_bin}:/usr/bin:/bin"
+            env["REMOTE_GATE_FIREWALL_LOG"] = str(firewall_log)
+            env["REMOTE_GATE_FIREWALL_CLEAR_COUNT"] = str(firewall_clear_count)
+            env["REMOTE_GATE_EGRESS_LOG"] = str(egress_log)
+            env["REMOTE_GATE_ACK_LOG"] = str(ack_log)
+            env["REMOTE_GATE_RUNTIME_DIR"] = str(runtime_dir)
+            proc = subprocess.run(["/bin/sh", str(harness)], text=True, capture_output=True, env=env, check=False)
+
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            firewall_calls = firewall_log.read_text(encoding="utf-8").splitlines()
+            ack_payloads = ack_log.read_text(encoding="utf-8").splitlines()
+            activate = "activate 198.51.100.7 ipv4 wg pppoe-WAN2 41194 300 web_verified"
+            self.assertEqual(firewall_calls.count("clear"), 2)
+            self.assertEqual(firewall_calls.count(activate), 1)
+            self.assertLess(firewall_calls.index("clear"), firewall_calls.index(activate))
+            self.assertLess(firewall_calls.index("clear", firewall_calls.index("clear") + 1), firewall_calls.index(activate))
+            self.assertEqual(len(ack_payloads), 1)
+            self.assertIn('"id":"new-cmd"', ack_payloads[0])
+            self.assertIn('"ok":true', ack_payloads[0])
+            self.assertFalse((runtime_dir / "agent-command-result").exists())
 
 
 if __name__ == "__main__":
