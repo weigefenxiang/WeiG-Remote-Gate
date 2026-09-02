@@ -50,6 +50,7 @@ class EndpointMemoryTests(unittest.TestCase):
         self.assertIn("function egressSelectionIsManual", source)
         self.assertIn("const defaultValue = defaultEgressValue(plans)", source)
         self.assertIn("egressSelectionIsManual(family) && hasOption(remembered)", source)
+        self.assertIn("state.egressWan=egressSelect().value||'__lan__'", source)
         self.assertIn("state.egressManualSelections[state.family]=true", source)
         self.assertIn("state.egressManualSelections={}", source)
         self.assertIn("mode:'dual'", source)
