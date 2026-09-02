@@ -68,7 +68,7 @@ class EndpointMemoryTests(unittest.TestCase):
         self.assertIn("function preferredEgressWans()", source)
         self.assertIn("function normalizeEgressPreference", source)
         self.assertIn("function defaultEgressPlan", source)
-        self.assertIn("preference.manualMode = true", source)
+        self.assertIn("preference.manualMode=true", source)
         self.assertIn("preference[family==='ipv4'?'manualIpv4':'manualIpv6']=true", source)
         self.assertIn("egressModeRoot()?.addEventListener('click'", source)
         self.assertIn("egressWanSelect(family)?.addEventListener('change'", source)
