@@ -97,7 +97,7 @@ class PlanPreferenceContractTests(unittest.TestCase):
         self.assertIn("!afterExplicitSwitch.endpoints?.ipv4", source)
         self.assertIn("!afterDisappear.endpoints?.ipv4", source)
         self.assertIn("activatePosts === 0", source)
-        self.assertNotIn("page.reload", source.split("activatePosts = 0;", 1)[1])
+        self.assertNotIn("page.reload", source.split("topology = 'both';", 1)[1])
 
     def test_ci_contract_keeps_browser_regressions_syntax_checked_and_release_only(self):
         core = CORE_CI.read_text(encoding="utf-8")
