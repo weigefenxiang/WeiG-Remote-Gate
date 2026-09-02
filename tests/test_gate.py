@@ -320,6 +320,34 @@ class GateTests(unittest.TestCase):
             self.activate()
         self.assertEqual(self.store.read("commands.json", {})["pending"]["id"], first["id"])
 
+    def test_failed_close_ack_stays_pending_until_success(self):
+        close = queue_close(self.store, source_ip="198.51.100.7")
+        original_expires_at = close["expires_at"]
+
+        self.assertTrue(ack_command(self.store, close["id"], False, "gate-close-failed"))
+        queue = self.store.read("commands.json", {})
+        self.assertEqual(queue["pending"]["id"], close["id"])
+        self.assertEqual(queue["pending"]["state"], "pending")
+        self.assertEqual(queue["pending"]["detail"], "gate-close-failed")
+        self.assertEqual(queue["pending"]["expires_at"], original_expires_at)
+        self.assertGreater(queue["pending"]["last_attempt_at"], 0)
+        self.assertEqual(pull_command(self.store)["id"], close["id"])
+        with self.assertRaisesRegex(GateError, "command_pending"):
+            self.activate()
+        events = self.store.read("activity.json", [])
+        self.assertTrue(any(
+            item.get("type") == "command_failed"
+            and item.get("command_id") == close["id"]
+            and item.get("retrying") is True
+            for item in events
+        ))
+
+        self.assertTrue(ack_command(self.store, close["id"], True, "cleared"))
+        queue = self.store.read("commands.json", {})
+        self.assertIsNone(queue["pending"])
+        self.assertEqual(queue["last"]["id"], close["id"])
+        self.assertEqual(queue["last"]["state"], "done")
+
     def test_expired_activate_blocks_replacement_until_rollback_close(self):
         expired = {
             "schema": 2,
