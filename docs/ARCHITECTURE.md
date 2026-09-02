@@ -110,6 +110,8 @@ Automatic selection is recommendation only. Manual intent is preserved while val
 
 Browser-only plan preference persistence may remember non-authoritative UI hints such as selected family, WireGuard name, Endpoint ID and WAN fallback identity. `plan-preferences.js` stores only those hints in browser `localStorage`; it must never persist session/CSRF data, client-source authority, Gate authorization or runtime TTL state. Every restore is revalidated through the current `gate-controls.js` option set. Missing or stale identities are discarded, and preference restore must never call Activate.
 
+WireGuard service identity follows the same recommendation-versus-authority boundary. When exactly one registered WireGuard service is available, its selector may remain hidden as redundant while the internal selected service is preserved. When multiple registered WireGuard services are available, the existing selector must be visible so service choice is explicit; registry/list ordering must not silently become user intent. Manual Endpoint preference is bound to the selected WireGuard service and is discarded rather than migrated across an explicit service switch or service disappearance. None of these selection changes may auto-Activate.
+
 ## InternetExitPlan
 
 Internet Exit is an independent outbound plan. It is not part of Access Endpoint selection and is not constrained to the Access Gate family.
