@@ -1,26 +1,39 @@
 # AI Handoff
 
-This file is a durable handoff for continuing 0.3.17 development without repeating already-closed investigations.
+This is the durable continuation entry point for WeiG-Remote-Gate development.
 
-## Repository workflow
+## Mandatory reading order
 
-- Repository: `weigefenxiang/WeiG-Remote-Gate`
-- Development branch: fixed `dev`
-- Stable branch: `main`
-- Never create feature/version/temporary branches for routine work.
-- Commit messages are English-only.
-- Do not expand scope into TCP, generic port forwarding, qBittorrent or unrelated SDK work unless a real regression requires it.
-- Before editing, read `docs/PROJECT-RULES.md`, `docs/CURRENT-DEVICE-VALIDATION.md`, `docs/ARCHITECTURE.md` and `docs/SECURITY-MODEL.md`.
+Before editing, read:
 
-The runtime code baseline immediately before this docs-only handoff was:
+1. `docs/SYSTEMIC-INVARIANTS.md`
+2. `docs/PROJECT-RULES.md`
+3. `docs/CURRENT-DEVICE-VALIDATION.md`
+4. `docs/ARCHITECTURE.md`
+5. `docs/SECURITY-MODEL.md`
+6. root `DESIGN.md` for visual/UI work.
+
+Do not rely on an old handoff SHA. Query the current `dev` HEAD before every write.
+
+## Git workflow
+
+- Repository: `weigefenxiang/WeiG-Remote-Gate`.
+- Develop only on fixed branch `dev`.
+- Stable branch: `main`.
+- Never create routine feature/dev/version/temporary branches.
+- Commit messages are English.
+- Never force-update refs.
+- If `dev` advances concurrently, fetch/compare changed paths and rebase intended changes onto the latest HEAD. Never overwrite unknown commits.
+
+The runtime-code baseline immediately before the current docs consolidation is:
 
 ```text
-a842de1df88468de93d1a3e40ad6c4e31be1b325
+ed837796e30ede137ca5671db7f683df1675039d
 ```
 
-Always query the current `dev` HEAD before writing because later docs/test commits may be newer while runtime code is unchanged.
+That commit standardized responsive network identity fitting. The docs commit that contains this handoff will be newer while the runtime code may still be unchanged.
 
-## Current real-device target
+## Current real hardware
 
 ```text
 ImmortalWrt 21.02-SNAPSHOT
@@ -28,153 +41,149 @@ mediatek/mt7981
 aarch64_cortex-a53
 Linux 5.4.x
 fw3 + iptables legacy + ipset
-WG_HOME / UDP 51820
+WG_HOME / UDP 51820 (current observation, never a hardcoded rule)
 ```
 
-Observed topology is dynamic. Do not encode these names as policy:
+Observed topology is dynamic:
 
 ```text
 WAN  / pppoe-WAN   -> private/CGNAT upstream; Mapped candidate
 WAN2 / pppoe-WAN2  -> public IPv4; Direct candidate
 ```
 
-Another router can assign these capabilities to different logical WANs.
+Never encode those literal names as policy.
 
-## Hardware-validated IPv4 Mapped lifecycle
+## Closed hardware work: do not reopen without a regression
 
-The following is real-device PASS, not merely CI:
+### IPv4 Mapped CLOSED/OPEN/Close lifecycle: PASS
+
+- mapper may remain alive while Gate is CLOSED;
+- exact STUN control remains allowed;
+- mapped ingress defaults DROP;
+- real cellular IPv4 becomes the source-scoped authorization on Activate;
+- fresh external WireGuard handshake succeeds while authorized;
+- Internet Exit does not replace the pinned real client source with router egress;
+- Close clears Gate authorization and Internet Exit while mapper/STUN may remain;
+- fresh external handshake is blocked again.
+
+### PPPoE reconnect -> remap -> explicit re-Activate: PASS
+
+- old PPPoE/Mapping disappears;
+- authorization is not migrated;
+- bounded settle allows WAN/routes/mapping/firewall to converge;
+- new Mapping is recreated automatically;
+- Gate remains CLOSED;
+- explicit fresh Activate is required;
+- fresh external WireGuard handshake succeeds through the new Mapping.
+
+Do not require the remap tuple to be numerically different. Current runtime ownership/freshness is authority.
+
+### Client Source feedback-loop fix: PASS
+
+- router Direct/Mapped/egress addresses cannot replace remote client evidence;
+- active authorized source is pinned;
+- Close request source is not interpreted as authorization source.
+
+## User-confirmed current dashboard state
+
+The user explicitly confirmed that these real-device values are normal:
 
 ```text
-CLOSED
--> mapper may remain active
--> mapped ingress is DROP
--> fresh external WireGuard handshake does not advance
-
-Activate
--> real cellular IPv4 source is authorized
--> Mapped ingress ACCEPT is source-scoped
--> fresh WireGuard handshake succeeds
-
+Client IPv4
+Access Endpoint
 Internet Exit
--> dashboard traffic may return through the home router
--> router external/mapped address is suppressed as client-source evidence
--> active real client source remains pinned
-
-Close
--> all Gate authorization is cleared
--> Internet Exit is cleared
--> mapper/STUN control may remain
--> fresh handshake is blocked again
+WAN list
 ```
 
-## Hardware-validated PPPoE remap lifecycle
+Do not reopen the generic claim that current IPv4 dashboard data is wrong unless a new regression is shown.
 
-Representative test:
+Manual endpoint-selection persistence on real hardware is still not separately confirmed.
+
+## Approved next architecture/UI target
+
+The next implementation must follow the contracts already written in `SYSTEMIC-INVARIANTS.md`, `PROJECT-RULES.md` and `ARCHITECTURE.md`.
+
+Key points:
+
+1. **Capability-aware Family control**
+   - current device IPv6 Gate is disabled;
+   - IPv6 remains explainable/visible but disabled;
+   - Dual is disabled when IPv6 Gate is unavailable;
+   - unavailable capability must not lead to a selectable-but-unactivatable dead end.
+
+2. **Dual PathCard**
+   - one generic `PathCard` with two `FamilyPathBlock`s;
+   - four information lines:
+
+   ```text
+   IPv4   <WAN>   <Direct|Mapped|...>
+   <IPv4 endpoint>
+   IPv6   <WAN>   <Direct|...>
+   <IPv6 endpoint>
+   ```
+
+   - same DOM/component for same-WAN and split-WAN;
+   - remove redundant `Dual`, `Split WAN` and `Split Exit` presentation.
+
+3. **Internet Exit decoupled from Access family**
+   - modes: `none / ipv4 / ipv6 / dual`;
+   - IPv4 Access defaults to IPv4 Exit, IPv6 to IPv6 Exit, Dual to Dual Exit;
+   - this is recommendation only; user may select another supported mode;
+   - same-WAN/split-WAN Dual are one InternetExitPlan model;
+   - backend/API/OpenWrt validation must treat the egress plan as independent authority.
+
+4. **Private/CGNAT presentation**
+   - keep classification internally when needed;
+   - remove user-facing `Private/CGNAT Try` Access Endpoint;
+   - do not show `Private/CGNAT` as an Internet Exit product label;
+   - a CGNAT WAN can still be a valid IPv4 outbound exit when routing prerequisites are valid.
+
+5. **Dynamic WireGuard service port**
+   - do not hardcode `51820`;
+   - Service Registry remains the only authority for current WireGuard listen port;
+   - keep `external_port`, `ingress_port`, `service_port` distinct;
+   - add non-51820 regression coverage.
+
+6. **No new wheels**
+   - `gate-controls.js` owns policy/plans/view model;
+   - `endpoint-picker.js` owns picker/PathCard rendering;
+   - `fit-text.js` remains the only fitting engine;
+   - `interaction.css` owns generic PathCard/EndpointPicker interaction styling;
+   - use root `DESIGN.md` and awesome-design-md methodology for visual consistency;
+   - do not create Dual/IPv6/Mapped/Exit-specific replacement frameworks.
+
+These are approved targets, not claims that current deployed code/hardware already implements or validates them.
+
+## Systemic investigation mistakes
+
+Do not duplicate the full list here. `SYSTEMIC-INVARIANTS.md` is canonical.
+
+Highest-frequency reminders:
+
+- Access Endpoint != Internet Exit;
+- network fact != user product option != runtime authority;
+- external Mapping port != mapper ingress port != WireGuard service port;
+- recommendation/default != authorization;
+- Mapping active != Gate open;
+- current HTTP source after WG egress != automatically the remote client;
+- WAN names/addresses/51820 are runtime observations, not policy constants;
+- stale/early samples are not settled state;
+- CI/browser PASS != hardware PASS;
+- extend shared modules instead of creating parallel ranking/planning/fitting/picker engines.
+
+## Current real-device items still pending
+
+Do not claim PASS for:
 
 ```text
-Before:
-pppoe-WAN     172.20.53.132
-public Mapping 223.73.44.162:24948
-local ingress 53835
-
-After PPPoE reconnect:
-pppoe-WAN     172.20.11.27
-public Mapping 223.73.44.74:1625
-local ingress 54342
+manual endpoint-selection persistence
+IPv6 Gate
+same-WAN Dual data plane
+split-WAN Dual data plane
+independent Internet Exit family-mode hardware paths
+fw4/nftables Mapped Access
+non-51820 WireGuard service-port hardware path
 ```
-
-After the bounded settle sequence, `active_mappings=1`, the new ingress was protected, Gate stayed CLOSED and Internet Exit stayed inactive. After a fresh explicit Activate, WireGuard `latest-handshake` advanced from `1788280607` to `1788287352`, and the new ingress ACCEPT rule carried real packets.
-
-Therefore this complete path is PASS:
-
-```text
-PPPoE down/up
--> old Mapping disappears
--> old authorization does not migrate
--> WAN/default route settles
--> new Mapping is rebuilt automatically
--> Gate remains CLOSED
--> fresh explicit Activate
--> fresh external WireGuard handshake succeeds through the new Mapping
-```
-
-## Important implemented fixes
-
-Do not regress these:
-
-- IPv4-first family preference while IPv6 remains selectable.
-- Explicit CLOSE clears Gate authorization and Internet Exit but does not need to stop the mapper.
-- Kernel-enforced TTL for authorization.
-- Interface-down policy resync and bounded interface-up settle (`0s -> 2s -> 5s -> 10s`).
-- Mapping changes revoke old authorization instead of migrating it.
-- Stale mapper status is rejected unless the managed mapper process is current.
-- Orphan mapper runtimes are cleaned safely by exact process ownership.
-- Router egress/mapped public addresses are suppressed as client-source evidence.
-- The currently authorized client source is pinned while Gate is active.
-- Browser candidate submissions equal to router egress are explicitly rejected.
-- Endpoint defaults are capability-based: Public Direct IPv4 before Mapped; IPv6 prefers the same best IPv4 WAN when possible.
-- Automatic endpoint selection is marked `auto`; explicit user choice is `manual`.
-- Dual prefers same-WAN public IPv4 + global IPv6, then same-WAN Mapped IPv4 + IPv6, then split WAN.
-- Split Dual carries `egress_wan_ipv4` and `egress_wan_ipv6`; same-WAN/legacy `egress_wan` remains compatible.
-- OpenWrt split Dual egress is one transaction, not two independent enable calls.
-- Partial Dual failures roll back temporary authorization/egress fail-closed.
-- Internet Exit sync validates selected WAN/L3/main default route/Remote Gate policy-table default route; stale routing clears egress instead of falling through to `main`.
-- Browser CI no longer runs Playwright `--with-deps`, avoiding slow Ubuntu APT/Azure mirror downloads.
-
-## Recurring investigation mistakes
-
-1. Do not call PPPoE address/mapped-port changes a bug. Old connectivity is expected to die; test automatic remap and fail-closed behavior.
-2. Do not inspect immediately after `ifup`. Give netifd/ubus/routes/mapper/firewall the settle window.
-3. Do not equate Mapping existence with Gate authorization.
-4. Do not conclude Activate failed from one immediate `active=false` sample; command polling/ACK may lag the click.
-5. Do not use the current HTTP request source blindly once WG Internet Exit is active; it can be the router's own public address.
-6. Do not interpret the source attached to a Close request as the authorization source.
-7. Do not confuse Access Endpoint (ingress) with Internet Exit (egress).
-8. Do not hardcode `WAN`/`WAN2` or a known public address.
-9. Do not force Dual onto one WAN; split Dual is valid when families live on different WANs.
-10. Do not let split egress fall through to an arbitrary main-table WAN after route loss.
-11. Do not migrate authorization to a new mapper ingress after PPPoE/remap changes.
-12. Do not require a remap tuple to be numerically different; the same tuple can be reassigned.
-13. Do not inspect only `server/app/main.py` for all routes; `server/remote-gate.py` extends the handler.
-14. Do not trust mapper JSON without managed-process ownership/currentness.
-15. Do not create a second endpoint preference engine while `endpointScore()` is the shared ordering primitive.
-16. Do not use old CI red runs as blockers when current HEAD is green.
-
-## Current automated validation
-
-Current CI covers:
-
-- Python unit/contracts
-- Python compile
-- BusyBox/POSIX shell syntax
-- native mapper host build/check
-- JavaScript syntax
-- browser layout regression
-- same-WAN automatic endpoint defaults
-- split-WAN Dual browser regression and activate payload
-- split Dual server/agent/runtime contracts
-- egress policy-route fail-closed contract
-
-Always validate the current `dev` HEAD rather than historical workflow failures.
-
-## Remaining real-device work
-
-Next priority is not more PPPoE mapping work; that path is already PASS.
-
-Continue with:
-
-```text
-1. Close Gate and disable phone WireGuard.
-2. Refresh the real dashboard without touching endpoint controls.
-3. Verify IPv4 automatically chooses the real Public Direct WAN and Internet Exit follows that WAN.
-4. Verify manual endpoint selection remains respected.
-5. When ready, explicitly enable/test IPv6 Gate on hardware.
-6. Validate same-WAN Dual data plane.
-7. Validate split-WAN Dual and per-family Internet Exit on hardware.
-8. Later validate Mapped Access on a real fw4/nftables router.
-```
-
-Do not report IPv6/same-WAN Dual/split-WAN Dual as real-device PASS until those tests are actually performed.
 
 ## Development update commands
 
@@ -193,4 +202,4 @@ REMOTE_GATE_RAW_BASE='https://raw.githubusercontent.com/weigefenxiang/WeiG-Remot
 /usr/local/lib/remote-gate/update.sh
 ```
 
-The VPS updater freezes a deployment to one resolved commit SHA. Do not assume a same-version deployment is current without checking `/usr/local/lib/remote-gate/BUILD`.
+The VPS updater freezes to one resolved Git SHA. Verify `/usr/local/lib/remote-gate/BUILD` rather than assuming a same-version deployment is current.

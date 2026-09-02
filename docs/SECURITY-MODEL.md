@@ -1,261 +1,247 @@
 # Security Model
 
-## Control plane and data plane
+`SYSTEMIC-INVARIANTS.md` and `PROJECT-RULES.md` are part of this security contract.
 
-Remote Gate separates four decisions:
+## Separate security decisions
 
-1. **Access Method** decides how the Internet reaches a locally registered service: Direct, Mapped, or a future Relay path.
-2. **Access Gate authorization** decides which external source address may use the selected router-local ingress for a limited TTL.
-3. **Service authentication** remains owned by the service itself. For WireGuard, public-key authentication still decides which peer may establish the encrypted tunnel.
-4. **Internet Exit** optionally decides whether traffic from an authenticated WireGuard client subnet may be forwarded through explicitly selected WAN policy for a limited runtime TTL. IPv4 and IPv6 may use the same WAN or different WANs.
+Remote Gate separates four authorities:
 
-A temporary Gate authorization does not replace WireGuard authentication and does not make a mapped endpoint permanently open.
+1. **Access Method / AccessPlan**: how the Internet reaches a registered service.
+2. **Access Gate authorization**: which external source may use the selected ingress and for how long.
+3. **Service authentication**: owned by the service itself; WireGuard peer keys remain required.
+4. **InternetExitPlan**: which WireGuard traffic families may leave through which explicitly validated WANs for a temporary runtime TTL.
 
-Normal Activate does not require a pre-existing WireGuard handshake. This allows a user to open the Gate from the authenticated web console and start WireGuard afterwards.
+A recommendation or UI default is not authority for any of these.
 
-## Source records
+Internet Exit is independent from the Access Gate family. Opening an IPv4 Access Gate does not itself authorize IPv6 ingress, but it may coexist with an explicitly requested IPv6 or Dual outbound Internet Exit when the WireGuard/client/WAN prerequisites are valid.
 
-IPv4 and IPv6 are independent source records in the authenticated browser session.
+## Browser and VPS authority limits
 
-- **Cloudflare observed / verified**: learned from the authenticated HTTPS request path.
-- **Candidate**: a short-lived address reported by the browser after a family-specific public IP echo probe. It is useful when the dashboard request itself used the other family.
+The browser/VPS must never gain authority to invent:
 
-The Activate body never carries an arbitrary `source_ip`. The VPS resolves the selected family from the session source store and validates the selected endpoint server-side. Candidate records are therefore session-bound and CSRF-protected, but they are not equivalent to a WireGuard peer proof; possession of a valid WireGuard peer key remains required to establish the data-plane tunnel.
+- arbitrary LAN target addresses;
+- arbitrary service ports;
+- arbitrary mapping ingress ports;
+- arbitrary WAN devices;
+- arbitrary authorization source addresses;
+- shell commands or firewall fragments.
 
-A router-owned public address must not become authorization evidence for the remote browser merely because the browser later reaches the VPS through WireGuard Internet Exit. Known Direct WAN public addresses, current Mapped external addresses and known router egress addresses are suppressed as client-source replacements. While a Gate authorization is active for a session/family, the authorized remote source remains pinned rather than drifting to the router's own egress address.
+The browser selects known IDs/plans. The VPS validates server-owned inventory/session state. OpenWrt independently revalidates the current local authority before changing runtime state.
 
-This prevents the feedback loop:
+## Source records and feedback-loop protection
 
-```text
-remote client source
--> Activate
--> WireGuard Internet Exit
--> browser request returns through home WAN
--> VPS observes home WAN public address
-```
+IPv4 and IPv6 client source records are independent per authenticated session.
 
-The final observation is router egress, not a new remote-client authorization source.
+Observation classes may include verified Cloudflare request sources and shorter-lived family-specific browser probe candidates.
+
+The Activate request does not submit an arbitrary `source_ip` as authority. The server resolves the current trusted source record for the requested family.
+
+Router-owned public identities must never replace the remote-client authorization source merely because browser traffic later returns through WireGuard Internet Exit. Suppress known:
+
+- Direct WAN public addresses;
+- current Mapped external addresses;
+- observed router egress addresses.
+
+While authorization is active, pin the real authorized client source.
+
+A Close request's current HTTP source is metadata for the request. It is not a new authorization source.
 
 ## Service Registry authority
 
-The browser and VPS must never be allowed to invent an arbitrary LAN target or target port.
+OpenWrt owns the Service Registry.
 
-OpenWrt owns a local Service Registry. Every service exposed through Remote Gate must be discovered or registered locally and validated before it can become an Access Endpoint.
+Every exposed service must be discovered/registered and validated locally before it can appear in an Access Endpoint.
 
-0.3.17 initially registers only WireGuard listeners. Future Shadowsocks, ShadowsocksR or other adapters must follow the same local-registration contract.
+For WireGuard, the current listener and `service_port` are runtime service facts. Never trust a hardcoded `51820` or a browser-supplied value.
 
-A control-plane request identifies a known endpoint/service. It does not gain authority to submit an arbitrary `192.168.x.x:port`, arbitrary ingress port, shell command or forwarding rule.
+The control plane selects `service_id`; OpenWrt revalidates service identity, transport and current listen port before activation.
 
-## Direct temporary authorization
+## Port separation
 
-After the VPS queues a command, OpenWrt independently validates:
+```text
+external_port  Internet-visible endpoint port
+ingress_port   router-local ingress protected by Access Gate
+service_port   locally validated service listen port
+```
 
-- source address and IP family;
-- selected protected WAN device;
-- selected registered ingress;
-- registered local service identity;
-- access scope;
+Mapped Access is specifically allowed to use different values for all three.
+
+The Access Gate authorizes `ingress_port`. The mapper relays only to the validated registered `service_port`. A Mapping's `external_port` is never service-port authority.
+
+## Direct authorization
+
+For Direct WireGuard, OpenWrt validates:
+
+- source address/family;
+- selected WAN and current L3 identity;
+- registered WireGuard service;
+- ingress/service port;
+- scope;
 - TTL;
-- IPv6 Gate capability when applicable.
+- family capability.
 
-For Direct WireGuard, the registered ingress port is the discovered WireGuard listen port.
-
-If validation succeeds, OpenWrt creates the temporary source authorization. The historical WireGuard activity verifier remains available through the explicit `verify-wireguard` diagnostic action but is not part of normal Activate.
+Normal Activate does not require a pre-existing WireGuard handshake. WireGuard authentication still gates the encrypted tunnel itself.
 
 ## Mapped Access authorization
 
-Mapped Access uses a dedicated mapper ingress port that may differ from the WireGuard service port.
+Mapped Access uses a Remote Gate-owned mapping/relay path.
 
-A mapped endpoint distinguishes:
-
-- `external_port`: the Internet-visible NAT mapping;
-- `ingress_port`: the router-local Mapping Engine socket protected by the Access Gate;
-- `service_port`: the locally validated service listen port.
-
-The Access Gate authorizes **ingress_port**. The Service Registry separately validates **service_port**. The browser must not be able to substitute either value.
-
-The critical invariant is:
+Mandatory invariant:
 
 ```text
 CLOSED
-Internet -> mapped public endpoint -> router ingress -> DROP
+Internet -> mapped endpoint -> ingress_port -> DROP
 
 ACTIVE
-approved source -> mapped public endpoint -> router ingress -> mapper -> registered service
+approved source -> mapped endpoint -> ingress_port -> mapper -> registered service
 
 TTL / Close
-mapping may still exist -> router ingress -> DROP
+mapping may remain -> ingress_port -> DROP
 ```
 
-A long-lived NAT mapping is therefore not equivalent to long-lived access.
+A live Mapping is not authorization.
 
-## Exact STUN control exception
+### STUN control exception
 
-The mapper performs STUN discovery and keepalive on the same UDP socket that owns `ingress_port`. The Access Gate therefore needs one narrow control-plane exception before the normal Mapped ingress DROP.
-
-The allowed tuple is exactly:
+The mapper's STUN discovery/keepalive uses an exact control tuple:
 
 ```text
 validated WAN device
 + mapper ingress_port
-+ resolved STUN IPv4 address
++ resolved STUN IPv4
 + configured STUN source port
 ```
 
-The startup order is security-sensitive:
+The control exception must be installed before the general mapped DROP but must never relay control traffic into the service.
 
-```text
-resolve STUN peer
--> bind mapper ingress
--> publish prepared state including STUN tuple
--> synchronize firewall
--> install exact STUN control allow
--> install exact Mapped ingress DROP
--> create mapper go signal
--> begin STUN discovery
-```
-
-The exception must never become a service bypass. The native mapper treats packets from the resolved STUN socket as control traffic only, requires a matching STUN transaction for mapping updates, and does not relay packets from that STUN peer into the registered local service.
-
-Missing or malformed STUN control metadata is fail-closed: the prepared mapper does not receive a go signal.
+Malformed/missing STUN metadata means no go signal and fail-closed behavior.
 
 ## Mapping Engine trust boundary
 
-The 0.3.17 Mapping Engine is intentionally limited to IPv4 UDP traversal and relay for registered services.
+The current mapper scope is IPv4 UDP for registered services.
 
 It must:
 
-- bind only to a validated WAN/l3 device;
-- validate all addresses and ports;
-- treat STUN/network/runtime values as data only;
-- use bounded session state and idle expiry;
-- expose sanitized status only;
-- avoid logging tokens, private keys or other secrets;
-- survive malformed input and WAN reconnect without crashing the Agent;
-- never execute runtime values through `eval`, `sh -c` or equivalent command construction.
+- bind only to a validated WAN/L3 device;
+- treat runtime/network values as data;
+- avoid `eval`, `sh -c` and equivalent runtime command construction;
+- bound sessions/memory and expire idle state;
+- validate addresses/ports;
+- sanitize status/logging;
+- avoid secrets in status/logs;
+- reject stale/malformed identity;
+- survive WAN reconnect without granting stale authority.
 
-Malformed, stale or ambiguous mapper state is fail-closed: the mapped endpoint is omitted.
+A compatible mapper binary is optional capability. Missing mapper disables only Mapped Access.
 
-Mapped Access is optional. If no compatible mapper binary is available for a router architecture, Direct endpoints, IPv6 Gate and existing Remote Gate behavior continue normally.
+## Internet Exit authority
 
-## Native mapper supply-chain boundary
+Internet Exit is explicit, temporary and independent from AccessPlan.
 
-A router must not compile the mapper locally as part of normal installation or upgrade.
+Modes:
 
-Native mapper selection is based on the exact OpenWrt-family **Package ABI**, not on a broad CPU guess. Kernel machine architecture from `uname -m` remains diagnostic information only.
+```text
+none
+ipv4
+ipv6
+dual
+```
 
-The project maintains an explicit Package ABI map. Unknown ABIs fail closed; wildcard or prefix fallback is not allowed. Historical/current ABIs that cannot safely share a portable static build class are marked for an exact OpenWrt SDK build instead of being forced into a guessed class.
+The selected plan identifies one validated WAN per enabled family. Same-WAN and split-WAN Dual are both valid.
 
-Portable cross-build candidates must pass three distinct stages before they may be described as hardware-supported:
+IPv4 egress can use a WAN whose local address is RFC1918/CGNAT if it has a valid current IPv4 default route. `Private/CGNAT` classification is not an outbound security disqualifier by itself and must not be confused with public Access Endpoint eligibility.
 
-1. strict native/cross compilation;
-2. architecture/ELF startup smoke validation, normally through QEMU user emulation;
-3. real OpenWrt/LEDE/ImmortalWrt hardware validation for the mapped data path.
+IPv6 egress requires current IPv6 default routing and usable Global IPv6.
 
-A CI artifact is not automatically a production release artifact. Automatic router installation must eventually consume a published manifest with an exact Package ABI entry and cryptographic checksum; no matching entry means Mapped Access remains unavailable.
+Dual egress is transactional. Both family paths must validate/install or the whole egress runtime rolls back.
 
-## Concurrent sources
+Temporary ownership is limited to the selected WireGuard subnet path:
 
-A family may hold multiple authorized source addresses simultaneously. Each source has its own expiry and source-kind metadata. This supports multiple devices or networks using the same registered service ingress concurrently.
+- family-scoped policy routing;
+- scoped FORWARD acceptance;
+- NAT44 for selected IPv4 WG subnet where required;
+- NAT66 for selected IPv6 WG ULA subnet where required.
 
-The shared firewall profile for a family remains exact: active records must use the same WAN device, registered ingress port and scope. A request attempting to change that profile while other sources remain active fails closed and asks the user to close existing access first.
+Runtime authority remains valid only while:
 
-`Close access now` clears all temporary IPv4 and IPv6 Gate authorizations and any active runtime Internet Exit state owned by the same control flow.
+- logical WAN is up;
+- current L3 device matches the saved plan;
+- ordinary default route remains on that device;
+- Remote Gate policy-table default route remains on that device.
 
-## IPv4 and IPv6
+Any mismatch clears egress. Never silently fall through to another main-table WAN or migrate to a new PPPoE session.
 
-IPv4 and IPv6 authorization sets are independent. The UI may activate IPv4 only, IPv6 only, or queue both in one Dual transaction. A failed family stops the Dual batch instead of allowing a later family to hide the failure. Any partial authorization from that failed batch is cleared.
+## Dual transactions
 
-Mapped Access in 0.3.17 is IPv4/UDP only. IPv6 remains Direct when a global IPv6 endpoint and IPv6 Gate capability are available.
+Dual Access contains one validated IPv4 endpoint and one validated IPv6 endpoint for the same registered WireGuard service. The WANs may differ.
 
-A Dual transaction contains one validated endpoint per family. The endpoints must resolve to the same registered WireGuard service, but they may belong to different WANs. The UI prefers a same-WAN public dual pair when one exists; otherwise a split-WAN pair is allowed.
+If either family authorization fails, cancel/roll back the batch so a later success cannot hide a partial failure.
 
-Return routing is maintained per authorized source and per family, so multiple `/32` IPv4 or `/128` IPv6 client destinations can coexist on Multi-WAN systems.
-
-For Internet Exit, IPv4, IPv6 and Dual are explicit modes. Dual egress is transactional: both families must validate and install successfully or the helper rolls back the partial runtime state. Same-WAN Dual may share one egress WAN; split Dual carries independent `egress_wan_ipv4` and `egress_wan_ipv6` authority.
+Dual Internet Exit is independent from Dual Access. It may share Access WAN recommendations, but its runtime WAN/family authority is its own validated plan.
 
 ## Public-address filtering
 
-Addresses exposed as public inventory/endpoint candidates must be globally reachable unicast. The VPS filters inventory at its authoritative storage boundary and cleans previously stored inventory when the dashboard is read.
+Public Access Endpoint addresses must be globally reachable unicast.
 
-The policy excludes link-local, private/CGNAT where public reachability is required, loopback, unspecified, multicast, documentation and other IANA special-purpose non-globally-reachable ranges. IPv6 must also be inside Internet Global Unicast `2000::/3`.
+Exclude private/CGNAT, loopback, link-local, unspecified, multicast, documentation and other special-use ranges where public reachability is required. IPv6 public endpoints must be valid Internet Global Unicast.
 
-WireGuard ULA such as `fd00::/8` is intentionally valid as an **internal tunnel subnet** for Internet Exit even though it is not valid as a public WAN endpoint.
+This filtering is for public Access Endpoint authority. It does not mean a private/CGNAT WAN cannot provide outbound Internet Exit.
+
+WireGuard ULA remains valid as an internal tunnel subnet for IPv6 Internet Exit.
+
+## Multi-WAN identity
+
+Every endpoint resolves to one logical WAN and one current L3 device. A Dual AccessPlan may contain two independent endpoint identities.
+
+Ambiguous association is rejected rather than guessed.
+
+Router-local return routing is maintained per authorized external source and family so replies leave through the ingress WAN when needed. This is separate from Internet Exit PBR.
+
+PPPoE/interface churn never grants authority to migrate Gate or Internet Exit state automatically.
 
 ## Firewall ownership
 
-### Access Gate
+Access Gate owns only:
 
-The Access Gate owns only router-local policy for:
+- registered router-local Direct ingress;
+- registered Mapped ingress;
+- exact STUN control tuples;
+- optional Echo Request scope;
+- bounded diagnostic verification windows.
 
-- ICMP/ICMPv6 Echo Request when the selected scope includes Ping;
-- locally registered Direct service ingress such as discovered WireGuard UDP listen ports;
-- locally registered Mapped Access ingress ports owned by the Remote Gate Mapping Engine;
-- exact Mapped STUN control tuples required for mapping discovery/keepalive;
-- optional short diagnostic verification windows.
+Internet Exit owns only its temporary WireGuard-subnet PBR/FORWARD/NAT path.
 
-The Access Gate must not install generic FORWARD rules, rewrite unrelated DNAT/SNAT, or take ownership of qBittorrent, UPnP, NAT-PMP or unrelated application traffic.
+Remote Gate does not own unrelated LAN forwarding, qBittorrent/DHT/PeX, UPnP/NAT-PMP, manual DNAT/SNAT, NAS/PC forwarding or arbitrary ports.
 
-### Mapping relay
+## Native mapper supply chain
 
-The Mapping Engine may relay authorized UDP datagrams from its registered ingress socket to a validated local service socket. This is not authority for generic LAN forwarding.
+Routers must not compile the mapper during normal install/update.
 
-0.3.17 must not expose an arbitrary target-address/target-port API. Future Service Adapters must register and validate their targets locally.
+Artifact selection uses exact OpenWrt-family package ABI, not a broad CPU guess. Unknown ABI fails closed to Mapped unavailable.
 
-### Internet Exit
+A candidate passes separate validation levels:
 
-Internet Exit is a separate, opt-in runtime capability. When explicitly enabled, Remote Gate may temporarily own only the path from the selected WireGuard client subnet to the explicitly selected WAN for each active family:
+1. strict build;
+2. architecture/startup smoke (for example QEMU user emulation);
+3. real OpenWrt-family hardware data-plane validation.
 
-- source/interface-scoped IPv4 policy routing toward the selected IPv4 WAN;
-- source/interface-scoped IPv6 policy routing toward the selected IPv6 WAN;
-- source/interface-scoped FORWARD acceptance required for those WireGuard egress paths;
-- NAT44 MASQUERADE for the selected IPv4 WireGuard subnet when IPv4 egress is enabled;
-- NAT66 MASQUERADE for the selected IPv6 WireGuard ULA subnet when IPv6 egress is enabled.
+CI artifacts are not automatically production release artifacts. Automatic installation requires exact manifest identity and cryptographic checksum.
 
-The helper does not persist these egress rules in UCI. Disable, Close, TTL expiry, failed transactional activation or reboot removes the temporary egress state.
+## OpenWrt-family compatibility security
 
-The selected WAN route is itself part of the authority. During reconciliation, the logical WAN must still be up, its current L3 device must match the saved runtime plan, the ordinary default route must still exist on that device, and the Remote Gate policy table must still contain its own default route through that device. If any of these checks fail, the temporary Internet Exit state is cleared rather than allowing policy lookup to fall through to a different main-table WAN.
+Distribution branding/version is not a security decision.
 
-This ownership does **not** extend to ordinary LAN forwarding, qBittorrent/DHT/PeX, UPnP/NAT-PMP, DNAT/manual forwards, NAS/PC forwarding or other router traffic.
+Detect actual capabilities:
 
-## Multi-WAN identity and return path
+- fw3/iptables/ipset or fw4/nft;
+- package ABI;
+- package manager when needed;
+- service manager/runtime capabilities.
 
-Every individual endpoint must resolve to one validated logical WAN and one l3 device. A Dual access plan may contain two such independently validated endpoints, one per family. Ambiguous endpoint-to-WAN association is rejected rather than guessed.
+Optional capability failure degrades only that feature. Shell remains BusyBox/POSIX compatible.
 
-When an authorized external source reaches a non-default WAN, Remote Gate installs only a destination-specific router-local policy route so locally generated replies leave through the same WAN. Each source is tracked independently and its route disappears when that source expires or all access is closed.
+## Validation truth
 
-This Gate return path is distinct from Internet Exit PBR. The former routes locally generated Direct or mapper-related replies toward the authorized external source; the latter routes packets received from the WireGuard interface toward the explicitly selected Internet Exit WAN for that IP family.
+Never describe CI, fixtures, browser tests or emulation as real-device PASS.
 
-Interface and PPPoE churn does not grant authority to migrate access or egress to a different WAN/session automatically. Old mapped ingress authority is revoked when the current mapping/profile changes. If Internet Exit loses its selected WAN/policy route identity, it is cleared and requires a later explicit Activate to create a new runtime plan.
-
-## OpenWrt-family compatibility boundary
-
-OpenWrt, LEDE, ImmortalWrt and compatible derivatives share one capability contract. Distribution name and release number are not security decisions.
-
-Core compatibility is determined by the runtime interfaces Remote Gate actually uses. Firewall compatibility is determined by the detected firewall stack (`fw3 + iptables + ipset` or `fw4 + nft`). Package management (`opkg` versus `apk`) is independent metadata and must not silently change firewall semantics.
-
-Optional capabilities degrade independently:
-
-- missing IPv6 firewall capability disables only IPv6 Gate;
-- missing matching mapper artifact disables only Mapped Access;
-- missing Internet Exit prerequisites disables only Internet Exit;
-- unknown branding/version alone never enables or disables a security boundary.
-
-Shell code remains BusyBox `ash`/POSIX compatible. Modern systems use procd; the service layer may use a minimal traditional `rc.common` PID fallback when procd is absent but all other required capabilities are present. PID ownership must be verified from `/proc/<pid>/cmdline` before termination so legacy compatibility cannot kill unrelated processes.
-
-## Older OpenWrt / LEDE baseline
-
-Older fw3 systems remain first-class targets when their actual capabilities satisfy the contract. This includes LEDE-era and OpenWrt/ImmortalWrt fw3 derivatives; support is not tied to a single 21.02 release number.
-
-Security and compatibility rules are:
-
-- do not assume Linux 5.6+ cross-process socket reuse;
-- use a dedicated mapper ingress port rather than requiring the mapper to share the WireGuard listen socket;
-- do not require a compiler on the router;
-- do not require NATMap or another third-party traversal package;
-- do not select a native mapper from `uname -m` alone;
-- absence of a compatible mapper binary must disable only Mapped Access, not the rest of Remote Gate.
-
-## Project hard rules
-
-The engineering invariants in [`PROJECT-RULES.md`](PROJECT-RULES.md) are part of this security model. Any implementation that needs to relax them must update and review the documented contract before code changes are accepted.
+Real-hardware claims are recorded only from actual user-provided device evidence in `CURRENT-DEVICE-VALIDATION.md`.
