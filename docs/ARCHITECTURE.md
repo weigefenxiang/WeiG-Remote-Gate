@@ -148,6 +148,10 @@ Each visible family selector is deliberately pure: IPv4 mode renders only an IPv
 
 There is no canonical `IPv4 WAN × IPv6 WAN` combination object or selectable pair list. With three, four or more WANs the UI grows only by adding eligible WAN rows to the relevant family selector. It must never generate a Cartesian product or cap an exploding pair list.
 
+The family-field DOM is also canonical: the IPv4 field precedes the IPv6 field. Single-family modes hide the opposite field and the visible scalar occupies the full selector width. Dual exposes both fields; the same generic responsive grid may place them side by side when both fit at readable width or stack them otherwise. Layout never creates a second mobile/desktop plan owner or duplicate state/DOM.
+
+`egress_wan` is allowed only as a rolling protocol compatibility projection, not as canonical plan authority: a single-family plan projects its selected WAN, same-WAN Dual may project the shared WAN, and split-WAN Dual projects an empty legacy value. Canonical authority remains `mode + wan4 + wan6`, and browser recommendation/selection must never derive from the legacy projection.
+
 Default recommendation follows the current Access family for the **mode** only:
 
 ```text
@@ -363,7 +367,7 @@ Same-WAN, split-WAN, Direct and Mapped Access use the same component tree. Diffe
 
 Internet Exit reuses the same `EndpointPicker` and single-family `FamilyPathBlock` renderer for WAN choice, but its interaction is mode-first. IPv4 and IPv6 modes each expose one matching-family picker and hide the opposite family; Dual exposes both independent family pickers. Each Exit PathCard carries WAN address identity only. A generated two-family Exit combination card is not part of the architecture.
 
-Phone and desktop consume the same semantic select/trigger/PathCard structure. Responsive behavior changes only the existing `EndpointPicker` surface: mobile uses the bottom sheet and desktop uses the popover. There is no separate mobile plan owner or mobile-only Exit component tree.
+Phone and desktop consume the same semantic select/trigger/PathCard structure. Responsive behavior changes only placement and the existing `EndpointPicker` surface: the scalar family-field grid expands one visible field to full width, may place Dual fields side by side when width permits, stacks them otherwise, uses the mobile bottom sheet and desktop popover, and never creates a separate plan owner or mobile-only Exit component tree.
 
 Do not repeat `Dual`, `Split WAN` or `Split Exit` labels when the family controls already communicate the topology.
 
@@ -379,7 +383,7 @@ The current WireGuard public Endpoint display is a read-only projection of the c
 - `fit-text.js`: the only NetworkIdentityText fitting engine;
 - `app.js`: API refresh and general dashboard presentation; it may project the current public Endpoint from `gate-controls.js` structured `data-path-rows`, but it does not own Internet Exit selections, endpoint eligibility/ranking or Access policy;
 - `theme-bootstrap.js`: pre-paint theme/favicon setup and early presentation-module asset loading only; it must not mutate Gate structure, wrap dashboard fetch, observe Gate state or independently resolve Access/Exit policy;
-- `interaction.css`: generic EndpointPicker/PathCard interaction styling;
+- `interaction.css`: generic EndpointPicker/PathCard interaction styling and responsive Internet Exit family-field placement;
 - root `DESIGN.md`: visual tokens/component/responsive rules.
 
 GateStatusHero and current-public-endpoint semantic markup live in `dashboard.html`. They are not reconstructed by bootstrap scripts. `gate-controls.js` remains the decision owner; presentation orchestration may consume its structured selected option but must not recreate the selection algorithm.

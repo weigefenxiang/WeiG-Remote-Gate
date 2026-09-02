@@ -1,5 +1,5 @@
 ---
-version: 10
+version: 11
 name: WeiG-Remote-Gate
 description: "A dense, tactile, adaptive network-security workspace with standardized spatial depth, modular controls, and a distinct Wei.G security identity."
 ---
@@ -287,12 +287,15 @@ Structured ownership is mandatory:
 - when an old owner is replaced, its old runtime state/DOM/test contract is removed rather than hidden under CSS or compatibility logic.
 
 Responsive rules:
+- `LAN only` has zero visible WAN fields; it must not leave disabled or empty IPv4/IPv6 pickers occupying layout space;
+- a single-family mode shows one field and that field spans the full selector width; the hidden opposite family must not reserve an empty column;
+- Dual keeps one IPv4 field followed by one IPv6 field in the same semantic DOM; the generic selector grid may place them side by side only when both fit at readable width, otherwise it stacks them, preserving IPv4-above-IPv6 order on phones;
 - family and optional role remain compact anchors;
 - recommendation and role remain visually distinct tokens;
 - WAN identity uses `NetworkIdentityText` `identity` profile;
 - endpoint/address value uses `NetworkIdentityText` `compact` profile;
 - the complete IPv6 value stays one line and is fitted rather than truncated;
-- mobile and desktop use the same semantic DOM; only spacing/surface behavior changes;
+- mobile and desktop use the same semantic DOM and Current Owner; only spacing, grid placement and picker surface change;
 - a 320px viewport must not cause whole-page horizontal overflow.
 
 Opening/closing uses short transform/opacity motion. Essential information must never depend on hover.
@@ -398,11 +401,13 @@ Mobile persistent header contains BrandIcon, product name and the circular resol
 >= 1200px:
 - Main Canvas + Utility Rail;
 - desktop-readable typography;
-- endpoint picker uses a compact desktop interaction surface.
+- endpoint picker uses a compact desktop interaction surface;
+- Dual Internet Exit family fields may share one row when the Gate form can preserve the canonical minimum field width.
 
 768-1199px:
 - responsive flow layout;
-- no desktop-zone span leakage.
+- no desktop-zone span leakage;
+- Internet Exit family fields remain component-width-driven: they share a row only when both scalar fields fit, otherwise they stack without changing state or DOM.
 
 < 768px:
 - canonical single-column flow;
@@ -412,7 +417,7 @@ Mobile persistent header contains BrandIcon, product name and the circular resol
 - custom duration remains comfortably draggable without horizontal page overflow;
 - full network identities, including IPv6 endpoints, remain one line by dynamic fitting;
 - Dual Access PathCard remains two FamilyPathBlocks/four information lines;
-- Dual Internet Exit remains two independent single-family WAN controls, never a combinatorial card list.
+- Dual Internet Exit remains two independent single-family WAN controls stacked IPv4 then IPv6, never a combinatorial card list.
 
 # 17. Accessibility
 
@@ -435,7 +440,7 @@ CSS:
 - `layout.css`: workspace flow/zones and responsive structure.
 - `dashboard.css`: dashboard data presentation only.
 - `spatial.css`: card/workspace spatial layer.
-- `interaction.css`: BrandIcon, EndpointPicker/PathCard, DurationCrown and feedback-setting interaction surfaces.
+- `interaction.css`: BrandIcon, EndpointPicker/PathCard, Internet Exit family selector grid, DurationCrown and feedback-setting interaction surfaces.
 
 JavaScript:
 - `theme-bootstrap.js`: pre-paint theme/favicon bootstrap and early component asset loading.
