@@ -3,23 +3,12 @@
   const zh = () => document.documentElement.dataset.lang === 'zh';
   const configs = new Map();
   const triggers = new Map();
-  const observers = new Map();
   let layer = null;
   let list = null;
   let title = null;
   let eyebrow = null;
   let activeSelectId = 'endpoint-select';
   let lastFocus = null;
-
-  function splitLabel(text) {
-    const parts = String(text || '').split(' · ').map((part) => part.trim()).filter(Boolean);
-    return {
-      wan: parts[0] || (zh() ? '访问路径' : 'Access path'),
-      family: parts[1] || '',
-      provider: parts.length > 3 ? parts.slice(2, -1).join(' · ') : (parts[2] || ''),
-      address: parts.length > 1 ? parts[parts.length - 1] : String(text || '')
-    };
-  }
 
   function pathRows(option) {
     const raw = String(option?.dataset?.pathRows || '');
@@ -63,6 +52,7 @@
   function triggerId(selectId) { return selectId === 'endpoint-select' ? 'endpoint-picker-trigger' : `${selectId}-picker-trigger`; }
   function selectedOption(selectId) { return $(selectId)?.selectedOptions?.[0] || null; }
   function emptyTriggerLabel(selectId) { return selectId === 'egress-select' ? (zh() ? '选择 Internet 出口' : 'Choose Internet exit') : (zh() ? '请选择 WAN Endpoint' : 'Choose WAN endpoint'); }
+  function recommendedText() { return zh() ? '推荐' : 'Recommended'; }
 
   function normalizeField(select) {
     const label = select.closest('label');
@@ -92,14 +82,7 @@
     trigger.setAttribute('aria-haspopup', 'dialog');
     trigger.setAttribute('aria-controls', 'endpoint-picker-layer');
     trigger.setAttribute('aria-expanded', 'false');
-    trigger.style.gridTemplateColumns = 'minmax(0, 1fr)';
-    trigger.style.gap = '0';
-    trigger.innerHTML = `
-      <span class="endpoint-trigger-copy">
-        <strong class="fit-single-line" data-fit-profile="identity" data-endpoint-wan>—</strong>
-        <span data-endpoint-kind></span>
-        <span class="endpoint-trigger-address fit-single-line" data-fit-profile="compact" data-endpoint-address></span>
-      </span>`;
+    trigger.innerHTML = '<span class="endpoint-trigger-copy" data-endpoint-trigger-copy></span>';
     select.insertAdjacentElement('afterend', trigger);
     triggers.set(selectId, trigger);
     return trigger;
@@ -165,24 +148,47 @@
     backdrop.style.background = 'transparent'; backdrop.style.backdropFilter = 'none'; layer.dataset.mode = 'popover';
   }
 
-  function badgeText(parsed, index, option) {
-    if (option?.value === '__lan__') return zh() ? '本地' : 'LAN only';
-    if (option?.dataset?.pathPrimary === '1') return zh() ? '推荐' : 'Primary';
-    if (index === 0 && /Direct|Mapped/.test(parsed.provider)) return zh() ? '推荐' : 'Primary';
-    if (/Try|egress|Observed/i.test(parsed.provider)) return zh() ? '可用' : 'Available';
-    return parsed.provider || (zh() ? '可用' : 'Available');
+  function triggerRole(row, selectId) {
+    if (selectId !== 'endpoint-select') return '';
+    return row?.role === 'Public Direct' ? 'Public' : '';
   }
 
-  function pathBlocksHtml(rows) {
-    return rows.map((row) => `
-      <span class="path-family-block">
+  function pathBlockHtml(row, {recommended = false, trigger = false, showRecommendation = false, selectId = activeSelectId} = {}) {
+    const role = trigger ? triggerRole(row, selectId) : row.role;
+    return `
+      <span class="path-family-block${trigger ? ' path-family-block-trigger' : ''}">
         <span class="path-family-head">
-          <span class="path-family-label">${escapeHtml(row.family)}</span>
-          <strong class="path-family-wan fit-single-line" data-fit-profile="identity">${escapeHtml(row.wan)}</strong>
-          ${row.role ? `<span class="path-family-role">${escapeHtml(row.role)}</span>` : ''}
+          ${trigger ? `<strong class="path-family-wan fit-single-line" data-fit-profile="identity">${escapeHtml(row.wan)}</strong><span class="path-family-label">${escapeHtml(row.family)}</span>` : `<span class="path-family-label">${escapeHtml(row.family)}</span><strong class="path-family-wan fit-single-line" data-fit-profile="identity">${escapeHtml(row.wan)}</strong>`}
+          <span class="path-family-spacer" aria-hidden="true"></span>
+          ${showRecommendation && recommended ? `<span class="path-card-recommended">${escapeHtml(recommendedText())}</span>` : ''}
+          ${role ? `<span class="path-family-role">${escapeHtml(role)}</span>` : ''}
         </span>
         <span class="path-family-value fit-single-line" data-fit-profile="compact">${escapeHtml(row.value)}</span>
-      </span>`).join('');
+      </span>`;
+  }
+
+  function pathBlocksHtml(rows, option, trigger = false, selectId = activeSelectId) {
+    const recommended = option?.dataset?.pathPrimary === '1';
+    return rows.map((row, index) => pathBlockHtml(row, {
+      recommended,
+      trigger,
+      showRecommendation: !trigger && index === 0,
+      selectId
+    })).join('');
+  }
+
+  function renderLanOption(button, option, selected) {
+    button.classList.add('path-card-option', 'path-card-local');
+    button.innerHTML = `
+      <span class="endpoint-option-main path-card-stack">
+        <span class="path-family-block">
+          <span class="path-family-head">
+            <strong class="path-family-wan">${escapeHtml(zh() ? '本地网络' : 'LAN only')}</strong>
+          </span>
+          <span class="path-family-value">${escapeHtml(zh() ? '仅访问家庭网络，不代理 Internet' : 'Private access · No Internet exit')}</span>
+        </span>
+      </span>
+      <span class="endpoint-option-check" aria-hidden="true">${selected ? '●' : '○'}</span>`;
   }
 
   function renderOptions() {
@@ -192,9 +198,8 @@
     const config = configFor(activeSelectId);
     list.replaceChildren();
 
-    [...select.options].forEach((option, index) => {
+    [...select.options].forEach((option) => {
       if (!option.value) return;
-      const parsed = splitLabel(option.textContent);
       const rows = pathRows(option);
       const button = document.createElement('button');
       button.type = 'button';
@@ -204,27 +209,19 @@
       const selected = option.value === select.value;
       button.classList.toggle('selected', selected);
       button.setAttribute('aria-selected', selected ? 'true' : 'false');
-      if (/Try/i.test(rows.map((row) => row.role).join(' ')) || (/Try/i.test(parsed.provider) && option.value !== '__lan__')) button.classList.add('experimental');
 
       if (rows.length) {
         button.classList.add('path-card-option');
+        if (rows.some((row) => row.role === 'Try')) button.classList.add('experimental');
         button.innerHTML = `
           <span class="endpoint-option-main path-card-stack">
-            <span class="path-card-meta"><span class="endpoint-option-badge">${escapeHtml(badgeText(parsed, index, option))}</span></span>
-            ${pathBlocksHtml(rows)}
+            ${pathBlocksHtml(rows, option)}
           </span>
           <span class="endpoint-option-check" aria-hidden="true">${selected ? '●' : '○'}</span>`;
+      } else if (option.value === '__lan__') {
+        renderLanOption(button, option, selected);
       } else {
-        button.innerHTML = `
-          <span class="endpoint-option-main">
-            <span class="endpoint-option-topline">
-              <strong>${escapeHtml(parsed.wan)}</strong>
-              <span class="endpoint-option-badge">${escapeHtml(badgeText(parsed, index, option))}</span>
-            </span>
-            <span class="endpoint-option-kind">${escapeHtml([parsed.family, parsed.provider].filter(Boolean).join(' · '))}</span>
-            <span class="endpoint-option-address fit-single-line" data-fit-profile="compact">${escapeHtml(parsed.address)}</span>
-          </span>
-          <span class="endpoint-option-check" aria-hidden="true">${selected ? '●' : '○'}</span>`;
+        return;
       }
       button.addEventListener('click', () => choose(option.value));
       list.append(button);
@@ -239,36 +236,26 @@
     window.RemoteGateFit?.observe?.(list);
   }
 
-  function triggerSummary(option) {
-    const rows = pathRows(option);
-    if (!rows.length) return null;
-    if (rows.length === 1) {
-      const row = rows[0];
-      return {wan:row.wan, kind:[row.family,row.role].filter(Boolean).join(' · '), address:row.value};
-    }
-    return {
-      wan:rows.map((row) => `${row.family} ${row.wan}`).join(' · '),
-      kind:rows.map((row) => [row.family,row.role].filter(Boolean).join(' ')).join(' · '),
-      address:rows.map((row) => row.value).join(' · ')
-    };
-  }
-
   function syncTrigger(selectId) {
     const select = $(selectId);
     const trigger = ensureTrigger(selectId);
     if (!select || !trigger) return;
     const option = selectedOption(selectId);
-    const parsed = splitLabel(option?.textContent || '');
-    const structured = triggerSummary(option);
-    const summary = structured || parsed;
+    const copy = trigger.querySelector('[data-endpoint-trigger-copy]');
     trigger.disabled = Boolean(select.disabled);
     trigger.setAttribute('aria-disabled', trigger.disabled ? 'true' : 'false');
-    trigger.querySelector('[data-endpoint-wan]')?.replaceChildren(document.createTextNode(option?.value ? summary.wan : emptyTriggerLabel(selectId)));
-    trigger.querySelector('[data-endpoint-kind]')?.replaceChildren(document.createTextNode(option?.value ? (structured ? summary.kind : [parsed.family,parsed.provider].filter(Boolean).join(' · ')) : ''));
-    const address = trigger.querySelector('[data-endpoint-address]');
-    address?.replaceChildren(document.createTextNode(option?.value ? summary.address : ''));
-    window.RemoteGateFit?.fit?.(trigger.querySelector('[data-endpoint-wan]'));
-    window.RemoteGateFit?.fit?.(address);
+    if (!copy) return;
+
+    if (!option?.value) {
+      copy.innerHTML = `<span class="endpoint-trigger-empty">${escapeHtml(emptyTriggerLabel(selectId))}</span>`;
+    } else {
+      const rows = pathRows(option);
+      if (rows.length) copy.innerHTML = pathBlocksHtml(rows, option, true, selectId);
+      else if (option.value === '__lan__') {
+        copy.innerHTML = `<span class="path-family-block path-family-block-trigger"><span class="path-family-head"><strong class="path-family-wan">${escapeHtml(zh() ? '本地网络' : 'LAN only')}</strong></span><span class="path-family-value">${escapeHtml(zh() ? '仅访问家庭网络' : 'No Internet exit')}</span></span>`;
+      } else copy.innerHTML = `<span class="endpoint-trigger-empty">${escapeHtml(emptyTriggerLabel(selectId))}</span>`;
+    }
+    window.RemoteGateFit?.observe?.(copy);
   }
 
   function sync(selectId = '') {
@@ -319,9 +306,6 @@
       trigger.dataset.pickerBound = '1';
       trigger.addEventListener('click', () => open(selectId));
       select.addEventListener('change', () => sync(selectId));
-      const observer = new MutationObserver(() => sync(selectId));
-      observer.observe(select, {childList:true, subtree:true, attributes:true});
-      observers.set(selectId, observer);
     }
     sync(selectId);
     return trigger;
