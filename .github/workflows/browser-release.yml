@@ -84,6 +84,9 @@ jobs:
       - name: Manual endpoint preference regression
         run: node tests/browser_plan_preferences.mjs
 
+      - name: Manual Internet exit regression
+        run: node tests/browser_egress_manual.mjs
+
       - name: Stop fixture server (Linux)
         if: always() && runner.os == 'Linux'
         shell: bash
