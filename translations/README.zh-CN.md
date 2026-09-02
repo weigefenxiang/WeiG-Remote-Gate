@@ -2,352 +2,249 @@
 
 **Language:** [English](../README.md) · [简体中文](README.zh-CN.md)
 
-**面向 OpenWrt / ImmortalWrt 的安全远程访问网关。**
+**面向 OpenWrt / LEDE / ImmortalWrt 的安全远程访问网关。**
 
-WeiG-Remote-Gate 是一个通过 Cloudflare 前置的 Multi-WAN 状态与临时私有远程访问控制面。家庭 WAN **不会**运行 HTTP/HTTPS 管理服务；OpenWrt 只通过出站 HTTPS 上报 Inventory / Status，并拉取短生命周期命令。
+WeiG-Remote-Gate 是一个由 Cloudflare 前置的 Multi-WAN 状态与短生命周期私有远程访问控制面。家庭 WAN **不运行** HTTP/HTTPS 管理服务；OpenWrt 系路由器只通过出站 HTTPS 上报 Inventory / Status 并拉取命令。
 
-v0.3.17 开始，Remote Gate 自己提供通用 **Mapped Access** 架构，不依赖 NATMap。公网如何进入家庭网络与进入后交给哪个服务被明确拆开：Access Method 负责 `Direct / Mapped / Relay`，Service Registry 负责本机可被 Remote Gate 使用的服务。v0.3.17 首先实现 IPv4/UDP Mapped Access + WireGuard Adapter；后续协议只能通过新的 Service Adapter 扩展，不能让 Browser 任意指定内网端口。
+项目按**运行时能力**而不是发行版名称做判断。OpenWrt、LEDE、ImmortalWrt 的品牌/版本字符串只是元数据，实际 Capability 才是权威。
 
-## 安全边界与流量归属
+## 产品模型
 
-**Access Gate** 只接管受保护 WAN Endpoint 上、发往路由器本机且由 Remote Gate 明确注册的流量：
-
-```text
-ICMP / ICMPv6 Echo Request       -> 默认关闭
-Direct WireGuard UDP Listener    -> 默认关闭
-Mapped UDP Ingress               -> 默认关闭
-```
-
-Mapped Ingress 使用精确的 `WAN device + ingress_port` 配对保护，不会把某个随机映射端口扩展成所有 WAN 的全局端口规则。
-
-Access Gate 只工作在路由器的 **INPUT** 路径，不会安装通用 `FORWARD` 过滤规则，也不会管理无关 TCP/UDP 端口。因此 qBittorrent、DHT / PeX、UPnP / NAT-PMP、DNAT / 手工端口转发，以及转发到 NAS / PC 的服务继续由原 Firewall Policy 处理。
-
-提供两种 Access Scope：
-
-- **仅 WireGuard** —— 推荐，Ping 继续关闭；
-- **WireGuard + Ping** —— 同时允许该授权来源发送 Echo Request。
-
-v0.3.17 的 Service Registry 只登记经过本机验证的 WireGuard UDP Listener。Browser / VPS 只能选择 `service_id`，不能提交任意 `target_ip` 或 `target_port`。以后增加 Shadowsocks、ShadowsocksR 或其他协议时，也必须先由对应 OpenWrt Adapter 注册和校验。
-
-IPv6 Access Gate 只控制 Echo Request 与选定的路由器本机 WireGuard UDP Port。NDP、Router Advertisement、Packet Too Big 和其他 ICMPv6 控制流量继续交给原 Firewall Policy。
-
-可选的 **Internet Exit** 与 Access Gate 分离。只有用户明确选择 Internet Exit 时，Remote Gate 才会临时安装把选定 WireGuard Client Subnet 送往选定 WAN 所需的 PBR、FORWARD 与 NAT44 / NAT66 状态。它不会接管无关转发流量，也不会把 Egress Policy 持久化到 UCI。
-
-## v0.3.17 架构
-
-```text
-Browser
-   |
-   | HTTPS
-   v
-Cloudflare
-   |
-   v
-VPS / WeiG-Remote-Gate
-仅监听 127.0.0.1:29444
-   ^
-   |
-   | 出站 HTTPS inventory / status / pull / ack
-   |
-OpenWrt Agent
-   |
-   +-- Multi-WAN Inventory / Control Path
-   +-- Access Endpoint
-   |    +-- Direct
-   |    +-- Mapped
-   |    `-- Relay                 <- future
-   |
-   +-- Access Gate
-   |    +-- CLOSED / Activate / TTL / Source ACL
-   |    `-- fw3 / fw4 INPUT Backend
-   |
-   +-- Service Registry
-   |    +-- WireGuard             <- v0.3.17
-   |    +-- Shadowsocks           <- future Adapter
-   |    +-- ShadowsocksR          <- future Adapter
-   |    `-- Other registered service
-   |
-   +-- Mapping Engine
-   |    `-- IPv4 / UDP            <- v0.3.17
-   |
-   `-- Optional runtime WireGuard Internet Exit
-```
-
-Cloudflare 域名属于**控制面**。WireGuard 等注册服务属于**数据面**，必须访问选定的家庭 Access Endpoint。不要把 Cloudflare Tunnel 域名作为 WireGuard UDP Endpoint。
-
-### 三端口模型
-
-Mapped Access 不把公网端口、本机入口端口和真实服务端口混为一个字段：
-
-```text
-Internet
-   |
-external_address:external_port
-   |
-ISP / CGNAT mapping
-   |
-WAN device:ingress_port
-   |
-Access Gate
-   |
-remote-gate-mapper
-   |
-127.0.0.1:service_port
-   |
-Registered Service
-```
-
-- `external_port`：Internet Client 实际连接的公网映射端口；
-- `ingress_port`：Remote Gate Mapper 在选定 WAN 上拥有的本机 UDP Socket；
-- `service_port`：Service Registry 验证过的真实服务端口，例如 WireGuard Listen Port。
-
-Mapper 启动后先进入 `prepared` 状态。只有 Agent 已把 `device + ingress_port` 注册到 Access Gate 并完成 Firewall Sync 后，才创建 Go Signal 允许 Mapper 执行 STUN Discovery。这样不会出现“公网 Mapping 已建立但 Gate 还没 CLOSED 保护”的时间窗口。
-
-## Firewall 兼容性
-
-| 平台 | Remote Gate Backend |
-| --- | --- |
-| firewall3 / `fw3` | `iptables` + `ipset` timeout |
-| firewall4 / `fw4` | `nftables` timeout sets |
-
-Gate Guard 会在普通 `ESTABLISHED,RELATED` 快捷放行之前执行。原有 UCI 规则（例如 `Allow-Ping`）不会被删除；只有 Remote Gate Access Gate 接管的流量由更靠前的 Guard 决定，卸载后恢复原 Firewall 行为。
-
-fw3 对 Mapped Access 使用精确的 `-i <WAN device> -p udp --dport <ingress_port>` Guard；fw4 使用 `ifname . inet_service` 二元集合。Mapped Port 不进入 Direct WireGuard 的全局 Port Set，因此 Multi-WAN 下不会形成错误的 WAN × Port 笛卡尔积。
-
-已知目标包括 ImmortalWrt / OpenWrt 21.02 类 fw3 系统，以及现代 fw4 系统。无法识别的 Backend 在安装阶段 fail closed。
-
-在 fw3 / iptables 系统上，Runtime Internet Exit 会等待 xtables lock，而不是把短暂的并发 Firewall 更新立即当成失败。
-
-## Schema 3 Access Endpoint 模型
-
-v0.3.17 的权威 Inventory 使用 Schema 3：
-
-```text
-wans[]
-services[]
-mappings[]
-capabilities{}
-```
-
-Server 不再假定只有一个 Public IPv4 WAN。Access Endpoint 可以是：
-
-- Public IPv4 `Direct`；
-- 启用 IPv6 Gate Capability 时的 Global IPv6 `Direct`；
-- Remote Gate 自有 Mapping Engine 产生的 IPv4 `Mapped`；
-- 每条 WAN 实测得到的 IPv4 `NAT egress · Try`；
-- 供手工实验使用的 Private / CGNAT IPv4 `Try`；
-- `Relay` 作为未来 Access Method 预留，不在 v0.3.17 实现。
-
-Schema 3 的 `mapping.service_id` 必须匹配同一 Inventory 中经过验证的 `services[]`，并且 Mapping 的 `wan + device` 必须匹配当前活动 WAN。VPS 会在存储边界再次清洗这些记录，OpenWrt 执行 Activate 时还会再次通过本机 Service Registry 与 Mapping Runtime 独立验证。
-
-旧 Schema 2 仍只作为滚动升级兼容输入存在；它不是 v0.3.17 的新架构，也不会让 NATMap 成为当前依赖或 Provider。
-
-Direct / Mapped Path 会优先推荐。Private / CGNAT 地址不会被错误描述为“公网可达”。没有可用 Mapper Binary 时，Mapped Access 只报告 `unavailable`；Direct、IPv6 Gate、Control Plane 和现有 WireGuard Gate 不会因此失败。
-
-## 双栈 Client Source
-
-IPv4 与 IPv6 是同一已认证 Browser Session 下的**独立记录**。学习到一个 Family 绝不会删除另一个 Family。
-
-Source 优先级：
-
-1. **Cloudflare Observation (`verified`)** —— 当前请求的 `CF-Connecting-IP`；
-2. **Network Probe (`heuristic`)** —— 某个 Family 缺失时使用的短生命周期补充来源。
-
-IPv4 / IPv6 缺失 Family 会独立探测：
-
-- IPv4：IPv4-only `api.ipify.org`，适合手机 Carrier NAT / CGNAT / NAT64 / 464XLAT 场景；
-- IPv6：IPv6-only `api6.ipify.org`，适合 Dashboard 当前通过 IPv4 到达 Cloudflare、但设备本身同时具备可用 IPv6 的情况。
-
-Browser 只把 Probe 结果提交给受 Session + CSRF 保护的 Endpoint。之后若 Cloudflare 对同一 Family 获得直接 Observation，则会自动替换 heuristic 记录。普通 Activate 请求仍不会把任意 Raw Authorization IP 作为权威输入；VPS 会从 Session Source Store 解析所选 Family。
-
-当 IPv4 / IPv6 都可用时，UI **默认推荐 IPv4**，但不是锁死。用户手动选择 IPv6 后，只要 IPv6 仍可用，后续刷新就会保留该手动选择，不会自动抢回 IPv4。
-
-## 触感交互系统
-
-Dashboard 遵循 [`DESIGN.md`](../DESIGN.md) 的统一设计系统。视觉改动以 `awesome-design-md` 的层级、间距、Elevation、Motion 与 Accessibility 思路做整体检查，而不是继续叠加零散阴影和临时 CSS。
-
-### EndpointPicker
-
-浏览器原生 Endpoint `<select>` 仍保留作为内部 State Bridge，但从可见 UI 中隐藏。`EndpointPicker` 对用户只暴露稳定的 Access Method 语义：
+用户可见的 Access Method 固定为：
 
 ```text
 Direct
 Mapped
-Relay
+Relay   （未来）
 ```
 
-底层 Mapping Engine 的实现细节不会再作为 NATMap 或其他第三方 Provider 名称显示到主 UI。
+- **Direct**：公网 IPv4 或 Global IPv6 直接到达路由器本机已注册服务；
+- **Mapped**：Remote Gate 自己维护 NAT Mapping，用 Access Gate 保护专用本机入口，再把已授权流量转交给本机已注册服务；
+- **Relay**：未来预留的中继 Transport。
 
-### DurationControl
+NATMap **不是**依赖、软件包要求、Provider 名称或产品概念。Mapped Access 由 Remote Gate 自己实现。
 
-快捷项固定为：
+当前 Mapped 范围刻意保持很小：**IPv4 + UDP + WireGuard**。通用 TCP Proxy、Browser 任意指定端口转发、HTTP/SSH/qBittorrent Mapping、TURN、用户 Callback 都不在当前范围。
+
+## 系统性架构规则
+
+本项目最重要的不变量是：**网络事实、Capability、用户计划、Runtime Authority 不能混成一层。**
 
 ```text
-1m | 5m | 15m | 30m | Custom
+Network facts / capability
+        |
+        +--> AccessPlan ------> Access Gate ------> registered service
+        |
+        `--> InternetExitPlan -------------------> temporary WG egress
 ```
 
-**没有 1h 快捷项。**
+因此：
 
-`Custom` 打开触感 Duration Crown：
+- `Private/CGNAT` 只是网络事实，**不是可选择的公网 Access Endpoint**；
+- Mapping 存在不等于 Gate 已授权；
+- Access Endpoint 不等于 Internet Exit；
+- 默认/推荐 Plan 不等于 Runtime Authority；
+- 当前 HTTP Request Source 只是 Observation，不是无条件授权来源；
+- WAN/device/Mapping/Route/Service Identity 一旦过期或不明确，必须 fail closed，不能猜测或静默迁移。
+
+跨层硬规则以 [`docs/SYSTEMIC-INVARIANTS.md`](../docs/SYSTEMIC-INVARIANTS.md) 为统一入口；同时阅读 [`docs/PROJECT-RULES.md`](../docs/PROJECT-RULES.md)、[`docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)、[`docs/SECURITY-MODEL.md`](../docs/SECURITY-MODEL.md) 与 [`docs/CURRENT-DEVICE-VALIDATION.md`](../docs/CURRENT-DEVICE-VALIDATION.md)。
+
+## Access Endpoint 模型
+
+Server 不假设只有一个 WAN，也不会硬编码 `WAN` / `WAN2`。
+
+当前用户可选择的 Access Candidate 包括：
+
+- Public IPv4 `Direct`；
+- IPv6 Gate Capability 可用时的 Global IPv6 `Direct`；
+- IPv4 UDP `Mapped`；
+- 每 WAN 实测得到的 IPv4 `NAT egress · Try`，作为实验性 fallback；
+- 未来实现的 `Relay`。
+
+Private / RFC1918 / CGNAT Interface Address 可以继续保留在 Inventory 中做诊断或判断出站能力，但不会作为公网 Access Endpoint 暴露给用户。
+
+自动推荐顺序按 Capability，而不是 WAN 名称：
 
 ```text
-最小  0.5h
-最大  12h
-步进  0.5h
+IPv4: Public Direct -> Mapped -> observed NAT egress Try
+IPv6: 优先使用首选 IPv4 WAN 上的 Global IPv6；
+      没有时再选最佳 Global IPv6 Direct
+Dual: 同 WAN Public IPv4 Direct + Global IPv6
+      -> 同 WAN Mapped IPv4 + Global IPv6
+      -> 跨 WAN 的最佳有效 IPv4 + IPv6
 ```
 
-Browser 不是 Duration 的最终权威。VPS 与 OpenWrt Firewall 都会独立校验 `1m / 5m / 15m / 30m`，以及最长 12h、每 0.5h 一档的 Custom TTL。
+Dual 可以 Split WAN；WAN/WAN2 从来不是产品规则。
 
-## Remote Gate 工作流程
+## Access Gate 与 Service Registry
 
-1. 登录 Cloudflare 前置的 Dashboard。
-2. VPS 记录当前 Cloudflare Observation；Browser Best-effort 补齐缺失的 IPv4 / IPv6 Family。
-3. 选择 IPv4、IPv6 或 Dual、Access Endpoint、WireGuard Interface、Access Scope、Duration，以及可选 Internet Exit。
-4. VPS 在 Server 端重新解析 Session Source、Access Endpoint 与注册 Service，并排队短生命周期命令事务。
-5. OpenWrt 通过出站 HTTPS 拉取命令。
-6. OpenWrt 再次确认 WAN Device、Access Method、Ingress Port、Service ID / Service Port 与当前本机 Runtime 一致。
-7. Gate Firewall 只对选定 Source Tuple 开放选定的 Direct 或 Mapped Ingress。
-8. 如果选择 Internet Exit，Runtime Egress Helper 会独立校验 WireGuard Subnet 与选定 WAN Route，再安装受限的 PBR / FORWARD / NAT 状态。
-9. OpenWrt 分别上报 Gate、Mapping 与 Internet Exit 状态；其中任何一个成功都不会伪装成另一个组件成功。
-10. TTL 到期或点击 **Close access now** 后，清理相应临时授权；Mapped Socket 可以继续维持 NAT Mapping，但未授权来源仍由 Access Gate DROP。
+Browser 不能凭空创建 `192.168.x.x:port` 转发。服务必须先由 OpenWrt 本机发现/注册并独立校验，才能成为 Remote Gate 的目标。
 
-## Mapped Access
+当前 Service Adapter 是 WireGuard。WireGuard Listen Port 是运行时数据，必须从真实服务发现，**不能把 51820 写死成策略**。
 
-Remote Gate 不安装、不调用、也不要求 NATMap。v0.3.17 的 Mapping Engine 由项目自己的 `remote-gate-mapper` 与 `remote-gate-mapping.sh` 管理。
-
-第一版 Native Mapper 的职责严格限制为：
-
-- IPv4 / UDP Socket；
-- 绑定指定 WAN Device；
-- STUN Endpoint Discovery；
-- NAT Mapping Keepalive；
-- Mapping Change Detection；
-- 按 Internet Source Tuple 维护短生命周期 UDP Relay Session；
-- 把通过 Gate 的 UDP Payload 交给本机已注册 Service。
-
-Mapper **不解析 WireGuard 协议**，也不接受 Browser 指定任意内网 Target。后续如果增加其他 UDP Service，只应增加 Service Adapter；如果将来增加 TCP Mapping，则应作为新的 Transport Backend 实现，而不是把 UDP 逻辑硬改成 TCP。
-
-### Native Binary ABI
-
-老 OpenWrt 设备不应依赖路由器现场安装 GCC。`remote-gate-mapper` 设计为预编译 Native Capability。Audit 会输出：
+Mapped Access 明确区分三个端口：
 
 ```text
-Kernel machine
-OpenWrt package ABI
-opkg architectures
+external_port  公网 Direct/Mapping Endpoint Port
+ingress_port   Remote Gate 在路由器本机拥有并由 Access Gate 保护的入口
+service_port   本机已验证服务的真实 Listen Port
 ```
 
-Native Binary 必须与实际 OpenWrt Package ABI 精确匹配；项目不会仅凭“可能是 MIPS / ARM”猜测并安装错误二进制。没有匹配 Binary 时，Mapped Access 保持不可用，其余 Remote Gate 功能继续正常。
+Direct 场景它们可以相同；Mapped 场景可以不同。
 
-## 可选 IPv6 Gate
-
-IPv6 是可选 Data-plane Capability。Fresh Install 默认 `GATE_IPV6=auto`；Legacy Upgrade 为保持保守行为，会加入 `GATE_IPV6=disabled`，直到管理员主动启用并验证。IPv4 Operation 不依赖 IPv6 Support。
-
-出站 Control Transport 与 IPv6 Gate 分离。即使 IPv6 Data-plane Gate 被关闭，Agent 仍可使用健康的 IPv4 / IPv6 Multi-WAN Path 执行 report / pull / ack。
-
-## 可选 WireGuard Internet Exit
-
-Internet Exit 只存在于 Runtime，并且与 Access Endpoint 是两个独立选择。首次进入某个 IP Family 时，Internet Exit 默认跟随当前 Access Endpoint WAN；如果用户手动改过 Exit，则该 Family 会保留用户自己的独立选择。
-
-支持 IPv4、IPv6 与 Dual。Dual 安装是事务性的：两种 Family 都成功才写入 active 状态；任一 Family 失败都会回滚已经安装的部分。
-
-IPv6 场景下，像 `default from <delegated-prefix> via <link-local-gateway>` 这样的 Source-specific WAN Default 不会被原样复制到 WireGuard PBR Table。Egress Helper 会从中提取 Gateway / Device，并为 WireGuard ULA 建立不带 `from` 限制的临时 Default Route。
-
-Internet Exit 不创建持久 UCI Policy。Disable、Close、TTL Expiry、失败回滚或 Reboot 后 Internet Exit 都恢复为 Off。
-
-## 安全更新
-
-### VPS
-
-第一次从较老的 v0.2.x 升级时，不要依赖旧版固定 File List 的 Updater，应下载当前 `main` 的 Updater：
-
-```bash
-curl -fsSL \
-  https://raw.githubusercontent.com/weigefenxiang/WeiG-Remote-Gate/main/server/update.sh \
-  -o /tmp/remote-gate-update.sh
-
-bash -n /tmp/remote-gate-update.sh
-bash /tmp/remote-gate-update.sh
-```
-
-从 v0.3 开始，本机 Updater 固定保留在：
-
-```bash
-/usr/local/lib/remote-gate/update.sh
-```
-
-Updater 会保留 Hostname、登录凭据、`WRITE_TOKEN`、Session / State，在 `/var/backups/weig-remote-gate/` 创建 Rollback Backup，重启仅监听 localhost 的 Service，检查 `/healthz` 和 Agent API，失败时恢复旧 Application。
-
-### OpenWrt
-
-旧安装第一次升级时可能需要单独下载当前 `openwrt/update.sh`。v0.3+ 会正式安装并保留 Updater、Uninstaller 与 Read-only Audit Utility。升级会备份 Application / Config / State 与 Firewall / Network Snapshot，保留现有 WireGuard Configuration，替换前检查 Shell Syntax，只重建 Remote Gate 自己拥有的状态；Internet Exit 仍然只使用 Runtime 临时状态，不写成持久 UCI Egress Policy。验证失败时回退到旧安装。
-
-如果没有与当前 Package ABI 匹配的 Native Mapper，Updater 不会把整个升级判为失败；只会让 Mapped Access 保持 `unavailable`。
-
-## 安全卸载
-
-VPS 与 OpenWrt 都提供带 Dry-run 的单命令 Uninstaller。它们会先建立本机 Backup，只移除 Remote Gate 自己拥有的 Resource，并执行 Residual Check。OpenWrt **不会**盲目恢复旧整份 Firewall Snapshot，也不会默认删除 WireGuard。Mapper Runtime 在 Firewall 清理之前停止，只删除 Remote Gate 自己拥有的 PID / State。
-
-## 当前版本与分支流程
-
-软件版本见 [`VERSION`](../VERSION)，**版本号不写进 Git 分支名**。
-
-仓库固定流程：
+Mapped 生命周期：
 
 ```text
-dev  -> 开发、修复、CI
+CLOSED
+Internet -> mapped endpoint -> ingress_port -> DROP
+
+ACTIVE
+approved source -> mapped endpoint -> ingress_port -> mapper -> registered service
+
+TTL / Close
+mapping 可以继续存在 -> ingress_port -> DROP
+```
+
+因此 Mapper/STUN Control 可以在 Gate CLOSED 时继续运行；**Mapping 存在绝不能被解释为授权已经打开。**
+
+## Client Source Authority
+
+IPv4 与 IPv6 是同一已认证 Browser Session 下的独立 Source Record。
+
+Source Evidence 可以来自 Cloudflare HTTP Observation，也可以来自某个缺失 Family 的短生命周期 Carrier Candidate Probe。普通 Activate 请求不会把任意 Raw IP 当作授权权威；VPS 会从当前 Session Source Store 解析所选 Family。
+
+Router 自己的 Direct Address、Mapped External Address 和 Internet Exit Address 都不能覆盖真实 Remote Client Source。Gate ACTIVE 后，已授权 Source 会被 pin，避免 Browser 经过 WireGuard Internet Exit 返回控制面后，把 Router Egress 误写成新的客户端来源。
+
+## Internet Exit
+
+Internet Exit 只存在于 Runtime，并且**与 Access Gate Family 独立**。
+
+Canonical Mode：
+
+```text
+none
+ipv4
+ipv6
+dual
+```
+
+默认推荐会跟随当前 Access Family（`IPv4 -> ipv4`、`IPv6 -> ipv6`、`Dual -> dual`），但用户可以显式选择其他受支持 Exit Mode。单协议族 Access Gate 并不会禁止另一个 WireGuard Internet Exit Family，只要对应 Tunnel Subnet 与 WAN Capability 有效。
+
+IPv4 Egress 需要 WAN Up 且当前存在 IPv4 Default Route。WAN 本地 IPv4 可以是 Public、RFC1918 或 CGNAT；这个分类本身不会取消它作为出站 Internet Exit 的资格。
+
+IPv6 Egress 需要 WAN Up、当前 IPv6 Default Route 和可用 Global IPv6。
+
+Dual Egress 可以 same-WAN 或 split-WAN，并且必须原子执行：任何一个 Family 校验/安装失败，都回滚整个 Dual Runtime。选定 WAN/L3/Default Route 或 Remote Gate Policy-table Default 一旦失效，Egress 必须 fail closed 清除，不能静默掉到另一个 WAN。
+
+Internet Exit 不写持久 UCI Policy；Disable、Close、TTL Expiry、失败回滚或 Reboot 后都恢复为 Off。
+
+## Firewall 与平台兼容
+
+| 检测到的 Firewall | Remote Gate Backend |
+| --- | --- |
+| `fw3` + `iptables` + `ipset` | `fw3-iptables` |
+| `fw4` + `nft` | `fw4-nftables` |
+
+Access Gate 只拥有 Remote Gate 已注册的 Router-local Ingress 与可选 Echo Request Scope。Internet Exit 只拥有其临时 WireGuard Subnet PBR/FORWARD/NAT44/NAT66 Path。qBittorrent/DHT/PeX、UPnP/NAT-PMP、用户 DNAT/SNAT、NAS/PC 服务以及无关端口继续由原 Firewall Policy 管理。
+
+兼容性硬规则包括：
+
+- BusyBox/POSIX `/bin/sh` Baseline；
+- `rc.common`，有 procd 时优先使用，必要时使用 PID-owned fallback；
+- `opkg` / `apk` 独立检测；
+- Native Mapper 按精确 Package ABI 选择；
+- Router 不要求现场 Compiler；
+- 某个 Optional Capability 缺失时只降级该能力，不应拖垮无关 Direct/Gate 功能。
+
+OpenWrt/ImmortalWrt 21.02 类 fw3 设备只是已完成硬件验证的 Sample，不是最低版本号。
+
+## Dashboard 统一组件模型
+
+Dashboard 遵循 [`DESIGN.md`](../DESIGN.md) 和 `awesome-design-md` 方法论。
+
+Access Endpoint 与 Internet Exit 复用同一个结构化 Picker/Card Primitive：
+
+```text
+PathCard
+  -> IPv4 或 IPv6：1 个 FamilyPathBlock
+  -> Dual：2 个 FamilyPathBlock
+```
+
+Dual 固定由两个 Family Block/四行信息表达；same-WAN 与 split-WAN 使用同一 DOM，不再额外堆叠 `Split WAN` / `Split Exit` 文案。
+
+长 IPv6、Endpoint、WAN Identity 只使用共享 `fit-text.js` NetworkIdentityText Engine。禁止再做 IPv6/WAN/Dual 专用缩放工具。
+
+## 控制面 / 数据面流程
+
+1. 登录 Cloudflare 前置 Dashboard。
+2. VPS 保存当前已认证 HTTP Source Evidence；Browser 可 Best-effort 用 Carrier Candidate 补齐缺失 Family。
+3. Dashboard 自动提出 AccessPlan 与 InternetExitPlan，用户可以分别 Override。
+4. 只有显式点击 `Activate` 才会创建短生命周期 Command Transaction。
+5. OpenWrt 通过出站 HTTPS Pull Command。
+6. OpenWrt 用当前本机 Runtime 再次验证 WAN/device、Service/Ingress Identity 和 TTL。
+7. Access Gate 只给解析出的 Remote Source 开放选定 Registered Ingress。
+8. Mapped Activate 时会再次解析**当前** Mapping，不继承旧 Mapping 的授权。
+9. 选择 Internet Exit 时，由独立 Egress Helper 校验并安装临时 Family-scoped Route/NAT Plan。
+10. TTL 或 **Close access now** 清理 Gate Authorization 与临时 Internet Exit；Mapping 可以继续保持 CLOSED/受保护。
+
+Cloudflare Hostname 是**控制面**；Direct/Mapped/Relay Endpoint 是**数据面**。不要把 Cloudflare Tunnel Hostname 当 WireGuard UDP Endpoint。
+
+## 仓库流程与验证分层
+
+```text
+dev  -> 开发、修复、Routine CI
 main -> 已验证稳定状态
 ```
 
-所有日常开发只提交到固定 `dev`。Core + Chromium Regression CI 全绿并完成 Diff 审计后，再把已验证的 `dev` 推进 `main`。正常开发不再创建 `dev/*` 或版本分支。
+日常开发只使用固定 `dev`，不创建 `dev/*`、`feature/*`、版本或临时开发分支；Commit Message 只写英文，禁止 Force Update Ref。
 
-## 验证状态
+`dev` 上的 Routine `v0.3.x CI` 保持轻量：Python Contract/Compile、Shell Syntax、Native Mapper Host Build/Check 和 JavaScript Syntax。完整 Linux + Windows Chromium **Release Browser Validation** 属于单独的 `main`-only / Manual Release Layer。
 
-### 已完成真实硬件验证
+验证层级不能互相冒充：
 
-fw3 IPv4 Direct Access Gate Path 已经在真实 ImmortalWrt 21.02 类 Router 上完成端到端验证，环境包含 iptables legacy + ipset、PPPoE Public WAN、Cloudflare Control Plane 和路由器本机 WireGuard Listener。已验证 CLOSED Blocking、Source-specific Activate、真实 WireGuard Traffic、TTL Expiry、过期后新 Handshake 失败，以及 Access Gate INPUT-only Boundary 保持不变。
+```text
+contract/static test
+browser regression
+CI
+runtime simulation
+real hardware
+```
 
-Runtime WireGuard Internet Exit 也已经在真实设备上用 Dual Client Configuration 验证到以下层级：
+只有用户从真实设备提供的结果才能记录为 Hardware PASS。
 
-- WireGuard IPv4 Subnet `10.77.0.0/24`；
-- WireGuard IPv6 ULA Subnet `fd77:77:77::/64`；
-- IPv4 / IPv6 各自存在高优先级 Policy Rule 与临时 Egress Table；
-- WAN2 IPv4 Default 正确指向选定 PPPoE Device；
-- WAN2 Source-specific IPv6 Default 已被转换为适用于 WireGuard ULA 的无 `from` 限制临时 Default；
-- NAT44 / NAT66 MASQUERADE 都观察到真实 Client Traffic 的 Packet / Byte Counter 增长；
-- IPv4 可以同时访问 LAN 和 Internet，并确认公网出口为选定 WAN2；
-- Runtime `status-json` 正确报告 `active=true`、`mode=dual`，TTL 后能够清理。
+## 当前真实硬件验证边界
 
-这些已有验证**不能**自动视为 v0.3.17 Mapped Access 已完成硬件验证。Mapped Access 在实际 CGNAT / NAT 网络、匹配 Router ABI 的 Native Binary、真实外部 WireGuard Handshake、TTL / Close、WAN Reconnect 等场景验证前，仍属于开发能力。
+当前 fw3 / iptables-legacy / ipset Baseline 已完成：
 
-### 已实现并通过自动 CI
+- IPv4 Mapped Gate CLOSED -> 显式 Activate -> 外部新 WireGuard Handshake -> Close/CLOSED 生命周期；
+- WireGuard Internet Exit ACTIVE 时的 Client Source Feedback-loop 防护；
+- PPPoE Reconnect -> 旧 Mapping 消失 -> 有界 Settle -> 新 Mapping 自动建立 -> Gate 仍 CLOSED -> 再次显式 Activate -> 新 Handshake 成功；
+- 当前真实设备 IPv4 Client / Access Endpoint / Internet Exit / WAN Dashboard 数据与默认选择反馈正常。
 
-当前自动覆盖包括：
+仍需单独 Hardware Validation：
 
-- Schema 2 Rolling Compatibility；
-- Schema 3 `wans + services + mappings` Validation；
-- Direct / Mapped Endpoint Build 与排序；
-- Mapped `external_port / ingress_port / service_port` 三端口契约；
-- Mapping 必须引用活动 WAN/device 与已注册 Service；
-- fw3 精确 `device + ingress_port` Mapped Guard；
-- fw4 `ifname . inet_service` Mapped Tuple Set；
-- Mapper `prepared -> firewall sync -> go -> STUN` 顺序契约；
-- Native C Mapper 使用严格 Warning-as-error 编译；
-- Public / Private / CGNAT / NAT-egress Try Path；
-- IPv4 / IPv6 Session Source 独立保存和 Probe Replace Rule；
-- `WireGuard only` / `WireGuard + Ping` Scope；
-- VPS + OpenWrt 两端最长 12h 的 Custom TTL 校验；
-- Runtime IPv4 / IPv6 / Dual Egress Selection 与 Rollback Contract；
-- Android / Mobile Layout Overlap Regression；
-- EndpointPicker、DurationControl 与 Chromium Interaction Regression。
+- 手动 Endpoint Selection 在 Refresh/Topology Change 后的持久性；
+- 显式启用后的 IPv6 Gate；
+- same-WAN Dual Data Plane；
+- split-WAN Dual + per-family Internet Exit Data Plane；
+- 真实 fw4/nftables 设备上的 Mapped Access。
 
-完整 Client-side IPv6 Internet、v0.3.17 Mapped Access、Private / CGNAT WAN Path 与 fw4/nftables Hardware Behavior 在标记为完整 Hardware-validated 前仍需要对应真实环境验证。
+不能从 CI 或 Simulation 推导这些 Pending 项已经 PASS。权威矩阵见 [`docs/CURRENT-DEVICE-VALIDATION.md`](../docs/CURRENT-DEVICE-VALIDATION.md)。
 
-## 生产 / 实机验证
+## 更新、卸载与诊断
 
-先运行 Read-only Audit、Gate State、Mapping State 与 Egress State：
+VPS 本机 Updater：
 
 ```sh
+/usr/local/lib/remote-gate/update.sh
+```
+
+OpenWrt Updater 与 Read-only Diagnostic 安装在 `/usr/lib/remote-gate/`。升级保留用户配置/凭据，备份 Remote Gate 自有状态，替换前做验证，失败则 Rollback。Mapper Binary 缺失/ABI 不支持时只让 Mapped 变为 unavailable，不能破坏无关 Remote Gate 功能。
+
+常用只读检查：
+
+```sh
+/usr/lib/remote-gate/remote-gate-platform.sh summary
 /usr/lib/remote-gate/remote-gate-audit.sh
 /usr/lib/remote-gate/remote-gate-firewall.sh detect
 /usr/lib/remote-gate/remote-gate-firewall.sh status-json
@@ -355,23 +252,7 @@ Runtime WireGuard Internet Exit 也已经在真实设备上用 Dual Client Confi
 /usr/lib/remote-gate/remote-gate-wireguard-egress.sh status-json
 ```
 
-Mapped Access 的真实网络验证顺序必须至少包含：
-
-```text
-CLOSED
--> Mapper prepared / active
--> 未授权来源不能建立新 WireGuard Handshake
--> Activate 当前外部 Source
--> 通过 external_address:external_port 建立真实 WireGuard Handshake
--> LAN 访问
--> 可选 Internet Exit
--> TTL
--> 新 Handshake 再次失败
--> Close
--> WAN reconnect / Mapping change
-```
-
-同时确认 qBittorrent、UPnP / NAT-PMP、既有 DNAT、LAN Forward 与其它无关端口行为和升级前一致。
+Uninstall 只移除 Remote Gate 自己拥有的 Resource，不会盲目恢复旧整份 Firewall Snapshot，也不会默认删除 WireGuard。
 
 ## License
 
