@@ -26,6 +26,8 @@ class EgressSyncRuntimeTests(unittest.TestCase):
         runtime = root / "runtime"
         runtime.mkdir()
         state = runtime / "wireguard-egress.conf"
+        ip_cleared = root / "ip-cleared"
+        nft_cleared = root / "nft-cleared"
         expires = int(time.time()) + 600
         state.write_text(
             "\n".join(
@@ -85,6 +87,19 @@ esac
             """family="${1:-}"
 shift || true
 case "$family:$*" in
+    '-4:rule del '*|'-6:rule del '*) exit 0 ;;
+    '-4:route flush table '*|'-6:route flush table '*)
+        : > "$REMOTE_GATE_IP_CLEARED"
+        exit 0
+        ;;
+    '-4:route flush cache'|'-6:route flush cache') exit 0 ;;
+esac
+if [ -e "$REMOTE_GATE_IP_CLEARED" ]; then
+    case "$family:$*" in
+        '-4:rule show'|'-6:rule show'|'-4:route show table 51820'|'-6:route show table 52020') exit 0 ;;
+    esac
+fi
+case "$family:$*" in
     '-4:route show default dev pppoe-WAN4') echo 'default via 198.51.100.1 dev pppoe-WAN4' ;;
     '-4:route show table 51820 default dev pppoe-WAN4') echo 'default via 198.51.100.1 dev pppoe-WAN4' ;;
     '-6:route show default dev pppoe-WAN6') echo 'default via 2001:db8::1 dev pppoe-WAN6' ;;
@@ -101,7 +116,14 @@ esac
         fake_cmd(
             fake_bin,
             "nft",
-            """if [ "${1:-}" = -a ] && [ "${2:-}" = list ] && [ "${3:-}" = chain ]; then
+            """if [ "${1:-}" = delete ] && [ "${2:-}" = rule ]; then
+    if [ "${REMOTE_GATE_NFT_MODE:-full}" != missing-v6-nat66-stuck ]; then
+        : > "$REMOTE_GATE_NFT_CLEARED"
+    fi
+    exit 0
+fi
+if [ "${1:-}" = -a ] && [ "${2:-}" = list ] && [ "${3:-}" = chain ]; then
+    [ ! -e "$REMOTE_GATE_NFT_CLEARED" ] || exit 0
     chain="${6:-}"
     if [ "$chain" = forward ]; then
         echo 'iifname "wg0" oifname "pppoe-WAN4" comment "WeiG Remote Gate WG egress v4 outbound" # handle 11'
@@ -110,7 +132,10 @@ esac
         echo 'iifname "pppoe-WAN6" oifname "wg0" comment "WeiG Remote Gate WG egress v6 return" # handle 14'
     elif [ "$chain" = srcnat ]; then
         echo 'oifname "pppoe-WAN4" comment "WeiG Remote Gate WG egress v4 nat" # handle 21'
-        [ "${REMOTE_GATE_NFT_MODE:-full}" = missing-v6-nat66 ] || echo 'oifname "pppoe-WAN6" comment "WeiG Remote Gate WG egress v6 nat66" # handle 22'
+        case "${REMOTE_GATE_NFT_MODE:-full}" in
+            missing-v6-nat66|missing-v6-nat66-stuck) ;;
+            *) echo 'oifname "pppoe-WAN6" comment "WeiG Remote Gate WG egress v6 nat66" # handle 22' ;;
+        esac
     fi
     exit 0
 fi
@@ -135,6 +160,8 @@ exit 0
         env["REMOTE_GATE_RUNTIME_DIR"] = str(runtime)
         env["REMOTE_GATE_STATE_DIR"] = str(root / "persistent")
         env["REMOTE_GATE_NFT_MODE"] = nft_mode
+        env["REMOTE_GATE_IP_CLEARED"] = str(ip_cleared)
+        env["REMOTE_GATE_NFT_CLEARED"] = str(nft_cleared)
         proc = subprocess.run(
             ["/bin/sh", str(EGRESS), "sync"],
             text=True,
@@ -154,6 +181,11 @@ exit 0
         proc, state, _error = self.run_fw4_sync("missing-v6-nat66")
         self.assertNotEqual(proc.returncode, 0)
         self.assertFalse(state.exists())
+
+    def test_incomplete_cleanup_keeps_runtime_identity_for_retry(self):
+        proc, state, _error = self.run_fw4_sync("missing-v6-nat66-stuck")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertTrue(state.exists())
 
 
 if __name__ == "__main__":
