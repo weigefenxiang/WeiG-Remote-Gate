@@ -350,7 +350,7 @@ control_candidates() {
         if [ -f "$base.v6" ] && [ -f "$base.def6" ]; then
             has6=0
             while IFS= read -r a; do is_global_ipv6 "$a" && has6=1; done < "$base.v6"
-            [ "$has6" -eq 1 ] && printf '20|ipv6|%s\n' "$rank" "$dev" >> "$tmp"
+            [ "$has6" -eq 1 ] && printf '20|ipv6|%s\n' "$dev" >> "$tmp"
         fi
     done
 
