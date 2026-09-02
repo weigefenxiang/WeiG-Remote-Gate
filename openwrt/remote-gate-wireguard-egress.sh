@@ -145,7 +145,7 @@ cleanup_legacy_uci() {
 }
 
 fw3_cleanup4() {
-    command -v iptables >/dev/null 2>&1 || return 0
+    command -v iptables >/dev/null 2>&1 || return 1
     while xtables4 -C FORWARD -j "$FW3_FILTER_CHAIN" >/dev/null 2>&1; do xtables4 -D FORWARD -j "$FW3_FILTER_CHAIN" >/dev/null 2>&1 || break; done
     xtables4 -F "$FW3_FILTER_CHAIN" >/dev/null 2>&1 || true
     xtables4 -X "$FW3_FILTER_CHAIN" >/dev/null 2>&1 || true
@@ -155,7 +155,7 @@ fw3_cleanup4() {
 }
 
 fw3_cleanup6() {
-    command -v ip6tables >/dev/null 2>&1 || return 0
+    command -v ip6tables >/dev/null 2>&1 || { mode_has_v6 "${MODE:-}" && return 1; return 0; }
     while xtables6 -C FORWARD -j "$FW3_FILTER_CHAIN6" >/dev/null 2>&1; do xtables6 -D FORWARD -j "$FW3_FILTER_CHAIN6" >/dev/null 2>&1 || break; done
     xtables6 -F "$FW3_FILTER_CHAIN6" >/dev/null 2>&1 || true
     xtables6 -X "$FW3_FILTER_CHAIN6" >/dev/null 2>&1 || true
@@ -164,7 +164,36 @@ fw3_cleanup6() {
     xtables6 -t nat -X "$FW3_NAT_CHAIN6" >/dev/null 2>&1 || true
 }
 
-fw3_cleanup() { fw3_cleanup4; fw3_cleanup6; }
+fw3_cleanup4_verified() {
+    command -v iptables >/dev/null 2>&1 || return 1
+    filter_rules="$(xtables4 -S 2>/dev/null)" || return 1
+    nat_rules="$(xtables4 -t nat -S 2>/dev/null)" || return 1
+    printf '%s\n' "$filter_rules" | grep -Fq -- "-N $FW3_FILTER_CHAIN" && return 1
+    printf '%s\n' "$filter_rules" | grep -Eq -- "^-A [^ ]+ .* -j ${FW3_FILTER_CHAIN}([[:space:]]|$)" && return 1
+    printf '%s\n' "$nat_rules" | grep -Fq -- "-N $FW3_NAT_CHAIN" && return 1
+    printf '%s\n' "$nat_rules" | grep -Eq -- "^-A [^ ]+ .* -j ${FW3_NAT_CHAIN}([[:space:]]|$)" && return 1
+    return 0
+}
+
+fw3_cleanup6_verified() {
+    command -v ip6tables >/dev/null 2>&1 || { mode_has_v6 "${MODE:-}" && return 1; return 0; }
+    filter_rules="$(xtables6 -S 2>/dev/null)" || return 1
+    nat_rules="$(xtables6 -t nat -S 2>/dev/null)" || return 1
+    printf '%s\n' "$filter_rules" | grep -Fq -- "-N $FW3_FILTER_CHAIN6" && return 1
+    printf '%s\n' "$filter_rules" | grep -Eq -- "^-A [^ ]+ .* -j ${FW3_FILTER_CHAIN6}([[:space:]]|$)" && return 1
+    printf '%s\n' "$nat_rules" | grep -Fq -- "-N $FW3_NAT_CHAIN6" && return 1
+    printf '%s\n' "$nat_rules" | grep -Eq -- "^-A [^ ]+ .* -j ${FW3_NAT_CHAIN6}([[:space:]]|$)" && return 1
+    return 0
+}
+
+fw3_cleanup() {
+    cleanup_ok=true
+    fw3_cleanup4 || cleanup_ok=false
+    fw3_cleanup6 || cleanup_ok=false
+    fw3_cleanup4_verified || cleanup_ok=false
+    fw3_cleanup6_verified || cleanup_ok=false
+    [ "$cleanup_ok" = true ]
+}
 
 fw3_install4() {
     wg_dev="$1"; wan_dev="$2"; subnet="$3"
@@ -203,9 +232,14 @@ nft_delete_comment_rules() {
 }
 
 fw4_cleanup() {
-    command -v nft >/dev/null 2>&1 || return 0
+    command -v nft >/dev/null 2>&1 || return 1
     nft_delete_comment_rules forward
     nft_delete_comment_rules srcnat
+    forward_rules="$(nft -a list chain inet fw4 forward 2>/dev/null)" || return 1
+    srcnat_rules="$(nft -a list chain inet fw4 srcnat 2>/dev/null)" || return 1
+    printf '%s\n' "$forward_rules" | grep -Fq "$NFT_COMMENT" && return 1
+    printf '%s\n' "$srcnat_rules" | grep -Fq "$NFT_COMMENT" && return 1
+    return 0
 }
 
 fw4_install4() {
@@ -350,10 +384,23 @@ install_rules6() {
     ip -6 route flush cache >/dev/null 2>&1 || true
 }
 
+rule_priority_clear() {
+    flag="$1"; priority="$2"
+    rules="$(ip "$flag" rule show 2>/dev/null)" || return 1
+    ! printf '%s\n' "$rules" | grep -Eq "^[[:space:]]*${priority}:"
+}
+
+route_table_clear() {
+    flag="$1"; table="$2"
+    routes="$(ip "$flag" route show table "$table" 2>/dev/null)" || return 1
+    [ -z "$routes" ]
+}
+
 remove_rules_from_state() {
     [ -r "$STATE_FILE" ] || return 0
     # shellcheck disable=SC1090
     . "$STATE_FILE"
+    cleanup_ok=true
     if mode_has_v4 "${MODE:-ipv4}" && valid_uint "${RULE_BASE4:-}" && valid_uint "${ROUTE_TABLE4:-}" && [ -n "${WG_DEVICE:-}" ] && [ -n "${WG_SUBNET4:-}" ]; then
         base="$RULE_BASE4"; table="$ROUTE_TABLE4"; wg="$WG_DEVICE"; subnet="$WG_SUBNET4"
         ip -4 rule del priority "$((base + 0))" iif "$wg" to 10.0.0.0/8 lookup main >/dev/null 2>&1 || true
@@ -364,6 +411,8 @@ remove_rules_from_state() {
         ip -4 rule del priority "$((base + 10))" from "$subnet" iif "$wg" lookup "$table" >/dev/null 2>&1 || true
         ip -4 route flush table "$table" >/dev/null 2>&1 || true
         ip -4 route flush cache >/dev/null 2>&1 || true
+        for offset in 0 1 2 3 4 10; do rule_priority_clear -4 "$((base + offset))" || cleanup_ok=false; done
+        route_table_clear -4 "$table" || cleanup_ok=false
     fi
     if mode_has_v6 "${MODE:-ipv4}" && valid_uint "${RULE_BASE6:-}" && valid_uint "${ROUTE_TABLE6:-}" && [ -n "${WG_DEVICE:-}" ] && [ -n "${WG_SUBNET6:-}" ]; then
         base="$RULE_BASE6"; table="$ROUTE_TABLE6"; wg="$WG_DEVICE"; subnet="$WG_SUBNET6"
@@ -374,18 +423,30 @@ remove_rules_from_state() {
         ip -6 rule del priority "$((base + 10))" from "$subnet" iif "$wg" lookup "$table" >/dev/null 2>&1 || true
         ip -6 route flush table "$table" >/dev/null 2>&1 || true
         ip -6 route flush cache >/dev/null 2>&1 || true
+        for offset in 0 1 2 3 10; do rule_priority_clear -6 "$((base + offset))" || cleanup_ok=false; done
+        route_table_clear -6 "$table" || cleanup_ok=false
     fi
+    [ "$cleanup_ok" = true ]
 }
 
 runtime_cleanup() {
     backend="${1:-}"
+    state_present=0
+    [ -r "$STATE_FILE" ] && state_present=1
     [ -n "$backend" ] || backend="$(detect_backend 2>/dev/null || true)"
-    remove_rules_from_state
+    cleanup_ok=true
+    remove_rules_from_state || cleanup_ok=false
     case "$backend" in
-        fw3-iptables) fw3_cleanup ;;
-        fw4-nftables) fw4_cleanup ;;
+        fw3-iptables) fw3_cleanup || cleanup_ok=false ;;
+        fw4-nftables) fw4_cleanup || cleanup_ok=false ;;
+        '') [ "$state_present" -eq 0 ] || cleanup_ok=false ;;
+        *) cleanup_ok=false ;;
     esac
-    rm -f "$STATE_FILE"
+    if [ "$cleanup_ok" = true ]; then
+        rm -f "$STATE_FILE"
+        return 0
+    fi
+    return 1
 }
 
 save_state() {
@@ -427,7 +488,9 @@ schedule_expiry() {
 
 rollback() {
     message="$1"
-    runtime_cleanup "${FIREWALL_BACKEND:-}"
+    if ! runtime_cleanup "${FIREWALL_BACKEND:-}"; then
+        fail "Rollback incomplete after: $message"
+    fi
     fail "$message"
 }
 
@@ -485,7 +548,7 @@ enable_egress_plan() {
     cleanup_legacy_uci >/dev/null 2>&1 || true
     old_backend=""
     [ ! -r "$STATE_FILE" ] || old_backend="$(sed -n "s/^FIREWALL_BACKEND='\([^']*\)'/\1/p" "$STATE_FILE" | sed -n '1p')"
-    runtime_cleanup "$old_backend"
+    runtime_cleanup "$old_backend" || fail "Existing WireGuard egress cleanup failed"
 
     backend="$(detect_backend)"
     table4=""; table6=""; base4=""; base6=""
@@ -526,7 +589,7 @@ enable_egress_plan() {
         fw4-nftables)
             nft list chain inet fw4 forward >/dev/null 2>&1 || rollback "fw4 forward chain unavailable"
             nft list chain inet fw4 srcnat >/dev/null 2>&1 || rollback "fw4 srcnat chain unavailable"
-            fw4_cleanup
+            fw4_cleanup || rollback "Existing fw4 egress cleanup failed"
             if mode_has_v4 "$mode"; then fw4_install4 "$wg_dev" "$wan_dev4" "$subnet4" || rollback "IPv4 nft egress installation failed"; fi
             if mode_has_v6 "$mode"; then fw4_install6 "$wg_dev" "$wan_dev6" "$subnet6" || rollback "IPv6 nft NAT66 installation failed"; fi
             ;;
@@ -571,7 +634,10 @@ enable_split() {
 disable_egress() {
     backend=""
     [ ! -r "$STATE_FILE" ] || backend="$(sed -n "s/^FIREWALL_BACKEND='\([^']*\)'/\1/p" "$STATE_FILE" | sed -n '1p')"
-    runtime_cleanup "$backend"
+    if ! runtime_cleanup "$backend"; then
+        printf 'ERROR: WireGuard Internet egress cleanup incomplete.\n' >&2
+        return 1
+    fi
     clear_error_state
     printf 'WireGuard home Internet egress disabled.\n'
 }
@@ -583,18 +649,21 @@ sync_egress() {
     now="$(date +%s)"; expires="${EXPIRES_AT:-0}"
     case "$expires" in ''|*[!0-9]*) expires=0 ;; esac
     if [ "$expires" -le "$now" ]; then
-        runtime_cleanup "${FIREWALL_BACKEND:-}"
-        logger -t remote-gate "WireGuard egress expired and was cleared" 2>/dev/null || true
-        return 0
+        if runtime_cleanup "${FIREWALL_BACKEND:-}"; then
+            logger -t remote-gate "WireGuard egress expired and was cleared" 2>/dev/null || true
+            return 0
+        fi
+        logger -t remote-gate "WireGuard egress expired but cleanup remains incomplete" 2>/dev/null || true
+        return 1
     fi
 
     mode="${MODE:-ipv4}"; wg="${WG_INTERFACE:-}"; remaining="$((expires - now))"
     wan4="${WAN_INTERFACE4:-}"; wan6="${WAN_INTERFACE6:-}"
     if mode_has_v4 "$mode" && [ -z "$wan4" ]; then wan4="${WAN_INTERFACE:-}"; fi
     if mode_has_v6 "$mode" && [ -z "$wan6" ]; then wan6="${WAN_INTERFACE:-}"; fi
-    valid_mode "$mode" && [ -n "$wg" ] || { runtime_cleanup "${FIREWALL_BACKEND:-}"; return 1; }
-    if mode_has_v4 "$mode"; then valid_name "$wan4" || { runtime_cleanup "${FIREWALL_BACKEND:-}"; return 1; }; fi
-    if mode_has_v6 "$mode"; then valid_name "$wan6" || { runtime_cleanup "${FIREWALL_BACKEND:-}"; return 1; }; fi
+    valid_mode "$mode" && [ -n "$wg" ] || { runtime_cleanup "${FIREWALL_BACKEND:-}" || true; return 1; }
+    if mode_has_v4 "$mode"; then valid_name "$wan4" || { runtime_cleanup "${FIREWALL_BACKEND:-}" || true; return 1; }; fi
+    if mode_has_v6 "$mode"; then valid_name "$wan6" || { runtime_cleanup "${FIREWALL_BACKEND:-}" || true; return 1; }; fi
 
     route_ok=1
     if mode_has_v4 "$mode"; then
@@ -606,9 +675,12 @@ sync_egress() {
         egress_policy_route_current -6 "$wan6" "$saved_dev6" "${ROUTE_TABLE6:-}" || route_ok=0
     fi
     if [ "$route_ok" -ne 1 ]; then
-        runtime_cleanup "${FIREWALL_BACKEND:-}"
-        logger -t remote-gate "WireGuard egress WAN or policy route changed and was cleared" 2>/dev/null || true
-        return 0
+        if runtime_cleanup "${FIREWALL_BACKEND:-}"; then
+            logger -t remote-gate "WireGuard egress WAN or policy route changed and was cleared" 2>/dev/null || true
+            return 0
+        fi
+        logger -t remote-gate "WireGuard egress WAN or policy route changed but cleanup remains incomplete" 2>/dev/null || true
+        return 1
     fi
 
     rule_ok=1
@@ -636,7 +708,7 @@ sync_egress() {
     esac
     [ "$rule_ok" -eq 1 ] && [ "$firewall_ok" -eq 1 ] && return 0
 
-    runtime_cleanup "${FIREWALL_BACKEND:-}"
+    runtime_cleanup "${FIREWALL_BACKEND:-}" || return 1
     enable_egress_plan "$wg" "$wan4" "$wan6" "$remaining" "$mode"
 }
 
@@ -656,7 +728,12 @@ status_egress() {
         . "$STATE_FILE"
         now="$(date +%s)"; expires="${EXPIRES_AT:-0}"
         case "$expires" in ''|*[!0-9]*) expires=0 ;; esac
-        if [ "$expires" -le "$now" ]; then runtime_cleanup "${FIREWALL_BACKEND:-}"; else
+        if [ "$expires" -le "$now" ]; then
+            if ! runtime_cleanup "${FIREWALL_BACKEND:-}"; then
+                printf 'failed\nDetail: egress-cleanup-incomplete\n'
+                return 0
+            fi
+        else
             remaining="$((expires - now))"
             wan4="${WAN_INTERFACE4:-${WAN_INTERFACE:-}}"; dev4="${WAN_DEVICE4:-${WAN_DEVICE:-}}"
             wan6="${WAN_INTERFACE6:-${WAN_INTERFACE:-}}"; dev6="${WAN_DEVICE6:-${WAN_DEVICE:-}}"
@@ -696,7 +773,13 @@ status_json() {
                 "${MODE:-ipv4}" "$shared" "$shared_dev" "$wan4" "$dev4" "$wan6" "$dev6" "${WG_INTERFACE:-}" "${WG_SUBNET4:-}" "${WG_SUBNET6:-}" "$((expires - now))"
             return 0
         fi
-        runtime_cleanup "${FIREWALL_BACKEND:-}"
+        if ! runtime_cleanup "${FIREWALL_BACKEND:-}"; then
+            wan4="${WAN_INTERFACE4:-${WAN_INTERFACE:-}}"; dev4="${WAN_DEVICE4:-${WAN_DEVICE:-}}"
+            wan6="${WAN_INTERFACE6:-${WAN_INTERFACE:-}}"; dev6="${WAN_DEVICE6:-${WAN_DEVICE:-}}"
+            printf '{"active":false,"state":"failed","mode":"%s","wan":"%s","device":"","wan_v4":"%s","device_v4":"%s","wan_v6":"%s","device_v6":"%s","wg":"%s","ipv4_subnet":"%s","ipv6_subnet":"%s","detail":"egress-cleanup-incomplete","expires_in":0}\n' \
+                "${MODE:-}" "${WAN_INTERFACE:-}" "$wan4" "$dev4" "$wan6" "$dev6" "${WG_INTERFACE:-}" "${WG_SUBNET4:-}" "${WG_SUBNET6:-}"
+            return 0
+        fi
     fi
     if error_state_valid; then
         printf '{"active":false,"state":"failed","mode":"%s","wan":"%s","device":"","wan_v4":"%s","device_v4":"","wan_v6":"%s","device_v6":"","wg":"%s","ipv4_subnet":"","ipv6_subnet":"","detail":"%s","expires_in":%s}\n' \
