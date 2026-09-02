@@ -187,12 +187,18 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("INTERNET EXIT", gate)
         self.assertIn("Internet 出口", gate)
 
-    def test_gate_hides_redundant_wireguard_selector_but_keeps_internal_state(self):
+    def test_gate_hides_only_redundant_wireguard_selector_and_exposes_real_choice(self):
         picker = ENDPOINT_PICKER.read_text(encoding="utf-8")
         gate = GATE.read_text(encoding="utf-8")
-        self.assertIn("hideWireGuardSelector", picker)
-        self.assertIn("field.hidden = true", picker)
-        self.assertIn("select.tabIndex = -1", picker)
+        visibility = picker.split("function syncWireGuardSelectorVisibility()", 1)[1].split("function sync(selectId", 1)[0]
+        self.assertIn("serviceCount", visibility)
+        self.assertIn("serviceCount <= 1", visibility)
+        self.assertIn("field.hidden = redundant", visibility)
+        self.assertIn("select.tabIndex = redundant ? -1 : 0", visibility)
+        self.assertIn("field.removeAttribute('aria-hidden')", visibility)
+        self.assertIn("select.removeAttribute('aria-hidden')", visibility)
+        self.assertNotIn("MutationObserver", visibility)
+        self.assertIn("syncWireGuardSelectorVisibility()", picker)
         self.assertIn("$('wg-select')?.value", gate)
 
     def test_gate_transaction_lock_is_real_and_server_terminal_owned(self):
