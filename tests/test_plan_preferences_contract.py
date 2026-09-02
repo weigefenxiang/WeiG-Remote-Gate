@@ -8,6 +8,7 @@ GATE_CONTROLS = ROOT / "server/app/static/js/gate-controls.js"
 CORE_CI = ROOT / ".github/workflows/v030-ci.yml"
 BROWSER_CI = ROOT / ".github/workflows/browser-release.yml"
 BROWSER_TEST = ROOT / "tests/browser_plan_preferences.mjs"
+BROWSER_SERVICE_TEST = ROOT / "tests/browser_plan_service_identity.mjs"
 
 
 class PlanPreferenceContractTests(unittest.TestCase):
@@ -52,6 +53,21 @@ class PlanPreferenceContractTests(unittest.TestCase):
         self.assertIn("endpointMethod(item.ipv4) === priorMethod4", gate)
         self.assertIn("endpointMethod(item.ipv6) === priorMethod6", gate)
 
+    def test_runtime_manual_hint_is_bound_to_its_wireguard_service(self):
+        source = PREFERENCES.read_text(encoding="utf-8")
+        reconcile = source.split("function reconcileRuntimeWireguard()", 1)[1].split("function persistFamily", 1)[0]
+        self.assertIn("const runtimeWireguards = {}", source)
+        self.assertIn("runtimeWireguards[family] = item.wireguard", source)
+        self.assertIn("runtimeWireguards[family] = wireguard", source)
+        self.assertIn("boundWireguard === wireguard", reconcile)
+        self.assertIn("delete state.endpointSelections[family]", reconcile)
+        self.assertIn("state.endpointManualSelections[family] = false", reconcile)
+        self.assertNotIn("endpointScore", reconcile)
+        self.assertNotIn("preferredSelection", reconcile)
+        self.assertNotIn("select.value", reconcile)
+        render_wrapper = source.split("controls.render = (currentData) =>", 1)[1].split("window.addEventListener", 1)[0]
+        self.assertLess(render_wrapper.index("reconcileRuntimeWireguard()"), render_wrapper.index("originalRender(currentData)"))
+
     def test_browser_regression_covers_reload_method_churn_invalidation_and_zero_auto_activate(self):
         source = BROWSER_TEST.read_text(encoding="utf-8")
         self.assertIn("page.reload", source)
@@ -69,11 +85,23 @@ class PlanPreferenceContractTests(unittest.TestCase):
         self.assertIn("selection?.method6 === 'direct'", source)
         self.assertIn("activatePosts === 0", source)
 
-    def test_ci_contract_keeps_browser_regression_syntax_checked_and_release_only(self):
+    def test_browser_regression_covers_in_session_wireguard_service_churn(self):
+        source = BROWSER_SERVICE_TEST.read_text(encoding="utf-8")
+        self.assertIn("WG_HOME", source)
+        self.assertIn("WG_ALT", source)
+        self.assertIn("window.RemoteGateApp.refresh()", source)
+        self.assertIn("selectionSource === 'auto'", source)
+        self.assertIn("!afterSwitch.endpoints?.ipv4", source)
+        self.assertIn("activatePosts === 0", source)
+        self.assertNotIn("page.reload", source.split("topology = 'alt'", 1)[1])
+
+    def test_ci_contract_keeps_browser_regressions_syntax_checked_and_release_only(self):
         core = CORE_CI.read_text(encoding="utf-8")
         release = BROWSER_CI.read_text(encoding="utf-8")
         self.assertIn("node --check tests/browser_plan_preferences.mjs", core)
+        self.assertIn("node --check tests/browser_plan_service_identity.mjs", core)
         self.assertIn("node tests/browser_plan_preferences.mjs", release)
+        self.assertIn("node tests/browser_plan_service_identity.mjs", release)
         self.assertIn("if: github.ref == 'refs/heads/main'", release)
         self.assertNotIn("playwright", core.lower())
 
