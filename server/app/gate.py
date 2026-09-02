@@ -571,6 +571,10 @@ def queue_close(store: JsonStore, *, source_ip: str) -> dict[str, Any]:
         if existing is not None:
             store.append_activity({"type": "gate_close_requested", "source_ip": str(address), "command_id": existing.get("id", ""), "reused": True})
             return existing
+        preempted = queue.get("last")
+        if isinstance(preempted, dict) and preempted.get("state") == "cancelled" and preempted.get("detail") == "preempted_by_close":
+            command["preempted_command_id"] = str(preempted.get("id") or "")
+            command["preempted_batch_id"] = str(preempted.get("batch_id") or "")
         store.write("commands.json", {"pending": command, "next": [], "last": queue.get("last")})
         store.append_activity({"type": "gate_close_requested", "source_ip": str(address), "command_id": command["id"], "reused": False})
     return command
