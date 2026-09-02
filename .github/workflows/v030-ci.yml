@@ -52,3 +52,4 @@ jobs:
           done
           node --check tests/browser_layout.mjs
           node --check tests/browser_split_dual.mjs
+          node --check tests/browser_plan_preferences.mjs
