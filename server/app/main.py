@@ -605,11 +605,21 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/v1/agent/ack":
             if not self._require_agent():
                 return
-            data = self._read_json()
-            command_id = str(data.get("id", ""))
-            ok = bool(data.get("ok", False))
-            detail = str(data.get("detail", ""))
-            if not command_id or not ack_command(STORE, command_id, ok, detail):
+            try:
+                data = self._read_json()
+                command_raw = data.get("id")
+                ok = data.get("ok")
+                detail_raw = data.get("detail", "")
+                if not isinstance(command_raw, str) or not command_raw.strip():
+                    raise ValueError("invalid_ack")
+                if not isinstance(ok, bool) or not isinstance(detail_raw, str):
+                    raise ValueError("invalid_ack")
+                command_id = command_raw.strip()
+                detail = detail_raw
+            except (ValueError, TypeError):
+                self._json(400, {"error": "invalid_ack"})
+                return
+            if not ack_command(STORE, command_id, ok, detail):
                 self._json(409, {"error": "unknown_or_consumed_command"})
                 return
             self._empty(204)
