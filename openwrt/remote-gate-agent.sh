@@ -684,8 +684,6 @@ pull_once() {
             logger -t "$TAG" "activation command $id result replayed without re-execution" 2>/dev/null || true
             return 0
         fi
-    else
-        clear_activation_result
     fi
     expires_at="$(jsonfilter -i "$BODY" -e '@.expires_at' 2>/dev/null | sed -n '1p')"
     now="$(date +%s)"
@@ -859,7 +857,15 @@ pull_once() {
             close_ok=true
             "$FIREWALL" clear || close_ok=false
             [ ! -x "$EGRESS" ] || "$EGRESS" disable >/dev/null 2>&1 || close_ok=false
-            if [ "$close_ok" = true ]; then ack "$id" true "all-authorizations-and-egress-cleared"; else ack "$id" false "gate-close-failed"; fi
+            if [ "$close_ok" = true ]; then
+                if clear_activation_result; then
+                    ack "$id" true "all-authorizations-and-egress-cleared"
+                else
+                    ack "$id" false "activation-result-journal-clear-failed"
+                fi
+            else
+                ack "$id" false "gate-close-failed"
+            fi
             ;;
         *) ack "$id" false "unsupported-action" ;;
     esac
