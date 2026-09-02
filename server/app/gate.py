@@ -609,8 +609,30 @@ def ack_command(store: JsonStore, command_id: str, ok: bool, detail: str = "") -
         command = queue.get("pending")
         if not isinstance(command, dict) or command.get("id") != command_id:
             return False
+
+        now = int(time.time())
+        if not ok and command.get("action") == "close":
+            command["state"] = "pending"
+            command["last_attempt_at"] = now
+            command["detail"] = detail[:240]
+            queue["pending"] = command
+            queue["next"] = []
+            store.write("commands.json", queue)
+            store.append_activity(
+                {
+                    "type": "command_failed",
+                    "command_id": command_id,
+                    "action": "close",
+                    "family": command.get("family", ""),
+                    "batch_id": command.get("rollback_for_batch", command.get("batch_id", "")),
+                    "detail": detail[:120],
+                    "retrying": True,
+                }
+            )
+            return True
+
         command["state"] = "done" if ok else "failed"
-        command["acked_at"] = int(time.time())
+        command["acked_at"] = now
         command["detail"] = detail[:240]
         queue["last"] = command
 
@@ -618,7 +640,6 @@ def ack_command(store: JsonStore, command_id: str, ok: bool, detail: str = "") -
         if ok and next_commands:
             next_command = next_commands.pop(0)
             if isinstance(next_command, dict):
-                now = int(time.time())
                 next_command["created_at"] = now
                 next_command["expires_at"] = now + 60
                 next_command["state"] = "pending"
