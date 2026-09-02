@@ -126,14 +126,21 @@ async function assertExitLayout(page, mode, expectedLayout) {
   assert(JSON.stringify(geometry.visibleFamilies) === JSON.stringify(['ipv4','ipv6']), `Dual field DOM order changed: ${geometry.visibleFamilies.join(',')}`);
   const v4 = geometry.boxes.ipv4;
   const v6 = geometry.boxes.ipv6;
-  if (expectedLayout === 'stacked') {
-    assert(v4.top < v6.top - 1, `Dual mobile fields are not stacked IPv4 above IPv6 (${v4.top}/${v6.top})`);
-    assert(Math.abs(v4.left - v6.left) <= 1.5, 'Dual mobile fields do not share the same column');
-    assert(Math.abs(v4.width - geometry.rootWidth) <= 1.5 && Math.abs(v6.width - geometry.rootWidth) <= 1.5, 'Dual mobile fields do not span the selector width');
-  } else {
-    assert(Math.abs(v4.top - v6.top) <= 1.5, `Dual desktop fields are not side by side (${v4.top}/${v6.top})`);
-    assert(v4.right <= v6.left + 1.5, 'Dual desktop IPv4/IPv6 fields overlap or reversed');
-  }
+  const sameRow = Math.abs(v4.top - v6.top) <= 1.5;
+  const assertStacked = () => {
+    assert(v4.top < v6.top - 1, `Dual stacked fields are not IPv4 above IPv6 (${v4.top}/${v6.top})`);
+    assert(Math.abs(v4.left - v6.left) <= 1.5, 'Dual stacked fields do not share the same column');
+    assert(Math.abs(v4.width - geometry.rootWidth) <= 1.5 && Math.abs(v6.width - geometry.rootWidth) <= 1.5, 'Dual stacked fields do not span the selector width');
+  };
+  const assertSideBySide = () => {
+    assert(sameRow, `Dual fields are not side by side (${v4.top}/${v6.top})`);
+    assert(v4.right <= v6.left + 1.5, 'Dual side-by-side IPv4/IPv6 fields overlap or reversed');
+  };
+
+  if (expectedLayout === 'stacked') assertStacked();
+  else if (expectedLayout === 'side-by-side') assertSideBySide();
+  else if (sameRow) assertSideBySide();
+  else assertStacked();
 }
 
 const browser = await chromium.launch({headless: true});
@@ -216,25 +223,38 @@ try {
   await desktop.goto('http://127.0.0.1:8765/', {waitUntil: 'networkidle'});
   await desktop.waitForFunction(() => document.querySelector('#egress-mode-segment .active')?.dataset.egressMode === 'ipv4');
   await assertModeVisibility(desktop, 'ipv4');
-  await assertExitLayout(desktop, 'ipv4', 'side-by-side');
+  await assertExitLayout(desktop, 'ipv4', 'adaptive');
   await assertThemeCycle(desktop, 'desktop Internet Exit');
   await assertExitPicker(desktop, 'ipv4', 'popover');
   await selectExitMode(desktop, 'ipv6');
   await assertModeVisibility(desktop, 'ipv6');
-  await assertExitLayout(desktop, 'ipv6', 'side-by-side');
+  await assertExitLayout(desktop, 'ipv6', 'adaptive');
   await assertExitPicker(desktop, 'ipv6', 'popover');
   await selectExitMode(desktop, 'dual');
   await assertModeVisibility(desktop, 'dual');
-  await assertExitLayout(desktop, 'dual', 'side-by-side');
+  await assertExitLayout(desktop, 'dual', 'adaptive');
   await assertExitPicker(desktop, 'ipv4', 'popover');
   await assertExitPicker(desktop, 'ipv6', 'popover');
   await selectExitMode(desktop, 'none');
   await assertModeVisibility(desktop, 'none');
-  await assertExitLayout(desktop, 'none', 'side-by-side');
+  await assertExitLayout(desktop, 'none', 'adaptive');
   assert(desktopActivatePosts === 0, `desktop Internet Exit state changes posted Activate (${desktopActivatePosts})`);
   await desktop.close();
 
-  console.log('Browser Internet Exit regression passed: LAN has zero WAN pickers, single-family modes span one family only, Dual uses one scalar per family with responsive layout, mobile uses the shared sheet, desktop uses the shared popover, Light/Dark preserve the canonical Exit controls, no Access port identity leaks, and zero auto-Activate.');
+  const fullWidthGate = await browser.newPage({viewport: {width: 1180, height: 820}});
+  let fullWidthGateActivatePosts = 0;
+  fullWidthGate.on('request', (request) => {
+    if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/v1/gate/activate') fullWidthGateActivatePosts += 1;
+  });
+  await fullWidthGate.goto('http://127.0.0.1:8765/', {waitUntil: 'networkidle'});
+  await fullWidthGate.waitForFunction(() => document.querySelector('#egress-mode-segment .active')?.dataset.egressMode === 'ipv4');
+  await selectExitMode(fullWidthGate, 'dual');
+  await assertModeVisibility(fullWidthGate, 'dual');
+  await assertExitLayout(fullWidthGate, 'dual', 'side-by-side');
+  assert(fullWidthGateActivatePosts === 0, `full-width Gate Dual layout posted Activate (${fullWidthGateActivatePosts})`);
+  await fullWidthGate.close();
+
+  console.log('Browser Internet Exit regression passed: LAN has zero WAN pickers, single-family modes span one family only, Dual uses one scalar per family with adaptive stacked/side-by-side layout, mobile uses the shared sheet, desktop uses the shared popover, Light/Dark preserve the canonical Exit controls, no Access port identity leaks, and zero auto-Activate.');
 } finally {
   await browser.close();
 }
