@@ -34,7 +34,7 @@ IPv6 Gate: disabled
 Mapped IPv4: available on the tested fw3 device
 ```
 
-Because IPv6 Gate is disabled, IPv6 Gate and Dual Gate are not real-device PASS. The approved UI contract is to expose the unavailable capability clearly but disable the action rather than allowing a user to enter a flow that cannot Activate. Implementation status must still be checked against current code; this document does not claim that UI change is already deployed.
+Because IPv6 Gate is disabled, IPv6 Gate and Dual Gate are not real-device PASS. The approved UI contract exposes the unavailable capability clearly but disables the action rather than allowing a user to enter a flow that cannot Activate. Current `dev` implements that capability-aware model; deployment on the physical router/VPS must still be validated separately from the software contract.
 
 ## User-confirmed dashboard data
 
@@ -174,11 +174,13 @@ Agent-side Activate delivery is executable-tested as an at-least-once, replay-sa
 
 Activate cleanup convergence now has executable coverage across both the Agent and Internet Exit helper. The Agent regression proves that clearing pre-existing egress happens only after the current Activate id is journaled as `pending`; an injected first `egress disable` failure prevents any firewall Activate, and a final failure ACK is emitted only after the rollback cleanup succeeds. The explicit Exit=`none` path is also exercised: old egress is cleared exactly once before Gate activation and no post-Activate duplicate disable is used. At the helper layer, fw3/fw4 firewall ownership and policy-routing state are re-read after deletion; incomplete cleanup returns nonzero and retains `wireguard-egress.conf` so a later pass can retry with the same runtime identity. The fake-fw4 harness models both successful deletion and a stuck deletion that must preserve state. This is executable software/CI evidence only and does not add real-device PASS.
 
+Firewall authorization cleanup now also has executable fw3/fw4 retry coverage. The public `clear` command performs a conservative kernel authorization flush before and after the legacy state/rebuild path, verifies that per-family authorization state files are actually gone, and returns nonzero if any kernel auth-set flush or state convergence cannot be proven. The fw4 harness injects a first failure while clearing the source authorization set and verifies that source/ifname/ping-ifname/port authorization sets remain independently retryable even after the source state file has been removed; the fw3 harness exercises the same retry property for the ipset authorization set. This software evidence closes the helper-level false-success path used by Agent rollback, but it does not replace a real injected failure test on the physical router.
+
 Close failure handling now also has explicit Server queue coverage. A `gate-close-failed` ACK keeps the same Close command pending, preserves its existing Close deadline, records the failed attempt and blocks new Activate commands. The same id remains pullable for another idempotent Close attempt; only a successful Close ACK makes the command terminal and clears the queue. This is software control-plane evidence only, not proof that a real router can recover from an injected firewall-clear failure.
 
-## Approved design target that is not yet hardware validation
+## Implemented software model; hardware validation still pending
 
-The next implementation is expected to follow these documented rules:
+Current `dev` implements the documented architecture/UI rules below:
 
 - no user-facing Private/CGNAT Access Endpoint;
 - Internet Exit modes `none / ipv4 / ipv6 / dual` independent from Access Gate family;
@@ -187,7 +189,7 @@ The next implementation is expected to follow these documented rules:
 - Dual PathCard uses two FamilyPathBlocks/four information lines without redundant `Split WAN` text;
 - WireGuard `service_port` stays dynamically discovered.
 
-These are approved architecture/UI targets. They are not evidence that the current deployed router/VPS already implements them.
+These are implemented software/contract properties. They are **not** evidence that every corresponding path has already passed on the current physical router/VPS. Only the explicit real-device PASS sections above close hardware validation.
 
 ## Investigation notes
 
