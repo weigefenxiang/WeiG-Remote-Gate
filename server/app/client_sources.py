@@ -179,7 +179,6 @@ def _record(
     confidence: str,
     now: int | None = None,
     ttl: int = SOURCE_TTL,
-    preserve_candidate: bool = False,
 ) -> dict[str, Any]:
     address = _global_address(source_ip)
     current = int(time.time()) if now is None else int(now)
@@ -215,17 +214,6 @@ def _record(
             "confidence": "suppressed",
         }
 
-    # Candidate probes fill a family that the authenticated dashboard request
-    # did not directly expose. A fresh Cloudflare observation is stronger and
-    # replaces a candidate for the same family before direct Gate authorization.
-    if (
-        preserve_candidate
-        and isinstance(existing, dict)
-        and existing.get("confidence") == "candidate"
-        and int(existing.get("expires_at", 0) or 0) > current
-    ):
-        return {"family": family, **existing}
-
     families[family] = {
         "address": str(address),
         "observed_at": current,
@@ -253,7 +241,6 @@ def observe_source(
         confidence="observed",
         now=now,
         ttl=ttl,
-        preserve_candidate=False,
     )
 
 
@@ -266,13 +253,22 @@ def observe_candidate(
     now: int | None = None,
 ) -> dict[str, Any]:
     address = _global_address(source_ip, family)
+    current = int(time.time()) if now is None else int(now)
+
+    # Browser candidates only fill a family the authenticated HTTP request did
+    # not expose. Any still-trusted source record is stronger and remains
+    # authoritative until it expires or the active Gate releases its pin.
+    existing = trusted_sources(store, session_token, now=current).get(family)
+    if existing:
+        return {"family": family, **existing}
+
     return _record(
         store,
         session_token,
         str(address),
         source="carrier_probe",
         confidence="candidate",
-        now=now,
+        now=current,
         ttl=CANDIDATE_TTL,
     )
 
