@@ -119,6 +119,17 @@ Relay (future)
 
 `Private/CGNAT` may remain internal inventory/network classification but is not a selectable public Access Endpoint.
 
+### Manual Access preference persistence
+
+- `plan-preferences.js` persists only browser-local, non-authoritative hints bound to the selected WireGuard service and family.
+- exact Endpoint identity is preferred; if a dynamic Endpoint id changes, `gate-controls.js` may preserve manual intent only when the logical WAN and Access Method still match.
+- Dual fallback requires both family WANs and both family Access Methods to match; a same-WAN Direct+Mapped ambiguity must never silently change a manual Mapped choice into Direct.
+- legacy schema-1 hints without method metadata remain readable through the historical WAN-only compatibility fallback and are enriched from the current eligible selection for subsequent churn.
+- preference restore never creates authorization, migrates an active Gate or auto-Activates.
+- `tests/browser_plan_preferences.mjs` covers same-WAN Direct+Mapped ambiguity, Mapped id churn, Dual constituent-id churn, invalidation and zero Activate POSTs. Routine `dev` CI checks its syntax/static contracts only; executable Playwright remains release-only.
+
+Real-hardware manual endpoint-selection persistence is still pending.
+
 ### Internet Exit is an independent plan
 
 Canonical modes:
@@ -200,9 +211,9 @@ Routine `dev` CI covers:
 - shell syntax;
 - native mapper host build/check;
 - production JavaScript syntax;
-- syntax of `tests/browser_layout.mjs` and `tests/browser_split_dual.mjs`.
+- syntax of release browser regressions including `tests/browser_layout.mjs`, `tests/browser_split_dual.mjs` and `tests/browser_plan_preferences.mjs`.
 
-The release browser tests were updated for the current plan encoding:
+The release browser tests cover the current plan encoding:
 
 ```text
 ipv4:<WAN>
@@ -210,7 +221,7 @@ ipv6:<WAN>
 dual:<WAN4>|<WAN6>
 ```
 
-They also assert one FamilyPathBlock for single-family PathCard and two for Dual PathCard. Routine `dev` CI only syntax-checks those browser scripts; it does **not** execute the full Browser Matrix. Full Linux/Windows Chromium execution remains `main`-only/manual Release Browser Validation.
+They also assert one FamilyPathBlock for single-family PathCard and two for Dual PathCard, and the plan-preference regression checks method-aware restore across dynamic Endpoint identity churn without auto-Activate. Routine `dev` CI only syntax-checks those browser scripts plus static contracts; it does **not** execute the full Browser Matrix. Full Linux/Windows Chromium execution remains `main`-only/manual Release Browser Validation.
 
 README and Chinese README are guarded by `tests/test_documentation_contract.py` so old Private/CGNAT Try, old source terminology and obsolete routine-Chromium-CI wording do not silently return.
 
