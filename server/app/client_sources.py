@@ -9,6 +9,7 @@ from .store import JsonStore
 
 SOURCE_TTL = 10 * 60
 CANDIDATE_TTL = 5 * 60
+AGENT_STATUS_FRESH_SECONDS = 60
 IPV6_GLOBAL_UNICAST = ipaddress.ip_network("2000::/3")
 
 
@@ -82,17 +83,19 @@ def _known_router_external_addresses(store: JsonStore, current: int) -> set[str]
     return result
 
 
-def _active_authorized_sources(store: JsonStore, family: str) -> set[str]:
-    """Return active authorized sources for one firewall family.
-
-    Current agents report independent family status under ``firewall.families``
-    and may authorize multiple sources per family. Older agents exposed only a
-    single top-level ``family/source_ip`` summary, so keep that shape as a
-    rolling-upgrade fallback.
-    """
+def _active_authorized_sources(store: JsonStore, family: str, *, now: int) -> set[str]:
+    """Return current authorized sources for one family from fresh agent state."""
     agent = store.read("agent-status.json", {})
     firewall = agent.get("firewall") if isinstance(agent, dict) else None
     if not isinstance(firewall, dict):
+        return set()
+    try:
+        reported_at = int(agent.get("reported_at", 0) or 0)
+    except (TypeError, ValueError):
+        return set()
+    if reported_at <= 0 or reported_at > now + AGENT_STATUS_FRESH_SECONDS:
+        return set()
+    if now - reported_at > AGENT_STATUS_FRESH_SECONDS:
         return set()
 
     family_state: dict[str, Any] | None = None
@@ -148,7 +151,7 @@ def _state(store: JsonStore, current: int) -> tuple[dict[str, Any], dict[str, An
             sessions.pop(sid, None)
             continue
         for family, item in list(families.items()):
-            active_sources = _active_authorized_sources(store, family)
+            active_sources = _active_authorized_sources(store, family, now=current)
             expired = int(item.get("expires_at", 0) or 0) <= current if isinstance(item, dict) else True
             pinned = isinstance(item, dict) and str(item.get("address") or "") in active_sources
             if not isinstance(item, dict) or (expired and not pinned):
@@ -189,7 +192,7 @@ def _record(
     families = record.setdefault("families", {})
     existing = families.get(family)
 
-    active_sources = _active_authorized_sources(store, family)
+    active_sources = _active_authorized_sources(store, family, now=current)
     if (
         active_sources
         and isinstance(existing, dict)
@@ -286,7 +289,7 @@ def trusted_sources(store: JsonStore, session_token: str, *, now: int | None = N
         item = families.get(family)
         if not isinstance(item, dict):
             continue
-        active_sources = _active_authorized_sources(store, family)
+        active_sources = _active_authorized_sources(store, family, now=current)
         expired = int(item.get("expires_at", 0) or 0) <= current
         if expired and str(item.get("address") or "") not in active_sources:
             continue
