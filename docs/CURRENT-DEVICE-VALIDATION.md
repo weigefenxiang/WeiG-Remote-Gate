@@ -146,6 +146,7 @@ Do not report PASS yet for:
 
 ```text
 manual endpoint-selection persistence on the real device
+multiple registered WireGuard service selection on the real device
 IPv6 Gate after explicitly enabling it
 same-WAN Dual data plane
 split-WAN Dual data plane
@@ -157,6 +158,8 @@ non-51820 WireGuard service-port hardware path
 ```
 
 Manual endpoint-selection persistence now has a software implementation and automated contract coverage on `dev`. The browser stores only non-authoritative plan hints and restores them through the current eligible Endpoint set. Exact Endpoint ids are preferred; after identity churn, current `dev` preserves manual intent with logical WAN plus Access Method rather than WAN alone, so a manually selected Mapped path cannot silently become Direct merely because both methods coexist on the same WAN. Dual preferences retain both family WANs and both family Access Methods and apply the same method-aware fallback. Invalid hints are discarded, legacy hints without method metadata retain the older compatibility fallback, and preference restoration never auto-Activates. The release browser regression now includes same-WAN Direct+Mapped ambiguity, Mapped id churn and Dual constituent-id churn while asserting zero Activate POSTs. Routine `dev` CI validates the static/contract boundary and browser-test syntax; the executable Playwright persistence regression remains in the `main`-only/manual release Browser Matrix, so this is **not** browser-matrix PASS on `dev` and remains **not** real-device PASS.
+
+Multiple registered WireGuard services now have explicit software/UI boundary coverage on `dev`. The Service Registry and Agent already enumerate multiple WireGuard listeners; the browser now keeps the WireGuard selector hidden only when zero or one registered service makes the field redundant, and exposes the existing selector when two or more services are available. Manual Endpoint preference is bound to the selected WireGuard service: an explicit service switch or disappearance discards the old manual hint instead of migrating it by WAN/method coincidence, current eligible Endpoint selection returns to `auto`, and the regression asserts zero Activate POSTs throughout. Routine `dev` CI checks the static contract and browser-test syntax; the executable Playwright regression remains `main`-only/manual release validation, and the current physical router has only the observed `WG_HOME` service, so multi-WireGuard behavior is **not** real-device PASS.
 
 Dynamic WireGuard service-port handling now has explicit non-default automated coverage on `dev`: schema-3 Direct/Mapped endpoint and activation-command tests use UDP `41194`, while OpenWrt contract tests lock discovery through `wg show <name> listen-port`, Mapping propagation through `--service-port`, and Agent revalidation through the Service Registry. This is CI/contract evidence only; the real-device `WG_HOME / UDP 51820` path has not yet been changed to a non-51820 listener, so the hardware item remains pending.
 
