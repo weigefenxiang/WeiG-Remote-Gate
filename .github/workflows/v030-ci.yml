@@ -55,3 +55,4 @@ jobs:
           node --check tests/browser_plan_preferences.mjs
           node --check tests/browser_egress_manual.mjs
           node --check tests/browser_mixed_egress.mjs
+          node --check tests/browser_access_pathcard.mjs
