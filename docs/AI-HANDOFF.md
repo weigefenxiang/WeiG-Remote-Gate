@@ -87,10 +87,12 @@ app.js
 
 theme-bootstrap.js
   -> pre-paint theme/favicon setup
-  -> early presentation-module asset loading only
+  -> optional non-semantic presentation assets only
 ```
 
 `theme-bootstrap.js` must not mutate Gate structure, wrap `window.fetch`, install a Gate `MutationObserver`, resolve selected endpoint policy or become a second Gate presentation/data owner. Canonical GateStatusHero/current-public-endpoint markup belongs in `dashboard.html`. `app.js` may display the already-selected structured PathCard row but may not re-filter or re-rank endpoints.
+
+Semantic runtime dependencies must have deterministic parser order in `dashboard.html`; do not dynamically inject them from `theme-bootstrap.js`. In particular, `endpoint-picker.js` must load explicitly before `gate-controls.js`, because Gate creates and binds the Internet Exit family selectors through `RemoteGateEndpointPicker`. Optional chaining is not a substitute for dependency ordering: a missed one-time `bindSelect()` call can otherwise leave the mobile/desktop Exit picker behavior dependent on network timing.
 
 When a new canonical implementation replaces an old runtime implementation, remove the old owner, shadow state, obsolete DOM contract and tests that preserve the old behavior in the same issue chain. Do not keep two implementations alive through version files, CSS overrides, MutationObserver or indefinite compatibility adapters.
 
@@ -260,6 +262,8 @@ Focused coverage for the Internet Exit/Gate presentation chain now includes:
 - removal of old `egressPlans()` Cartesian-product planning;
 - removal of `app.js` shadow Exit state;
 - generic EndpointPicker consumer semantics surviving field normalization;
+- explicit parser-ordered `endpoint-picker.js -> gate-controls.js -> app.js` semantic dependency;
+- `theme-bootstrap.js` no longer dynamically injects the canonical EndpointPicker;
 - mobile IPv4 Exit exposes only the IPv4 picker/FamilyPathBlock;
 - mobile IPv6 Exit exposes only IPv6;
 - Dual uses the same two scalar pickers;
@@ -291,8 +295,9 @@ Do not call those Browser Matrix PASS until the release workflow actually execut
 9. one function must not have multiple live Current Owners;
 10. healthy state should be quiet instead of accumulating redundant status prose;
 11. bootstrap/presentation helpers must not rediscover policy owned by Gate controls;
-12. mobile/desktop presentation must not become separate semantic implementations;
-13. CI/browser evidence != real hardware evidence.
+12. semantic runtime dependencies must not rely on opportunistic dynamic load order;
+13. mobile/desktop presentation must not become separate semantic implementations;
+14. CI/browser evidence != real hardware evidence.
 
 ## Real-device items still pending
 

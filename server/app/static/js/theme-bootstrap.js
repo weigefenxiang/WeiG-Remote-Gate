@@ -24,11 +24,10 @@
   document.documentElement.dataset.theme = resolved;
   document.documentElement.dataset.themeChoice = choice;
 
-  // Security-critical client discovery is loaded explicitly by dashboard.html.
+  // Security-critical client discovery and semantic Gate dependencies are loaded explicitly by dashboard.html.
   // Optional presentation modules inherit the immutable build SHA from this script URL.
   [
     '/static/js/motion-feedback.js',
-    '/static/js/endpoint-picker.js',
     '/static/js/duration-control.js'
   ].forEach((src) => {
     if (document.querySelector(`script[data-remote-gate-module="${src}"]`)) return;

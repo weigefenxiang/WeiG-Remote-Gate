@@ -20,6 +20,17 @@ class GatePresentationOwnerContractTests(unittest.TestCase):
         self.assertNotIn("polishGateActions", BOOTSTRAP)
         self.assertNotIn("brandIcon", BOOTSTRAP)
 
+    def test_semantic_endpoint_picker_dependency_is_parser_ordered(self):
+        picker = '<script src="/static/js/endpoint-picker.js?v={{ASSET_VERSION}}"></script>'
+        gate = '<script src="/static/js/gate-controls.js?v={{ASSET_VERSION}}"></script>'
+        app = '<script src="/static/js/app.js?v={{ASSET_VERSION}}"></script>'
+        self.assertEqual(TEMPLATE.count(picker), 1)
+        self.assertEqual(TEMPLATE.count(gate), 1)
+        self.assertLess(TEMPLATE.index(picker), TEMPLATE.index(gate))
+        self.assertLess(TEMPLATE.index(gate), TEMPLATE.index(app))
+        self.assertNotIn("'/static/js/endpoint-picker.js'", BOOTSTRAP)
+        self.assertNotIn('"/static/js/endpoint-picker.js"', BOOTSTRAP)
+
     def test_gate_status_and_public_endpoint_dom_are_canonical_template_markup(self):
         self.assertIn('class="gate-orb-wrap gate-status-hero"', TEMPLATE)
         self.assertIn('id="gate-status-stage"', TEMPLATE)
