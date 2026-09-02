@@ -579,6 +579,13 @@
     if (pending && transaction && pending.action === 'close' && transaction.action === 'activate') {
       transaction = {action:'close', commandId:String(pending.id || ''), batchId:String(pending.batch_id || ''), startedAt:Number(pending.created_at || 0) * 1000 || Date.now(), serverOwned:true};
     }
+    if (!pending && last && transaction && last.action === 'close' && transaction.action === 'activate') {
+      const localStartedAt = Math.floor(Number(transaction.startedAt || 0) / 1000);
+      const closeCreatedAt = Number(last.created_at || 0);
+      if (closeCreatedAt >= localStartedAt - 2) {
+        transaction = {action:'close', commandId:String(last.id || ''), batchId:String(last.batch_id || ''), startedAt:closeCreatedAt * 1000 || Date.now(), serverOwned:true};
+      }
+    }
     if (pending && !transaction) {
       transaction = {action:String(pending.action || 'activate'), commandId:String(pending.id || ''), batchId:String(pending.batch_id || ''), startedAt:Number(pending.created_at || 0) * 1000 || Date.now(), serverOwned:true};
       startTransactionPoll();
