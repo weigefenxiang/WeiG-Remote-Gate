@@ -3,15 +3,17 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 GATE = ROOT / "server/app/static/js/gate-controls.js"
+APP = ROOT / "server/app/static/js/app.js"
 PICKER = ROOT / "server/app/static/js/endpoint-picker.js"
-THEME = ROOT / "server/app/static/js/theme-bootstrap.js"
+BOOTSTRAP = ROOT / "server/app/static/js/theme-bootstrap.js"
 ENDPOINTS = ROOT / "server/app/endpoints.py"
 
 
 class EndpointSelectionContractTests(unittest.TestCase):
     def test_public_endpoint_is_automatically_preferred_and_confirmed(self):
         gate = GATE.read_text(encoding="utf-8")
-        theme = THEME.read_text(encoding="utf-8")
+        app = APP.read_text(encoding="utf-8")
+        bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
         self.assertIn("preferredIpv4Endpoint", gate)
         self.assertIn("preferredIpv6Endpoint", gate)
         self.assertIn("preferredSelection", gate)
@@ -20,9 +22,10 @@ class EndpointSelectionContractTests(unittest.TestCase):
         self.assertIn("select.dataset.selectionSource = confirmed ? source : '';", gate)
         self.assertIn("const source = endpointSelectionIsManual(family) ? 'manual' : 'auto';", gate)
         self.assertNotIn("endpointSelectionIsManual(state.family) &&", gate)
-        self.assertIn("select.dataset.selectionConfirmed !== '1'", theme)
-        self.assertIn("selectedEndpointRecord", theme)
-        self.assertIn("remote-gate-endpoint-selection", theme)
+        self.assertIn("select.dataset.selectionConfirmed !== '1'", app)
+        self.assertIn("option?.dataset?.pathRows", app)
+        self.assertIn("remote-gate-endpoint-selection", app)
+        self.assertNotIn("selectedEndpointRecord", bootstrap)
 
     def test_ipv4_access_prefers_direct_before_mapped_or_observed_try(self):
         gate = GATE.read_text(encoding="utf-8")
@@ -37,7 +40,7 @@ class EndpointSelectionContractTests(unittest.TestCase):
 
     def test_ipv6_prefers_the_selected_ipv4_wan_when_available(self):
         gate = GATE.read_text(encoding="utf-8")
-        preferred = gate.split("function preferredIpv6Endpoint() {", 1)[1].split("function accessRole", 1)[0]
+        preferred = gate.split("function preferredIpv6Endpoint() {", 1)[1].split("function endpointMethod", 1)[0]
         self.assertIn("preferredIpv4Endpoint()?.wan", preferred)
         self.assertIn("a?.wan === preferredV4Wan", preferred)
         self.assertIn("b?.wan === preferredV4Wan", preferred)
@@ -81,19 +84,23 @@ class EndpointSelectionContractTests(unittest.TestCase):
         self.assertIn("if (singleAvailable('ipv6')) return 'ipv6';", choose)
 
     def test_ipv6_wireguard_is_direct_only(self):
-        theme = THEME.read_text(encoding="utf-8")
+        gate = GATE.read_text(encoding="utf-8")
         endpoints = ENDPOINTS.read_text(encoding="utf-8")
-        self.assertIn("selected.family === 'ipv6'", theme)
-        self.assertIn("selected.access_method === 'mapped'", theme)
-        self.assertIn("return null;", theme)
+        role = gate.split("function accessRole(item) {", 1)[1].split("function endpointAddress", 1)[0]
+        self.assertIn("item?.family === 'ipv6' ? 'Global Direct' : 'Public Direct'", role)
         self.assertIn('or family != "ipv4"', endpoints)
         self.assertIn('"family": "ipv6"', endpoints)
         self.assertIn('"access_method": "direct"', endpoints)
 
     def test_ipv6_direct_endpoint_uses_bracketed_wireguard_syntax(self):
-        theme = THEME.read_text(encoding="utf-8")
-        self.assertIn("item.family === 'ipv6' ? `[${address}]:${port}`", theme)
-        self.assertIn("IPv6 Direct · OpenWrt 当前上报", theme)
+        gate = GATE.read_text(encoding="utf-8")
+        app = APP.read_text(encoding="utf-8")
+        bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
+        self.assertIn("item?.family === 'ipv6' ? `[${address}]:${item.external_port}`", gate)
+        self.assertNotIn("IPv6 Direct · OpenWrt 当前上报", app)
+        self.assertNotIn("IPv6 Direct · OpenWrt 当前上报", bootstrap)
+        self.assertNotIn("IPv4 Direct · OpenWrt 当前上报", app)
+        self.assertNotIn("IPv4 Direct · OpenWrt 当前上报", bootstrap)
 
 
 if __name__ == "__main__":

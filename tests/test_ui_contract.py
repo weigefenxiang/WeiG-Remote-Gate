@@ -268,11 +268,12 @@ class UIContractTests(unittest.TestCase):
 
     def test_dashboard_render_does_not_overwrite_gate_endpoint_memory(self):
         app = APP.read_text(encoding="utf-8")
-        marker = "window.RemoteGateGateControls?.render(data);"
-        self.assertIn(marker, app)
-        tail = app.split(marker, 1)[1].split("window.RemoteGateFit?.observe();", 1)[0]
-        self.assertNotIn("syncEndpointSelect(data)", tail)
-        self.assertNotIn("renderClient(data)", tail)
+        body = app.split("function renderGatePresentation(currentData) {", 1)[1].split("function render(data) {", 1)[0]
+        self.assertIn("window.RemoteGateGateControls?.render(currentData || {});", body)
+        self.assertIn("gateStatusPresentation();", body)
+        self.assertIn("renderCurrentPublicEndpoint();", body)
+        self.assertNotIn("syncEndpointSelect", body)
+        self.assertNotIn("renderClient", body)
 
     def test_access_excludes_private_but_keeps_observed_try(self):
         app = APP.read_text(encoding="utf-8")

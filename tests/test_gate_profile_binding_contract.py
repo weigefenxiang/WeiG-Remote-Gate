@@ -57,8 +57,10 @@ class GateProfileBindingContractTests(unittest.TestCase):
         gate = GATE.read_text(encoding="utf-8")
         self.assertIn("dashboardAvailable: false", app)
         self.assertIn("state.dashboardAvailable = true", app)
-        self.assertIn("state.dashboardAvailable = false", app)
-        self.assertIn("RemoteGateGateControls?.render(state.data)", app)
+        refresh = app.split("async function refresh() {", 1)[1].split("function friendlyError", 1)[0]
+        self.assertIn("state.dashboardAvailable = false", refresh)
+        self.assertIn("renderGatePresentation(state.data)", refresh)
+        self.assertIn("$('current-public-endpoint').hidden = true", refresh)
         self.assertIn("context?.state?.dashboardAvailable && currentData?.agent?.fresh", gate)
         self.assertIn("const fw = fresh ? (currentData?.agent?.firewall || {}) : {};", gate)
         self.assertNotIn("Date.now()", gate.split("function agentFresh", 1)[1].split("function staleCloseRecommended", 1)[0])
