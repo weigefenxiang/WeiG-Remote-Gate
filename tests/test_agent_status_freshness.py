@@ -9,6 +9,7 @@ from server.app.client_sources import (
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVER = ROOT / "server/remote-gate.py"
+APP = ROOT / "server/app/static/js/app.js"
 
 
 class AgentStatusFreshnessTests(unittest.TestCase):
@@ -98,6 +99,14 @@ class AgentStatusFreshnessTests(unittest.TestCase):
         self.assertIn("_sanitize_stored_agent_status()", source)
         dashboard = source.split("def do_GET(self) -> None:", 1)[1].split("super().do_GET()", 1)[0]
         self.assertLess(dashboard.index("_sanitize_stored_agent_status()"), len(dashboard))
+
+    def test_system_status_consumes_server_freshness_without_browser_threshold(self):
+        source = APP.read_text(encoding="utf-8")
+        render_system = source.split("function renderSystem(data) {", 1)[1].split("function render(data) {", 1)[0]
+        self.assertIn("const fresh = Boolean(data?.agent?.fresh);", render_system)
+        self.assertNotIn("const reportedAt", render_system)
+        self.assertNotIn("Date.now()", render_system)
+        self.assertNotIn("< 45", render_system)
 
 
 if __name__ == "__main__":
