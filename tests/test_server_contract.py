@@ -21,12 +21,15 @@ class ServerContractTests(unittest.TestCase):
         source = CLIENT.read_text(encoding="utf-8")
         gate = GATE.read_text(encoding="utf-8")
         self.assertIn('confidence="observed"', source)
-        self.assertIn("preserve_candidate=False", source)
-        self.assertIn('existing.get("confidence") == "candidate"', source)
+        self.assertIn("trusted_sources(store, session_token, now=current).get(family)", source)
+        self.assertIn("if existing:", source)
+        self.assertIn('return {"family": family, **existing}', source)
+        self.assertIn('confidence="candidate"', source)
         self.assertIn('if confidence == "verified":', source)
         self.assertIn('confidence = "observed"', source)
         self.assertIn('{"verified", "observed", "candidate"}', gate)
-        self.assertIn("fresh Cloudflare observation is stronger", source)
+        self.assertIn("Browser candidates only fill a family", source)
+        self.assertNotIn("preserve_candidate", source)
         self.assertNotIn("OpenWrt must verify a fresh WireGuard peer", source)
 
     def test_legacy_probe_is_gone_and_fail_closed(self):
