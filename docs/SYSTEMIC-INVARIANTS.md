@@ -198,6 +198,8 @@ There is no user-facing `Private/CGNAT Try` Access Endpoint.
 
 A manual selection is remembered while it remains valid. When a dynamic Endpoint id changes, a browser-local fallback may preserve the same user intent only if the stable logical WAN **and Access Method** still match; for Dual, both family WANs and both family Access Methods must match. WAN identity alone is insufficient when Direct, Mapped or future Relay candidates coexist on the same WAN. Older preferences that do not yet contain a method hint may use the historical WAN-only compatibility fallback, but the current eligible selection must enrich the stored hint for subsequent churn. These hints remain non-authoritative UI state: refresh, PPPoE churn, mapping changes or a new recommendation must not create or migrate authorization automatically.
 
+Registered service identity is part of that manual Access intent. A manual Endpoint hint for one WireGuard service must never be WAN/method-fallback-migrated to another service. If the selected service changes or disappears, discard the incompatible manual hint and return to the canonical automatic recommendation for the newly selected service. When there is only one registered WireGuard service, its selector may be hidden as redundant; when multiple valid services exist, the existing service selector must be visible and user-operable. Service Registry/list ordering is discovery output, not user intent. Service switching and service disappearance never auto-Activate.
+
 `Activate` remains the authority boundary.
 
 ## 9. Dynamic identity must never be hardcoded
