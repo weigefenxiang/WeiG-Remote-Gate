@@ -37,9 +37,15 @@ class TrustedSourceTests(unittest.TestCase):
         self.assertEqual(record["source"], "carrier_probe")
         self.assertEqual(source_for_family(self.store, self.token, "ipv4", now=111), "1.1.1.1")
 
-    def test_fresh_cloudflare_observation_replaces_same_family_candidate(self):
+    def test_candidate_cannot_replace_same_family_http_observation(self):
         observe_source(self.store, self.token, "8.8.8.8", now=100)
         record = observe_candidate(self.store, self.token, "1.1.1.1", "ipv4", now=110)
+        self.assertEqual(record["address"], "8.8.8.8")
+        self.assertEqual(record["confidence"], "observed")
+        self.assertEqual(source_for_family(self.store, self.token, "ipv4", now=111), "8.8.8.8")
+
+    def test_fresh_cloudflare_observation_replaces_same_family_candidate(self):
+        record = observe_candidate(self.store, self.token, "1.1.1.1", "ipv4", now=100)
         self.assertEqual(record["address"], "1.1.1.1")
         self.assertEqual(record["confidence"], "candidate")
 
