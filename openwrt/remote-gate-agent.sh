@@ -564,11 +564,14 @@ finish_activation_command() {
     result_id="$1"; result_ok="$2"; result_detail="$(sanitize_detail "$3")"
     if ! write_activation_result "$result_id" "$result_ok" "$result_detail"; then
         logger -t "$TAG" "cannot persist activation result for ACK replay; rolling back runtime" 2>/dev/null || true
-        rollback_active_access
-        if write_activation_result "$result_id" false "activation-result-journal-failed"; then
-            if send_ack "$result_id" false "activation-result-journal-failed"; then
-                clear_activation_result "$result_id"
+        if rollback_active_access; then
+            if write_activation_result "$result_id" false "activation-result-journal-failed"; then
+                if send_ack "$result_id" false "activation-result-journal-failed"; then
+                    clear_activation_result "$result_id"
+                fi
             fi
+        else
+            logger -t "$TAG" "activation result journal failed and rollback is incomplete; leaving command unacknowledged" 2>/dev/null || true
         fi
         return 1
     fi
@@ -585,15 +588,18 @@ replay_activation_result() {
     saved_state="$(sed -n '2p' "$COMMAND_RESULT_FILE" 2>/dev/null)"
     saved_detail="$(sed -n '3p' "$COMMAND_RESULT_FILE" 2>/dev/null)"
     if [ "$saved_id" != "$expected" ]; then
-        case "$saved_state" in
-            false) ;;
-            *)
-                logger -t "$TAG" "stale unacknowledged activation $saved_id superseded by $expected; rolling back before new command" 2>/dev/null || true
-                rollback_active_access
-                ;;
-        esac
-        rm -f "$COMMAND_RESULT_FILE"
-        return 1
+        if [ "$saved_state" = false ]; then
+            rm -f "$COMMAND_RESULT_FILE"
+            return 1
+        fi
+        logger -t "$TAG" "stale unacknowledged activation $saved_id superseded by $expected; rolling back before new command" 2>/dev/null || true
+        if rollback_active_access; then
+            rm -f "$COMMAND_RESULT_FILE"
+            return 1
+        fi
+        write_activation_result "$saved_id" pending "rollback-pending:stale-activation-runtime" || true
+        logger -t "$TAG" "stale activation rollback incomplete; blocking new command $expected" 2>/dev/null || true
+        return 0
     fi
     case "$saved_state" in
         true|false)
@@ -603,11 +609,19 @@ replay_activation_result() {
             ;;
         *)
             logger -t "$TAG" "activation command $saved_id had uncertain local result; rolling back before ACK" 2>/dev/null || true
-            rollback_active_access
-            if write_activation_result "$saved_id" false "activation-result-uncertain"; then
-                if send_ack "$saved_id" false "activation-result-uncertain"; then
-                    clear_activation_result "$saved_id"
+            case "$saved_detail" in
+                rollback-pending:*) final_detail="${saved_detail#rollback-pending:}" ;;
+                *) final_detail="activation-result-uncertain" ;;
+            esac
+            if rollback_active_access; then
+                if write_activation_result "$saved_id" false "$final_detail"; then
+                    if send_ack "$saved_id" false "$final_detail"; then
+                        clear_activation_result "$saved_id"
+                    fi
                 fi
+            else
+                write_activation_result "$saved_id" pending "rollback-pending:$final_detail" || true
+                logger -t "$TAG" "activation rollback incomplete for $saved_id; keeping result pending" 2>/dev/null || true
             fi
             ;;
     esac
@@ -615,8 +629,12 @@ replay_activation_result() {
 }
 
 rollback_active_access() {
-    "$FIREWALL" clear >/dev/null 2>&1 || true
-    [ ! -x "$EGRESS" ] || "$EGRESS" disable >/dev/null 2>&1 || true
+    rollback_ok=true
+    "$FIREWALL" clear >/dev/null 2>&1 || rollback_ok=false
+    if [ -x "$EGRESS" ]; then
+        "$EGRESS" disable >/dev/null 2>&1 || rollback_ok=false
+    fi
+    [ "$rollback_ok" = true ]
 }
 
 rollback_batch_access() {
@@ -624,6 +642,27 @@ rollback_batch_access() {
     valid_uint "$count" || count=1
     [ "$count" -gt 1 ] || return 0
     rollback_active_access
+}
+
+ack_after_batch_rollback() {
+    result_id="$1"; count="$2"; result_detail="$3"
+    if rollback_batch_access "$count"; then
+        ack "$result_id" false "$result_detail"
+        return 0
+    fi
+    logger -t "$TAG" "batch rollback incomplete for $result_id; leaving command unacknowledged" 2>/dev/null || true
+    return 1
+}
+
+rollback_activation_failure() {
+    result_id="$1"; result_detail="$(sanitize_detail "$2")"
+    if rollback_active_access; then
+        finish_activation_command "$result_id" false "$result_detail"
+        return 0
+    fi
+    write_activation_result "$result_id" pending "rollback-pending:$result_detail" || true
+    logger -t "$TAG" "activation rollback incomplete for $result_id; leaving command unacknowledged" 2>/dev/null || true
+    return 1
 }
 
 pull_once() {
@@ -721,8 +760,7 @@ pull_once() {
                     [ -n "$egress_wan_ipv4" ] || egress_wan_ipv4="$egress_wan"
                     [ -n "$egress_wan_ipv6" ] || egress_wan_ipv6="$egress_wan"
                     if { [ -n "$egress_wan_ipv4" ] && [ -z "$egress_wan_ipv6" ]; } || { [ -z "$egress_wan_ipv4" ] && [ -n "$egress_wan_ipv6" ]; }; then
-                        rollback_batch_access "$batch_count"
-                        ack "$id" false "incomplete-dual-egress-plan"
+                        ack_after_batch_rollback "$id" "$batch_count" "incomplete-dual-egress-plan"
                         return 1
                     fi
                     ;;
@@ -745,24 +783,22 @@ pull_once() {
                 mapped_record="$("$MAPPING" resolve-current "$wan" "$device" "$service_id" 2>/dev/null || true)"
                 if [ -z "$mapped_record" ]; then
                     logger -t "$TAG" "mapped activation has no current endpoint for ${wan}/${device}/${service_id}" 2>/dev/null || true
-                    rollback_batch_access "$batch_count"
-                    ack "$id" false "mapped-endpoint-unavailable"
+                    ack_after_batch_rollback "$id" "$batch_count" "mapped-endpoint-unavailable"
                     return 1
                 fi
                 oldifs="$IFS"; IFS='|'; set -- $mapped_record; IFS="$oldifs"
-                [ "$#" -eq 7 ] || { rollback_batch_access "$batch_count"; ack "$id" false "mapped-endpoint-invalid"; return 1; }
-                [ "$1" = "$wan" ] && [ "$2" = "$device" ] && [ "$3" = "$service_id" ] || { rollback_batch_access "$batch_count"; ack "$id" false "mapped-endpoint-mismatch"; return 1; }
+                [ "$#" -eq 7 ] || { ack_after_batch_rollback "$id" "$batch_count" "mapped-endpoint-invalid"; return 1; }
+                [ "$1" = "$wan" ] && [ "$2" = "$device" ] && [ "$3" = "$service_id" ] || { ack_after_batch_rollback "$id" "$batch_count" "mapped-endpoint-mismatch"; return 1; }
                 external_address="$4"
                 external_port="$5"
                 ingress_port="$6"
-                is_public_ipv4 "$external_address" && valid_port "$external_port" && valid_port "$ingress_port" || { rollback_batch_access "$batch_count"; ack "$id" false "mapped-endpoint-invalid"; return 1; }
+                is_public_ipv4 "$external_address" && valid_port "$external_port" && valid_port "$ingress_port" || { ack_after_batch_rollback "$id" "$batch_count" "mapped-endpoint-invalid"; return 1; }
                 mapped_detail=" mapped-endpoint:${external_address}:${external_port}"
             fi
 
             if ! prepare_activation_command "$id"; then
                 logger -t "$TAG" "activation result journal unavailable before side effects" 2>/dev/null || true
-                rollback_batch_access "$batch_count"
-                ack "$id" false "activation-result-journal-unavailable"
+                ack_after_batch_rollback "$id" "$batch_count" "activation-result-journal-unavailable"
                 return 1
             fi
 
@@ -792,8 +828,7 @@ pull_once() {
                         detail="$(sed -n 's/^ERROR: //p' "${TMP_BASE}.egress-error" 2>/dev/null | tail -n 1)"
                         [ -n "$detail" ] || detail="wireguard-egress-activation-failed"
                         logger -t "$TAG" "egress activation failed: $detail" 2>/dev/null || true
-                        rollback_active_access
-                        finish_activation_command "$id" false "$detail"
+                        rollback_activation_failure "$id" "$detail" || true
                     fi
                 elif [ "$egress_requested" -eq 1 ]; then
                     finish_activation_command "$id" true "web-authorization-active-pending-egress${mapped_detail}"
@@ -802,13 +837,11 @@ pull_once() {
                     finish_activation_command "$id" true "web-authorization-active${mapped_detail}"
                 fi
             else
-                rollback_batch_access "$batch_count"
-                [ -x "$EGRESS" ] && "$EGRESS" disable >/dev/null 2>&1 || true
                 detail="$(sed -n 's/^ERROR: //p' "$error_file" 2>/dev/null | tail -n 1)"
                 [ -n "$detail" ] || detail="$(tail -n 1 "$error_file" 2>/dev/null || true)"
                 [ -n "$detail" ] || detail="firewall-activation-failed"
                 logger -t "$TAG" "activation failed: $detail" 2>/dev/null || true
-                finish_activation_command "$id" false "$detail"
+                rollback_activation_failure "$id" "$detail" || true
             fi
             rm -f "$error_file" "${TMP_BASE}.egress-error"
             ;;
