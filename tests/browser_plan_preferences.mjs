@@ -121,7 +121,6 @@ try {
   const mappedRemapped = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) || '{}'), PREF_KEY);
   assert(mappedRemapped.endpoints?.ipv4?.selection?.value === 'ep-wan2-v4-mapped-new', 'same-WAN method-aware fallback did not refresh the Mapped endpoint id');
   assert(mappedRemapped.endpoints?.ipv4?.selection?.method === 'mapped', 'same-WAN method-aware fallback silently changed Access method');
-  assert(document !== undefined, 'browser context unexpectedly unavailable');
   const singleRows = await page.evaluate(() => JSON.parse(document.querySelector('#endpoint-select')?.selectedOptions?.[0]?.dataset.pathRows || '[]'));
   assert(singleRows[0]?.role === 'Mapped', `same-WAN fallback selected the wrong Access method: ${singleRows[0]?.role}`);
   assert(activatePosts === 0, `same-WAN method churn posted Activate (${activatePosts})`);
