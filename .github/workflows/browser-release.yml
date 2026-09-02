@@ -90,6 +90,9 @@ jobs:
       - name: WireGuard-bound endpoint preference regression
         run: node tests/browser_plan_service_identity.mjs
 
+      - name: Gate access profile binding regression
+        run: node tests/browser_gate_profile_binding.mjs
+
       - name: Manual Internet exit regression
         run: node tests/browser_egress_manual.mjs
 
