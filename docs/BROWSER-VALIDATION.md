@@ -16,6 +16,8 @@ Both release and candidate entry points call the same reusable `Browser Matrix C
 
 The shared matrix runs Chromium on both `ubuntu-latest` and `windows-latest`. Before test execution it verifies that the checked-out commit equals `GITHUB_SHA`.
 
+The fixture server is also part of the executable validation contract. It must survive across separate workflow steps on both operating systems. On Windows the child fixture process is launched without the GitHub Runner tracking identifier so runner orphan-process cleanup cannot terminate it between the startup step and the browser regressions; the next step verifies `/healthz` again before Playwright begins.
+
 The current executable regression set is:
 
 - dashboard layout/responsive regression;
@@ -24,7 +26,7 @@ The current executable regression set is:
 - manual endpoint preference regression;
 - WireGuard-bound plan preference regression;
 - Gate exact-profile/runtime-authority regression;
-- manual Internet Exit regression;
+- manual Internet Exit regression, including mobile/desktop Light and Dark theme interaction;
 - mixed Access/Internet Exit regression.
 
 A successful candidate matrix is Browser Matrix evidence for that exact `dev` SHA only. Any later commit invalidates that evidence and requires a new explicit candidate run.

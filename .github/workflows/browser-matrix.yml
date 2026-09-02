@@ -65,7 +65,13 @@ jobs:
           $stdout = Join-Path $env:RUNNER_TEMP 'remote-gate-ui-fixture.log'
           $stderr = Join-Path $env:RUNNER_TEMP 'remote-gate-ui-fixture.err'
           $pidFile = Join-Path $env:RUNNER_TEMP 'remote-gate-ui-fixture.pid'
-          $process = Start-Process python -ArgumentList 'tests/ui_fixture_server.py' -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+          $runnerTrackingId = $env:RUNNER_TRACKING_ID
+          try {
+            Remove-Item Env:RUNNER_TRACKING_ID -ErrorAction SilentlyContinue
+            $process = Start-Process python -ArgumentList 'tests/ui_fixture_server.py' -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+          } finally {
+            if ($null -ne $runnerTrackingId) { $env:RUNNER_TRACKING_ID = $runnerTrackingId }
+          }
           Set-Content -Path $pidFile -Value $process.Id
           for ($i = 0; $i -lt 20; $i++) {
             try {
@@ -75,6 +81,24 @@ jobs:
               Start-Sleep -Milliseconds 500
             }
           }
+          if (Test-Path $stdout) { Get-Content $stdout }
+          if (Test-Path $stderr) { Get-Content $stderr }
+          exit 1
+
+      - name: Verify fixture survives Windows step boundary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          for ($i = 0; $i -lt 10; $i++) {
+            try {
+              Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8765/healthz' | Out-Null
+              exit 0
+            } catch {
+              Start-Sleep -Milliseconds 250
+            }
+          }
+          $stdout = Join-Path $env:RUNNER_TEMP 'remote-gate-ui-fixture.log'
+          $stderr = Join-Path $env:RUNNER_TEMP 'remote-gate-ui-fixture.err'
           if (Test-Path $stdout) { Get-Content $stdout }
           if (Test-Path $stderr) { Get-Content $stderr }
           exit 1
