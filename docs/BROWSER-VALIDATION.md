@@ -29,6 +29,8 @@ The current executable regression set is:
 - manual Internet Exit regression, including mobile/desktop Light and Dark theme interaction;
 - mixed Access/Internet Exit regression.
 
+The WireGuard-bound regression also exercises rapid EndpointPicker close/reopen during an in-session service switch. A previous close transition must never hide a picker session that has already reopened; pending hide timers belong to the shared EndpointPicker lifecycle and must be cancelled before a new open session becomes current.
+
 A successful candidate matrix is Browser Matrix evidence for that exact `dev` SHA only. Any later commit invalidates that evidence and requires a new explicit candidate run.
 
 ## Truth rules

@@ -24,6 +24,18 @@ class VisibilityContractTests(unittest.TestCase):
         self.assertIn("select.tabIndex = redundant ? -1 : 0", body)
         self.assertNotIn("MutationObserver", body)
 
+    def test_endpoint_picker_reopen_cancels_stale_close_timer(self):
+        picker = PICKER.read_text(encoding="utf-8")
+        self.assertIn("let closeTimer = null", picker)
+        cancel = picker.split("function cancelPendingClose()", 1)[1].split("function pathRows", 1)[0]
+        self.assertIn("window.clearTimeout(closeTimer)", cancel)
+        self.assertIn("closeTimer = null", cancel)
+        open_body = picker.split("function open(selectId", 1)[1].split("function close()", 1)[0]
+        self.assertLess(open_body.index("cancelPendingClose()"), open_body.index("ensureLayer()"))
+        close_body = picker.split("function close()", 1)[1].split("function choose(value)", 1)[0]
+        self.assertLess(close_body.index("cancelPendingClose()"), close_body.index("closeTimer = window.setTimeout"))
+        self.assertIn("closeTimer = null", close_body)
+
     def test_internet_exit_uses_the_same_hidden_attribute_contract(self):
         gate = GATE.read_text(encoding="utf-8")
         body = gate.split("function syncEgressControl()", 1)[1].split("function selectedEgressPlan()", 1)[0]

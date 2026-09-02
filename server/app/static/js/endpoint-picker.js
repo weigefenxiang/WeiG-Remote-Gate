@@ -9,6 +9,13 @@
   let eyebrow = null;
   let activeSelectId = 'endpoint-select';
   let lastFocus = null;
+  let closeTimer = null;
+
+  function cancelPendingClose() {
+    if (closeTimer === null) return;
+    window.clearTimeout(closeTimer);
+    closeTimer = null;
+  }
 
   function pathRows(option) {
     const raw = String(option?.dataset?.pathRows || '');
@@ -258,6 +265,7 @@
   function open(selectId = 'endpoint-select') {
     const select = $(selectId), trigger = ensureTrigger(selectId);
     if (!select || select.disabled || !trigger) return;
+    cancelPendingClose();
     ensureLayer(); activeSelectId = selectId; lastFocus = document.activeElement;
     const config = configFor(selectId);
     if (eyebrow) eyebrow.textContent = String(config.eyebrow || '');
@@ -269,8 +277,12 @@
   function close() {
     const trigger = activeTrigger();
     if (!layer || layer.hidden) return;
+    cancelPendingClose();
     layer.classList.remove('open'); document.documentElement.classList.remove('endpoint-picker-open'); trigger?.setAttribute('aria-expanded', 'false');
-    window.setTimeout(() => { if (layer) layer.hidden = true; }, 190);
+    closeTimer = window.setTimeout(() => {
+      if (layer) layer.hidden = true;
+      closeTimer = null;
+    }, 190);
     if (lastFocus instanceof HTMLElement) lastFocus.focus({preventScroll:true});
   }
 
