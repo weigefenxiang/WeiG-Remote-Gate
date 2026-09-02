@@ -59,14 +59,17 @@ class DualEgressRuntimeContractTests(unittest.TestCase):
         self.assertIn('egress="$(egress_json)"', agent)
         self.assertIn('\\"egress\\":${egress}', agent)
         self.assertIn('detail="wireguard-egress-activation-failed"', agent)
-        self.assertIn('finish_activation_command "$id" false "$detail"', agent)
+        self.assertIn('rollback_activation_failure "$id" "$detail"', agent)
+        self.assertIn('if rollback_active_access; then', agent)
+        self.assertIn('finish_activation_command "$result_id" false "$result_detail"', agent)
 
     def test_agent_applies_one_split_dual_transaction(self):
         source = AGENT.read_text(encoding="utf-8")
         self.assertIn("egress_wan_ipv4", source)
         self.assertIn("egress_wan_ipv6", source)
         self.assertIn('"$EGRESS" enable-split "$wireguard" "$egress_wan_ipv4" "$egress_wan_ipv6" "$ttl"', source)
-        self.assertIn('rollback_batch_access "$batch_count"', source)
+        self.assertIn('ack_after_batch_rollback "$id" "$batch_count" "incomplete-dual-egress-plan"', source)
+        self.assertIn('rollback_batch_access "$count"', source)
         self.assertIn('incomplete-dual-egress-plan', source)
 
     def test_vps_sanitizes_and_persists_agent_egress(self):
