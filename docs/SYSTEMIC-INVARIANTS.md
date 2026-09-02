@@ -225,7 +225,8 @@ Examples:
 - stale mapper JSON without current owned process -> reject;
 - incomplete Dual egress -> roll back the whole Dual runtime;
 - if Gate authorization succeeds but the requested Internet Exit activation then fails, clear Gate authorization and egress before acknowledging failure;
-- if any member of a multi-family Activate batch expires before its ACK is accepted, treat router runtime as ambiguous, clear the remaining batch tail and queue a Close rollback regardless of that member's batch index;
+- if any pending Activate expires before its ACK is accepted, treat router runtime as ambiguous and queue a Close rollback; for a multi-family batch also clear the remaining batch tail regardless of which member expired;
+- if a Close attempt reports failure, keep that same Close pending for retry instead of treating failure as a terminal command result;
 - ambiguous WAN/service/port -> omit or reject rather than guess.
 
 ## 11. Asynchronous and stale-state investigations
@@ -240,7 +241,7 @@ Known examples:
 - a remap tuple may legitimately be numerically identical to a prior tuple;
 - mapper status is valid only with current managed-process ownership.
 
-An ACK timeout is not proof that an Activate command never executed on the router. For a multi-family batch, expiry of any unacknowledged member is therefore an uncertain-runtime condition and must reduce access through the Close rollback path rather than continuing the batch.
+An ACK timeout is not proof that an Activate command never executed on the router. Expiry of any unacknowledged Activate is therefore an uncertain-runtime condition: the Server archives that Activate, queues a Close rollback and blocks replacement Activate commands until the Close is resolved. For a multi-family batch, the remaining batch tail is also discarded. Expired Close commands do not recursively create more Close commands.
 
 OpenWrt command delivery is effectively at-least-once until the Server accepts an ACK, so an Activate command must also be replay-safe on the Agent. Before any Gate or Internet Exit side effect, the Agent records the command id as `pending` in its runtime command-result journal. After local execution converges, the final `true` or `false` result replaces `pending` before the ACK is sent.
 
@@ -248,11 +249,13 @@ The journal follows these fail-closed rules:
 
 - if the first ACK is lost, the same command id only replays the saved final ACK and must not repeat Gate or egress side effects;
 - if the same command id is later found in `pending`, local execution is uncertain, so Gate authorization and Internet Exit are cleared before a failure result is journaled and ACKed;
-- if an old non-final journal belongs to a different command id, the uncertain old runtime is cleared before the new Activate may execute;
+- if a journal belongs to a different command id, only a saved `false` result is safe to discard without rollback; saved `true`, `pending` or invalid state may represent live unacknowledged runtime and must be rolled back before the new Activate may execute;
 - if the Agent cannot create the pre-side-effect journal, it must not perform Activate side effects;
 - if the Agent cannot persist the final result, it must roll back runtime rather than acknowledge a success that cannot be replayed safely.
 
 The journal belongs to the same runtime-authority lifetime as the firewall/egress state and therefore lives in the runtime namespace rather than becoming long-lived configuration state.
+
+Close is intentionally asymmetric with Activate: re-executing Close is safe because it only reduces access. A failed Close ACK therefore leaves the same Close command pending under its existing deadline, records the failed attempt and lets the Agent pull the same id again. The Server must not extend the deadline automatically on each failure, and it must not allow a new Activate while that Close remains pending. Only a successful Close ACK is terminal.
 
 Wait for the defined bounded settle/ACK boundary, then inspect authoritative state.
 
@@ -335,3 +338,4 @@ Before implementing any network/UI change, answer all of these:
 11. Does Activate still require fresh, inventory-synchronized Agent authority while Close remains deliverable under degraded control-plane conditions?
 12. Is last-known diagnostic state kept separate from the projected authority view, with any stale runtime hint limited to safe Close behavior only?
 13. Can an Activate be retried, ACK-lost or interrupted without repeating uncertain side effects, and is its result journaled before Server acknowledgement?
+14. Does every expired unacknowledged Activate converge through a Close rollback, and does a failed Close stay retryable until success or its existing Close deadline?
