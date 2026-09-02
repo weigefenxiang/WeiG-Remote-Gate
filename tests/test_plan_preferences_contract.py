@@ -66,6 +66,10 @@ class PlanPreferenceContractTests(unittest.TestCase):
         self.assertNotIn("endpointScore", reconcile)
         self.assertNotIn("preferredSelection", reconcile)
         self.assertNotIn("select.value", reconcile)
+        bind_wrapper = source.split("controls.bind = (nextContext) =>", 1)[1].split("controls.render =", 1)[0]
+        self.assertIn("const originalOnWireGuardChange = nextContext?.onWireGuardChange", bind_wrapper)
+        self.assertIn("nextContext.onWireGuardChange = (...args) =>", bind_wrapper)
+        self.assertLess(bind_wrapper.index("reconcileRuntimeWireguard()"), bind_wrapper.index("originalOnWireGuardChange?.(...args)"))
         render_wrapper = source.split("controls.render = (currentData) =>", 1)[1].split("window.addEventListener", 1)[0]
         self.assertLess(render_wrapper.index("reconcileRuntimeWireguard()"), render_wrapper.index("originalRender(currentData)"))
 

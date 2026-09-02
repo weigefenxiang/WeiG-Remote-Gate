@@ -58,73 +58,79 @@ jobs:
           cat "$RUNNER_TEMP/remote-gate-ui-fixture.log"
           exit 1
 
-      - name: Start fixture server (Windows)
+      - name: Windows browser matrix with fixture
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           $stdout = Join-Path $env:RUNNER_TEMP 'remote-gate-ui-fixture.log'
           $stderr = Join-Path $env:RUNNER_TEMP 'remote-gate-ui-fixture.err'
-          $pidFile = Join-Path $env:RUNNER_TEMP 'remote-gate-ui-fixture.pid'
-          $runnerTrackingId = $env:RUNNER_TRACKING_ID
+          $process = Start-Process python -ArgumentList 'tests/ui_fixture_server.py' -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
           try {
-            Remove-Item Env:RUNNER_TRACKING_ID -ErrorAction SilentlyContinue
-            $process = Start-Process python -ArgumentList 'tests/ui_fixture_server.py' -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
-          } finally {
-            if ($null -ne $runnerTrackingId) { $env:RUNNER_TRACKING_ID = $runnerTrackingId }
-          }
-          Set-Content -Path $pidFile -Value $process.Id
-          for ($i = 0; $i -lt 20; $i++) {
-            try {
-              Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8765/healthz' | Out-Null
-              exit 0
-            } catch {
-              Start-Sleep -Milliseconds 500
+            $healthy = $false
+            for ($i = 0; $i -lt 20; $i++) {
+              try {
+                Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8765/healthz' | Out-Null
+                $healthy = $true
+                break
+              } catch {
+                Start-Sleep -Milliseconds 500
+              }
             }
-          }
-          if (Test-Path $stdout) { Get-Content $stdout }
-          if (Test-Path $stderr) { Get-Content $stderr }
-          exit 1
+            if (-not $healthy) { throw 'Windows fixture did not become healthy' }
 
-      - name: Verify fixture survives Windows step boundary
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          for ($i = 0; $i -lt 10; $i++) {
-            try {
-              Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8765/healthz' | Out-Null
-              exit 0
-            } catch {
-              Start-Sleep -Milliseconds 250
-            }
+            & node tests/browser_layout.mjs
+            if ($LASTEXITCODE -ne 0) { throw 'browser_layout.mjs failed' }
+            & node tests/browser_access_pathcard.mjs
+            if ($LASTEXITCODE -ne 0) { throw 'browser_access_pathcard.mjs failed' }
+            & node tests/browser_split_dual.mjs
+            if ($LASTEXITCODE -ne 0) { throw 'browser_split_dual.mjs failed' }
+            & node tests/browser_plan_preferences.mjs
+            if ($LASTEXITCODE -ne 0) { throw 'browser_plan_preferences.mjs failed' }
+            & node tests/browser_plan_service_identity.mjs
+            if ($LASTEXITCODE -ne 0) { throw 'browser_plan_service_identity.mjs failed' }
+            & node tests/browser_gate_profile_binding.mjs
+            if ($LASTEXITCODE -ne 0) { throw 'browser_gate_profile_binding.mjs failed' }
+            & node tests/browser_egress_manual.mjs
+            if ($LASTEXITCODE -ne 0) { throw 'browser_egress_manual.mjs failed' }
+            & node tests/browser_mixed_egress.mjs
+            if ($LASTEXITCODE -ne 0) { throw 'browser_mixed_egress.mjs failed' }
+          } finally {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            if (Test-Path $stdout) { Get-Content $stdout }
+            if (Test-Path $stderr) { Get-Content $stderr }
           }
-          $stdout = Join-Path $env:RUNNER_TEMP 'remote-gate-ui-fixture.log'
-          $stderr = Join-Path $env:RUNNER_TEMP 'remote-gate-ui-fixture.err'
-          if (Test-Path $stdout) { Get-Content $stdout }
-          if (Test-Path $stderr) { Get-Content $stderr }
-          exit 1
 
       - name: Browser layout regression
+        if: runner.os == 'Linux'
         run: node tests/browser_layout.mjs
 
       - name: Access PathCard browser regression
+        if: runner.os == 'Linux'
         run: node tests/browser_access_pathcard.mjs
 
       - name: Split WAN Dual browser regression
+        if: runner.os == 'Linux'
         run: node tests/browser_split_dual.mjs
 
       - name: Manual endpoint preference regression
+        if: runner.os == 'Linux'
         run: node tests/browser_plan_preferences.mjs
 
       - name: WireGuard-bound endpoint preference regression
+        if: runner.os == 'Linux'
         run: node tests/browser_plan_service_identity.mjs
 
       - name: Gate access profile binding regression
+        if: runner.os == 'Linux'
         run: node tests/browser_gate_profile_binding.mjs
 
       - name: Manual Internet exit regression
+        if: runner.os == 'Linux'
         run: node tests/browser_egress_manual.mjs
 
       - name: Mixed Access and Internet exit regression
+        if: runner.os == 'Linux'
         run: node tests/browser_mixed_egress.mjs
 
       - name: Stop fixture server (Linux)
@@ -133,17 +139,3 @@ jobs:
         run: |
           [ -f "$RUNNER_TEMP/remote-gate-ui-fixture.pid" ] && kill "$(cat "$RUNNER_TEMP/remote-gate-ui-fixture.pid")" 2>/dev/null || true
           cat "$RUNNER_TEMP/remote-gate-ui-fixture.log" 2>/dev/null || true
-
-      - name: Stop fixture server (Windows)
-        if: always() && runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $pidFile = Join-Path $env:RUNNER_TEMP 'remote-gate-ui-fixture.pid'
-          $stdout = Join-Path $env:RUNNER_TEMP 'remote-gate-ui-fixture.log'
-          $stderr = Join-Path $env:RUNNER_TEMP 'remote-gate-ui-fixture.err'
-          if (Test-Path $pidFile) {
-            $fixturePid = Get-Content $pidFile
-            Stop-Process -Id $fixturePid -Force -ErrorAction SilentlyContinue
-          }
-          if (Test-Path $stdout) { Get-Content $stdout }
-          if (Test-Path $stderr) { Get-Content $stderr }

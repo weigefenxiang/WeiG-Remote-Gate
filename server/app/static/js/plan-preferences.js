@@ -174,6 +174,13 @@
 
   controls.bind = (nextContext) => {
     hydrateState(nextContext);
+    const originalOnWireGuardChange = nextContext?.onWireGuardChange;
+    if (nextContext && typeof nextContext === 'object') {
+      nextContext.onWireGuardChange = (...args) => {
+        reconcileRuntimeWireguard();
+        return originalOnWireGuardChange?.(...args);
+      };
+    }
     return originalBind(nextContext);
   };
 

@@ -31,12 +31,18 @@ class VisibilityContractTests(unittest.TestCase):
         self.assertIn("preference.mode === 'dual'", body)
         self.assertNotIn("style.display", body)
 
-    def test_windows_browser_fixture_survives_step_process_cleanup(self):
+    def test_windows_browser_fixture_and_regressions_share_one_step_lifetime(self):
         workflow = BROWSER_MATRIX.read_text(encoding="utf-8")
-        self.assertIn("$runnerTrackingId = $env:RUNNER_TRACKING_ID", workflow)
-        self.assertIn("Remove-Item Env:RUNNER_TRACKING_ID", workflow)
-        self.assertIn("$env:RUNNER_TRACKING_ID = $runnerTrackingId", workflow)
-        self.assertIn("Verify fixture survives Windows step boundary", workflow)
+        self.assertIn("Windows browser matrix with fixture", workflow)
+        windows = workflow.split("- name: Windows browser matrix with fixture", 1)[1].split("- name: Browser layout regression", 1)[0]
+        self.assertIn("Start-Process python", windows)
+        self.assertIn("Invoke-WebRequest", windows)
+        self.assertIn("node tests/browser_layout.mjs", windows)
+        self.assertIn("node tests/browser_mixed_egress.mjs", windows)
+        self.assertIn("finally", windows)
+        self.assertIn("Stop-Process", windows)
+        self.assertNotIn("RUNNER_TRACKING_ID", workflow)
+        self.assertNotIn("Verify fixture survives Windows step boundary", workflow)
 
 
 if __name__ == "__main__":
