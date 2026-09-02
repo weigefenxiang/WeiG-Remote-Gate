@@ -7,7 +7,7 @@ import time
 from http.server import ThreadingHTTPServer
 from urllib.parse import urlparse
 
-from app.client_sources import agent_status_is_fresh, fail_closed_agent_status, observe_candidate, observe_source, source_record_for_family
+from app.client_sources import agent_status_is_fresh, observe_candidate, observe_source, source_record_for_family
 from app.endpoints import is_globally_reachable_unicast, validate_inventory_v2, validate_inventory_v3
 from app.gate import GateError, queue_activate, queue_activate_many
 from app.main import Handler as BaseHandler
@@ -254,13 +254,6 @@ def _sanitize_stored_inventory() -> None:
             STORE.write("inventory-v2.json", clean2)
 
 
-def _sanitize_stored_agent_status() -> None:
-    raw = STORE.read("agent-status.json", {})
-    clean = fail_closed_agent_status(raw)
-    if clean != raw:
-        STORE.write("agent-status.json", clean)
-
-
 class Handler(BaseHandler):
     def _send_headers(self, status: int, content_type: str, length: int | None = None) -> None:
         self.send_response(status)
@@ -277,7 +270,6 @@ class Handler(BaseHandler):
     def do_GET(self) -> None:
         if urlparse(self.path).path == "/api/v1/dashboard":
             _sanitize_stored_inventory()
-            _sanitize_stored_agent_status()
         super().do_GET()
 
     def _candidate_post(self) -> None:
