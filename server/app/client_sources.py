@@ -31,6 +31,121 @@ def _globally_reachable_unicast(value: object, version: int | None = None) -> bo
     return True
 
 
+def agent_status_is_fresh(value: object, *, now: int | None = None) -> bool:
+    if not isinstance(value, dict):
+        return False
+    current = int(time.time()) if now is None else int(now)
+    try:
+        reported_at = int(value.get("reported_at", 0) or 0)
+    except (TypeError, ValueError):
+        return False
+    if reported_at <= 0 or reported_at > current + AGENT_STATUS_FRESH_SECONDS:
+        return False
+    return current - reported_at <= AGENT_STATUS_FRESH_SECONDS
+
+
+def fail_closed_agent_status(value: object, *, now: int | None = None) -> dict[str, Any]:
+    """Return current Agent authority, or an inactive diagnostic shell when stale.
+
+    A stale report is useful only for diagnostics such as the last report time or
+    firewall backend name. Runtime claims must fail closed so cached Gate,
+    WireGuard, egress, mapping and transport state cannot remain authoritative
+    after the OpenWrt agent stops reporting.
+    """
+    item = value if isinstance(value, dict) else {}
+    if agent_status_is_fresh(item, now=now):
+        result = dict(item)
+        result["fresh"] = True
+        return result
+
+    try:
+        schema = max(1, min(3, int(item.get("schema", 1) or 1)))
+    except (TypeError, ValueError):
+        schema = 1
+    try:
+        reported_at = max(0, int(item.get("reported_at", 0) or 0))
+    except (TypeError, ValueError):
+        reported_at = 0
+    firewall = item.get("firewall") if isinstance(item.get("firewall"), dict) else {}
+    transport = item.get("transport") if isinstance(item.get("transport"), dict) else {}
+    backend = str(firewall.get("backend") or "")[:32]
+    try:
+        last_ok_at = max(0, int(transport.get("last_ok_at", 0) or 0))
+    except (TypeError, ValueError):
+        last_ok_at = 0
+
+    def inactive_family(family: str) -> dict[str, Any]:
+        return {
+            "active": False,
+            "family": family,
+            "scope": "",
+            "expires_in": 0,
+            "source_ip": "",
+            "source_kind": "",
+            "device": "",
+            "wg_port": 0,
+            "ingress_port": 0,
+            "authorized_sources": [],
+            "authorizations": [],
+            "source_count": 0,
+        }
+
+    return {
+        "schema": schema,
+        "reported_at": reported_at,
+        "fresh": False,
+        "wireguard": [],
+        "firewall": {
+            "backend": backend,
+            "ready": False,
+            "ipv6_capable": False,
+            "active": False,
+            "family": "",
+            "scope": "",
+            "expires_in": 0,
+            "source_ip": "",
+            "device": "",
+            "wg_port": 0,
+            "ingress_port": 0,
+            "families": {
+                "ipv4": inactive_family("ipv4"),
+                "ipv6": inactive_family("ipv6"),
+            },
+            "protected_devices_v4": 0,
+            "protected_devices_v6": 0,
+            "protected_ports": 0,
+        },
+        "egress": {
+            "active": False,
+            "state": "inactive",
+            "mode": "",
+            "wan": "",
+            "device": "",
+            "wan_v4": "",
+            "device_v4": "",
+            "wan_v6": "",
+            "device_v6": "",
+            "wg": "",
+            "ipv4_subnet": "",
+            "ipv6_subnet": "",
+            "detail": "stale_agent_status",
+            "expires_in": 0,
+        },
+        "mapping": {
+            "available": False,
+            "state": "unavailable",
+            "active_mappings": 0,
+            "detail": "stale_agent_status",
+        },
+        "transport": {
+            "active_family": "",
+            "active_device": "",
+            "healthy": False,
+            "last_ok_at": last_ok_at,
+        },
+    }
+
+
 def _known_router_external_addresses(store: JsonStore, current: int) -> set[str]:
     """Return current public addresses known to belong to this Remote Gate router.
 
@@ -86,16 +201,10 @@ def _known_router_external_addresses(store: JsonStore, current: int) -> set[str]
 def _active_authorized_sources(store: JsonStore, family: str, *, now: int) -> set[str]:
     """Return current authorized sources for one family from fresh agent state."""
     agent = store.read("agent-status.json", {})
+    if not agent_status_is_fresh(agent, now=now):
+        return set()
     firewall = agent.get("firewall") if isinstance(agent, dict) else None
     if not isinstance(firewall, dict):
-        return set()
-    try:
-        reported_at = int(agent.get("reported_at", 0) or 0)
-    except (TypeError, ValueError):
-        return set()
-    if reported_at <= 0 or reported_at > now + AGENT_STATUS_FRESH_SECONDS:
-        return set()
-    if now - reported_at > AGENT_STATUS_FRESH_SECONDS:
         return set()
 
     family_state: dict[str, Any] | None = None
