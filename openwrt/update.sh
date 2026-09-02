@@ -149,7 +149,7 @@ else
 fi
 
 append_default() { key="$1" value="$2"; grep -Eq "^${key}=" "$CONFIG_FILE" 2>/dev/null || printf "%s='%s'\n" "$key" "$value" >> "$CONFIG_FILE"; }
-append_default GATE_IPV6 disabled
+append_default GATE_IPV6 auto
 append_default CONTROL_TRANSPORT auto
 append_default MAPPED_ACCESS auto
 grep -Ev '^NATMAP_DISCOVERY=' "$CONFIG_FILE" > "$TMP_DIR/remote-gate.conf.migrated" || true
@@ -184,7 +184,11 @@ SUCCESS=1; trap - EXIT INT TERM; rm -rf "$TMP_DIR"
 printf 'WeiG Remote Gate OpenWrt-family updated: %s -> %s\n' "$local_version" "$remote_version"
 printf 'Platform: %s %s | service=%s | package=%s | ABI=%s\n' "$DIST" "$RELEASE" "$INIT_SYSTEM" "$PKG_MANAGER" "${PKG_ARCH:-unknown}"
 printf 'Backup: %s\n' "$BACKUP"
-printf 'IPv6 Gate mode: %s\n' "$(sed -n "s/^GATE_IPV6='\([^']*\)'/\1/p" "$CONFIG_FILE" | sed -n '1p')"
+ipv6_mode="$(sed -n "s/^GATE_IPV6='\([^']*\)'/\1/p" "$CONFIG_FILE" | sed -n '1p')"
+printf 'IPv6 Gate mode: %s\n' "${ipv6_mode:-auto}"
+if [ "$ipv6_mode" = disabled ] && "$LIB_DIR/remote-gate-firewall.sh" ipv6-capable >/dev/null 2>&1; then
+    printf "WARN: IPv6 Gate is disabled by preserved configuration even though this router is IPv6-firewall-capable. Set GATE_IPV6='auto' to expose IPv6/Dual capability.\n" >&2
+fi
 if sh "$LIB_DIR/remote-gate-mapper-install.sh" current >/dev/null 2>&1; then
     printf 'Mapped Access: mapper binary matches current VERSION and exact Package ABI\n'
 elif [ -x "$LIB_DIR/remote-gate-mapper" ]; then

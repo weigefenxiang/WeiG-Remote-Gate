@@ -90,6 +90,16 @@ WAN list
 
 Do not reopen the generic claim that current IPv4 dashboard data/default selection is wrong unless a new regression is shown.
 
+The user also confirmed on the current MT7981/fw3 router that:
+
+```text
+GATE_IPV6='auto'
+remote-gate-firewall.sh ipv6-capable -> success
+IPv6 firewall capability -> YES
+```
+
+With that current capability authority, the dashboard IPv6 and Dual Family controls become selectable. This closes the prior "controls are black because legacy config kept IPv6 disabled" diagnosis. It is capability/UI availability evidence only; IPv6 Gate Activate/handshake/Close and Dual data-plane hardware validation are still pending.
+
 Manual endpoint-selection persistence on real hardware is still not separately confirmed.
 
 ## Current implemented architecture/UI state
@@ -103,7 +113,14 @@ The following items are now implemented in `dev` and covered by contract/static 
 - Dual requires both IPv4 and IPv6 Gate capability.
 - unavailable capability is disabled with a reason instead of creating a selectable-but-unactivatable dead end.
 
-Current known hardware still has IPv6 Gate disabled; this implementation status is not IPv6 hardware PASS.
+The current physical router is now confirmed IPv6-firewall-capable when `GATE_IPV6='auto'`, and IPv6/Dual controls are selectable. This is not IPv6 Gate data-plane hardware PASS.
+
+Configuration defaults follow capability detection rather than disabling a supported family by default:
+
+- fresh OpenWrt-family install writes `GATE_IPV6='auto'`;
+- the Agent treats a missing/invalid value as `auto`;
+- update migration now appends `auto` when the key is missing;
+- an existing explicit `GATE_IPV6='disabled'` is preserved rather than silently overwritten, but the updater warns when the router is IPv6-firewall-capable so the operator can switch it to `auto` deliberately.
 
 ### Access eligibility
 
@@ -262,7 +279,7 @@ Do not claim PASS for:
 
 ```text
 manual endpoint-selection persistence
-IPv6 Gate
+IPv6 Gate Activate/handshake/Close data plane
 same-WAN Dual data plane
 split-WAN Dual data plane
 independent Internet Exit family-mode hardware paths

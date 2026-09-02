@@ -162,11 +162,18 @@ class FirewallBackendTests(unittest.TestCase):
         self.assertIn('is_global_ipv6 "$address" && printf', collect)
         self.assertNotIn('jsonfilter -e \'@["ipv6-address"][*].address\' 2>/dev/null >> "$base.v6"', collect)
 
-    def test_upgrade_keeps_ipv6_disabled_for_legacy_installations(self):
-        self.assertIn("GATE_IPV6='auto'", INSTALL.read_text(encoding="utf-8"))
+    def test_ipv6_gate_defaults_to_auto_and_upgrade_preserves_explicit_disabled(self):
+        install = INSTALL.read_text(encoding="utf-8")
         update = UPDATE.read_text(encoding="utf-8")
-        self.assertIn("append_default GATE_IPV6 disabled", update)
-        self.assertNotIn("append_default GATE_IPV6 auto", update)
+        agent = AGENT.read_text(encoding="utf-8")
+
+        self.assertIn("GATE_IPV6='auto'", install)
+        self.assertIn('GATE_IPV6="${GATE_IPV6:-auto}"', agent)
+        self.assertIn("append_default GATE_IPV6 auto", update)
+        self.assertNotIn("append_default GATE_IPV6 disabled", update)
+        self.assertIn('grep -Eq "^${key}=" "$CONFIG_FILE"', update)
+        self.assertIn("IPv6 Gate is disabled by preserved configuration", update)
+        self.assertIn("Set GATE_IPV6='auto' to expose IPv6/Dual capability", update)
 
 
 if __name__ == "__main__":

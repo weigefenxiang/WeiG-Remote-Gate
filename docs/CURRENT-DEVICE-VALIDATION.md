@@ -29,12 +29,18 @@ Do not encode these literal names, addresses or device IDs as general policy.
 Current physical router:
 
 ```text
-IPv4 Gate: enabled/validated
-IPv6 Gate: disabled
-Mapped IPv4: available on the tested fw3 device
+IPv4 Gate:                enabled/validated
+IPv6 firewall capability: YES (user-confirmed)
+IPv6/Dual Family control: selectable with GATE_IPV6='auto'
+IPv6 Gate data plane:     not yet validated
+Mapped IPv4:              available on the tested fw3 device
 ```
 
-Because IPv6 Gate is disabled, IPv6 Gate and Dual Gate are not real-device PASS. The approved UI contract exposes the unavailable capability clearly but disables the action rather than allowing a user to enter a flow that cannot Activate. Current `dev` implements that capability-aware model; deployment on the physical router/VPS must still be validated separately from the software contract.
+The user explicitly confirmed on the current MT7981/fw3 router that `GATE_IPV6='auto'`, `remote-gate-firewall.sh ipv6-capable` succeeds and the resulting diagnostic prints `IPv6 firewall: YES`. After that configuration correction, the dashboard IPv6 and Dual Family controls became selectable. This proves the previous black/disabled controls were caused by preserved configuration, not a missing IPv6 firewall capability on this router.
+
+This does **not** make IPv6 Gate or Dual Gate real-device PASS. No IPv6 Gate Activate -> external handshake -> Close data-plane lifecycle has yet been recorded, and neither same-WAN nor split-WAN Dual has completed hardware validation.
+
+The product default is capability-aware: fresh installs and missing-value Agent fallback use `GATE_IPV6='auto'`. The updater must also use `auto` when adding a missing key. An existing explicit `disabled` value remains preserved rather than being overwritten; on an IPv6-capable router the updater should surface that preserved opt-out clearly so legacy configuration cannot masquerade as missing hardware capability.
 
 ## User-confirmed dashboard data
 
@@ -147,7 +153,7 @@ Do not report PASS yet for:
 ```text
 manual endpoint-selection persistence on the real device
 multiple registered WireGuard service selection on the real device
-IPv6 Gate after explicitly enabling it
+IPv6 Gate Activate/handshake/Close data plane
 same-WAN Dual data plane
 split-WAN Dual data plane
 independent per-family Internet Exit plans on hardware
@@ -190,7 +196,7 @@ Current `dev` implements the documented architecture/UI rules below:
 - no user-facing Private/CGNAT Access Endpoint;
 - Internet Exit modes `none / ipv4 / ipv6 / dual` independent from Access Gate family;
 - default exit mode follows Access family only as a recommendation;
-- IPv6/Dual controls disabled when IPv6 Gate capability is unavailable;
+- IPv6/Dual controls follow current IPv6 Gate capability; the current router now reports that capability when `GATE_IPV6='auto'`;
 - Dual PathCard uses two FamilyPathBlocks/four information lines without redundant `Split WAN` text;
 - WireGuard `service_port` stays dynamically discovered.
 
