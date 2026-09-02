@@ -132,6 +132,41 @@ class GateTests(unittest.TestCase):
         self.assertEqual(queue["last"]["state"], "failed")
         self.assertEqual(queue["last"]["detail"], "failed-v4")
 
+    def test_expired_followup_batch_command_queues_rollback_close(self):
+        now = int(time.time())
+        second = {
+            "schema": 3,
+            "id": "second",
+            "action": "activate",
+            "family": "ipv6",
+            "source_ip": "2001:4860:4860::8888",
+            "batch_id": "batch",
+            "batch_index": 1,
+            "batch_count": 2,
+            "ttl": 300,
+            "state": "pending",
+            "created_at": now - 120,
+            "expires_at": now - 1,
+        }
+        self.store.write("commands.json", {"pending": second, "next": [], "last": None})
+
+        rollback = pull_command(self.store)
+        self.assertIsNotNone(rollback)
+        self.assertEqual(rollback["action"], "close")
+        self.assertEqual(rollback["rollback_for_batch"], "batch")
+        self.assertEqual(rollback["expires_at"] - rollback["created_at"], 300)
+        queue = self.store.read("commands.json", {})
+        self.assertEqual(queue["last"]["id"], "second")
+        self.assertEqual(queue["last"]["state"], "expired")
+        self.assertEqual(queue["pending"]["id"], rollback["id"])
+        self.assertEqual(queue["next"], [])
+
+        with self.assertRaisesRegex(GateError, "command_pending"):
+            self.activate()
+        self.assertEqual(self.store.read("commands.json", {})["pending"]["id"], rollback["id"])
+        events = self.store.read("activity.json", [])
+        self.assertTrue(any(item.get("type") == "batch_rollback_queued" and item.get("batch_id") == "batch" for item in events))
+
     def test_dashboard_view_archives_expired_pending_command(self):
         expired = {
             "schema": 2,
