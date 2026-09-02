@@ -166,6 +166,10 @@ fw4/nftables Mapped restore now has an executable CI harness on `dev`, not only 
 
 Dual/single-family Internet Exit runtime health checking now also has executable CI coverage. `sync_egress()` no longer treats the presence of any one fw4 egress comment as proof that the whole firewall runtime is healthy: every enabled family must retain its outbound rule, return rule and NAT/NAT66 rule. The fw3 path likewise verifies its family-specific forward/return rules, FORWARD/POSTROUTING jumps and MASQUERADE rule instead of checking only the filter-chain jump. An executable fake-fw4 regression proves that a complete Dual firewall remains active while a Dual runtime with only IPv6 NAT66 removed is detected as incomplete, the old state is cleared and the existing atomic rebuild/fail-closed path is entered. This is software evidence only; same-WAN/split-WAN Dual hardware data-plane validation remains pending.
 
+Single-family Activate failure after Gate authorization now has executable Agent-level CI coverage. The regression runs the real `pull_once()` flow with a fake firewall that successfully authorizes IPv4 and a fake Internet Exit helper that then fails. The required sequence is verified as `firewall activate -> egress enable failure -> firewall clear + egress disable -> failure ACK`, with no success ACK. This closes the software bug where a failed Internet Exit activation could previously leave a single-family Gate authorization active, but it is not additional hardware validation.
+
+Multi-family Activate command expiry now has explicit Server queue coverage for ACK-loss ambiguity. If either the first or a later member of a Dual batch expires before its ACK is accepted, the Server archives that member as expired, clears the remaining batch tail and queues a Close rollback for the batch. A late ACK for the expired command cannot revive it. This preserves fail-closed Dual transaction semantics under control-plane uncertainty; real same-WAN/split-WAN Dual data-plane validation remains pending.
+
 ## Approved design target that is not yet hardware validation
 
 The next implementation is expected to follow these documented rules:
