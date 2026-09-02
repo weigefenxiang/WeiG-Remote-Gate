@@ -7,6 +7,8 @@ EGRESS="/usr/lib/remote-gate/remote-gate-wireguard-egress.sh"
 SERVICES="/usr/lib/remote-gate/remote-gate-service-registry.sh"
 MAPPING="/usr/lib/remote-gate/remote-gate-mapping.sh"
 STATE_DIR="/etc/remote-gate-state"
+RUNTIME_DIR="${REMOTE_GATE_RUNTIME_DIR:-/tmp/remote-gate}"
+COMMAND_RESULT_FILE="$RUNTIME_DIR/agent-command-result"
 TAG="remote-gate"
 TMP_BASE="/tmp/remote-gate-agent.$$"
 INV_DIR="${TMP_BASE}.inventory"
@@ -521,10 +523,66 @@ sanitize_detail() {
     printf '%s' "$1" | tr '\r\n' '  ' | sed 's/[^A-Za-z0-9 ._:/(),+-]/_/g' | cut -c1-200
 }
 
-ack() {
+send_ack() {
     id="$1"; ok="$2"; detail="$(sanitize_detail "$3")"
     payload="{\"id\":\"${id}\",\"ok\":${ok},\"detail\":\"${detail}\"}"
-    control_request POST "/api/v1/agent/ack" "$BODY" "$payload" >/dev/null 2>&1 || true
+    control_request POST "/api/v1/agent/ack" "$BODY" "$payload" >/dev/null 2>&1 && [ "$CONTROL_CODE" = "204" ]
+}
+
+ack() { send_ack "$1" "$2" "$3" || true; }
+
+clear_activation_result() {
+    expected="${1:-}"
+    [ -r "$COMMAND_RESULT_FILE" ] || return 0
+    if [ -n "$expected" ]; then
+        saved_id="$(sed -n '1p' "$COMMAND_RESULT_FILE" 2>/dev/null)"
+        [ "$saved_id" = "$expected" ] || return 0
+    fi
+    rm -f "$COMMAND_RESULT_FILE"
+}
+
+remember_activation_result() {
+    result_id="$1"; result_ok="$2"; result_detail="$(sanitize_detail "$3")"
+    case "$result_ok" in true|false) ;; *) return 1 ;; esac
+    mkdir -p "$RUNTIME_DIR" || return 1
+    chmod 700 "$RUNTIME_DIR" 2>/dev/null || true
+    result_tmp="${COMMAND_RESULT_FILE}.tmp.$$"
+    {
+        printf '%s\n' "$result_id"
+        printf '%s\n' "$result_ok"
+        printf '%s\n' "$result_detail"
+    } > "$result_tmp" || { rm -f "$result_tmp"; return 1; }
+    chmod 600 "$result_tmp" 2>/dev/null || true
+    mv -f "$result_tmp" "$COMMAND_RESULT_FILE"
+}
+
+finish_activation_command() {
+    result_id="$1"; result_ok="$2"; result_detail="$(sanitize_detail "$3")"
+    remember_activation_result "$result_id" "$result_ok" "$result_detail" || logger -t "$TAG" "cannot persist activation result for ACK replay" 2>/dev/null || true
+    if send_ack "$result_id" "$result_ok" "$result_detail"; then
+        clear_activation_result "$result_id"
+    fi
+    return 0
+}
+
+replay_activation_result() {
+    expected="$1"
+    [ -r "$COMMAND_RESULT_FILE" ] || return 1
+    saved_id="$(sed -n '1p' "$COMMAND_RESULT_FILE" 2>/dev/null)"
+    saved_ok="$(sed -n '2p' "$COMMAND_RESULT_FILE" 2>/dev/null)"
+    saved_detail="$(sed -n '3p' "$COMMAND_RESULT_FILE" 2>/dev/null)"
+    if [ "$saved_id" != "$expected" ]; then
+        rm -f "$COMMAND_RESULT_FILE"
+        return 1
+    fi
+    case "$saved_ok" in
+        true|false) ;;
+        *) rm -f "$COMMAND_RESULT_FILE"; return 1 ;;
+    esac
+    if send_ack "$saved_id" "$saved_ok" "$saved_detail"; then
+        clear_activation_result "$saved_id"
+    fi
+    return 0
 }
 
 rollback_active_access() {
@@ -552,6 +610,14 @@ pull_once() {
     if [ "$mode" = "close-only" ] && [ "$action" != "close" ]; then
         logger -t "$TAG" "status not published; pending ${action:-unknown} command left queued" 2>/dev/null || true
         return 0
+    fi
+    if [ "$action" = "activate" ]; then
+        if replay_activation_result "$id"; then
+            logger -t "$TAG" "activation command $id result replayed without re-execution" 2>/dev/null || true
+            return 0
+        fi
+    else
+        clear_activation_result
     fi
     expires_at="$(jsonfilter -i "$BODY" -e '@.expires_at' 2>/dev/null | sed -n '1p')"
     now="$(date +%s)"
@@ -626,8 +692,8 @@ pull_once() {
                     [ -n "$egress_wan_ipv4" ] || egress_wan_ipv4="$egress_wan"
                     [ -n "$egress_wan_ipv6" ] || egress_wan_ipv6="$egress_wan"
                     if { [ -n "$egress_wan_ipv4" ] && [ -z "$egress_wan_ipv6" ]; } || { [ -z "$egress_wan_ipv4" ] && [ -n "$egress_wan_ipv6" ]; }; then
-                        ack "$id" false "incomplete-dual-egress-plan"
                         rollback_batch_access "$batch_count"
+                        ack "$id" false "incomplete-dual-egress-plan"
                         return 1
                     fi
                     ;;
@@ -685,19 +751,19 @@ pull_once() {
                         esac
                     fi
                     if [ "$egress_ok" = true ]; then
-                        ack "$id" true "web-authorization-and-${egress_mode}-egress-active${mapped_detail}"
+                        finish_activation_command "$id" true "web-authorization-and-${egress_mode}-egress-active${mapped_detail}"
                     else
                         detail="$(sed -n 's/^ERROR: //p' "${TMP_BASE}.egress-error" 2>/dev/null | tail -n 1)"
                         [ -n "$detail" ] || detail="wireguard-egress-activation-failed"
                         logger -t "$TAG" "egress activation failed: $detail" 2>/dev/null || true
                         rollback_active_access
-                        ack "$id" false "$detail"
+                        finish_activation_command "$id" false "$detail"
                     fi
                 elif [ "$egress_requested" -eq 1 ]; then
-                    ack "$id" true "web-authorization-active-pending-egress${mapped_detail}"
+                    finish_activation_command "$id" true "web-authorization-active-pending-egress${mapped_detail}"
                 else
                     [ -x "$EGRESS" ] && "$EGRESS" disable >/dev/null 2>&1 || true
-                    ack "$id" true "web-authorization-active${mapped_detail}"
+                    finish_activation_command "$id" true "web-authorization-active${mapped_detail}"
                 fi
             else
                 rollback_batch_access "$batch_count"
@@ -706,7 +772,7 @@ pull_once() {
                 [ -n "$detail" ] || detail="$(tail -n 1 "$error_file" 2>/dev/null || true)"
                 [ -n "$detail" ] || detail="firewall-activation-failed"
                 logger -t "$TAG" "activation failed: $detail" 2>/dev/null || true
-                ack "$id" false "$detail"
+                finish_activation_command "$id" false "$detail"
             fi
             rm -f "$error_file" "${TMP_BASE}.egress-error"
             ;;
