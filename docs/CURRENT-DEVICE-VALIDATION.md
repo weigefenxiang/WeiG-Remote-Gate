@@ -158,6 +158,8 @@ non-51820 WireGuard service-port hardware path
 
 Manual endpoint-selection persistence now has a software implementation and automated contract coverage on `dev`. The browser stores only non-authoritative plan hints, restores them through the current Endpoint option set, follows same-WAN identity churn through the existing Gate selection fallback, discards invalid hints and never auto-Activates. Routine `dev` CI validates the static/contract boundary and browser-test syntax. The full Playwright persistence regression is wired into the release Browser Matrix, which remains `main`-only/manual, so this is **not** browser-matrix PASS on `dev` and is still **not** real-device PASS.
 
+Dynamic WireGuard service-port handling now has explicit non-default automated coverage on `dev`: schema-3 Direct/Mapped endpoint and activation-command tests use UDP `41194`, while OpenWrt contract tests lock discovery through `wg show <name> listen-port`, Mapping propagation through `--service-port`, and Agent revalidation through the Service Registry. This is CI/contract evidence only; the real-device `WG_HOME / UDP 51820` path has not yet been changed to a non-51820 listener, so the hardware item remains pending.
+
 ## Approved design target that is not yet hardware validation
 
 The next implementation is expected to follow these documented rules:
