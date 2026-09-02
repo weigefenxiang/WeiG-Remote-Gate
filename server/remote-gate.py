@@ -7,7 +7,7 @@ import time
 from http.server import ThreadingHTTPServer
 from urllib.parse import urlparse
 
-from app.client_sources import fail_closed_agent_status, observe_candidate, observe_source, source_record_for_family
+from app.client_sources import agent_status_is_fresh, fail_closed_agent_status, observe_candidate, observe_source, source_record_for_family
 from app.endpoints import is_globally_reachable_unicast, validate_inventory_v2, validate_inventory_v3
 from app.gate import GateError, queue_activate, queue_activate_many
 from app.main import Handler as BaseHandler
@@ -308,6 +308,9 @@ class Handler(BaseHandler):
         current_source = self._trusted_client_ip()
         if not current_source:
             self._json(400, {"error": "missing_cf_connecting_ip"})
+            return
+        if not agent_status_is_fresh(STORE.read("agent-status.json", {})):
+            self._json(503, {"error": "agent_unavailable"})
             return
         try:
             observe_source(STORE, session.token, current_source)
