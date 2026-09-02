@@ -27,13 +27,13 @@ class EndpointMemoryTests(unittest.TestCase):
     def test_dynamic_endpoint_id_preserves_same_wan_intent_then_returns_to_auto(self):
         source = GATE.read_text(encoding="utf-8")
         restore = source.split("function restoreEndpointSelection", 1)[1].split("function syncDualEndpointSelect", 1)[0]
-        self.assertIn("if (saved.wan)", restore)
+        self.assertIn("saved.wan ? options.find", restore)
         self.assertIn("endpointWanForSelection(family, option.value) === saved.wan", restore)
         self.assertIn("context.state.endpointManualSelections[family] = false", restore)
         self.assertIn("delete context.state.endpointSelections[family]", restore)
         self.assertIn("const preferred = preferredSelection(family)", restore)
 
-    def test_each_ip_family_keeps_its_internet_exit_choice(self):
+    def test_each_access_family_keeps_its_internet_exit_plan_choice(self):
         source = APP.read_text(encoding="utf-8")
         self.assertIn("egressSelections: {}", source)
         self.assertIn("get egressWan()", source)
@@ -41,17 +41,19 @@ class EndpointMemoryTests(unittest.TestCase):
         self.assertIn("set egressWan(value)", source)
         self.assertIn("this.egressSelections[this.family] = String(value || '__lan__')", source)
 
-    def test_internet_exit_defaults_to_access_plan_until_user_overrides_it(self):
+    def test_internet_exit_default_mode_follows_access_until_user_overrides_plan(self):
         source = GATE.read_text(encoding="utf-8")
         self.assertIn("function selectedAccessWans()", source)
-        self.assertIn("function accessEgressValue()", source)
-        self.assertIn("function splitEgressValue(wans)", source)
+        self.assertIn("function preferredEgressMode()", source)
+        self.assertIn("function defaultEgressValue(plans = egressPlans())", source)
+        self.assertIn("function egressPlans()", source)
         self.assertIn("function egressSelectionIsManual", source)
-        self.assertIn("const defaultValue = accessEgressValue()", source)
-        self.assertIn("!egressSelectionIsManual(family) && hasOption(defaultValue)", source)
+        self.assertIn("const defaultValue = defaultEgressValue(plans)", source)
+        self.assertIn("egressSelectionIsManual(family) && hasOption(remembered)", source)
         self.assertIn("state.egressManualSelections[state.family]=true", source)
         self.assertIn("state.egressManualSelections={}", source)
-        self.assertIn("Dual · Split Exit · IPv4 →", source)
+        self.assertIn("mode:'dual'", source)
+        self.assertNotIn("Dual · Split Exit", source)
 
 
 if __name__ == "__main__":
