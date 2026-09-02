@@ -24,6 +24,8 @@ class AgentEgressRollbackRuntimeTests(unittest.TestCase):
             fake_bin.mkdir()
             state_dir = root / "state"
             config = root / "remote-gate.conf"
+            mapping = root / "mapping-missing"
+            tmp_base = root / "remote-gate-agent"
             firewall_log = root / "firewall.log"
             egress_log = root / "egress.log"
             ack_log = root / "ack.log"
@@ -110,12 +112,12 @@ esac
             )
             source = source.replace(
                 'MAPPING="/usr/lib/remote-gate/remote-gate-mapping.sh"',
-                f'MAPPING="{root / "mapping-missing"}"',
+                f'MAPPING="{mapping}"',
             )
             source = source.replace('STATE_DIR="/etc/remote-gate-state"', f'STATE_DIR="{state_dir}"')
             source = source.replace(
                 'TMP_BASE="/tmp/remote-gate-agent.$$"',
-                f'TMP_BASE="{root / "remote-gate-agent"}.$$"',
+                f'TMP_BASE="{tmp_base}.$$"',
             )
             source = source.split('case "${1:-once}" in', 1)[0]
             source += r'''
