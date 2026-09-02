@@ -148,28 +148,6 @@
     }
   }
 
-  function mappedPlaceholder() {
-    return zh() ? '选择 WAN 后显示实时 Endpoint' : 'Live endpoint shown after WAN selection';
-  }
-
-  function rewriteMappedOptions() {
-    const select = document.getElementById('endpoint-select') || document.getElementById('wan-select');
-    if (!select) return;
-    let changed = false;
-    [...select.options].forEach((option) => {
-      const text = String(option.textContent || '');
-      const parts = text.split(' · ');
-      const mappedIndex = parts.indexOf('Mapped');
-      if (mappedIndex < 0) return;
-      const next = [...parts.slice(0, mappedIndex + 1), mappedPlaceholder()].join(' · ');
-      if (next !== text) {
-        option.textContent = next;
-        changed = true;
-      }
-    });
-    if (changed) window.RemoteGateEndpointPicker?.sync?.(select.id);
-  }
-
   function selectedEndpointRecord(data) {
     const select = document.getElementById('endpoint-select') || document.getElementById('wan-select');
     if (!select || select.dataset.selectionConfirmed !== '1' || !select.value) return null;
@@ -320,19 +298,6 @@
     row.querySelector('[data-mapped-endpoint-note]').textContent = note;
   }
 
-  function observeMappedPicker() {
-    let queued = false;
-    const observer = new MutationObserver(() => {
-      if (queued) return;
-      queued = true;
-      queueMicrotask(() => {
-        queued = false;
-        rewriteMappedOptions();
-      });
-    });
-    observer.observe(document.documentElement, {subtree: true, childList: true});
-  }
-
   const nativeFetch = window.fetch.bind(window);
   window.fetch = async (...args) => {
     const response = await nativeFetch(...args);
@@ -341,7 +306,6 @@
       if (requestUrl.pathname === '/api/v1/dashboard' && response.ok) {
         response.clone().json().then((data) => {
           renderSelectedEndpoint(data);
-          queueMicrotask(rewriteMappedOptions);
         }).catch(() => {});
       }
     } catch (_) { /* preserve fetch semantics */ }
@@ -352,8 +316,6 @@
     brandIcon();
     polishGateActions();
     ensureGateStatusStructure();
-    rewriteMappedOptions();
-    observeMappedPicker();
   }
 
   window.addEventListener('remote-gate-endpoint-selection', () => {
@@ -362,7 +324,6 @@
 
   window.addEventListener('remote-gate-language', () => {
     syncGateStatusPresentation();
-    queueMicrotask(rewriteMappedOptions);
     if (latestDashboard) renderSelectedEndpoint(latestDashboard);
   });
 
