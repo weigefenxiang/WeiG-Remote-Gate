@@ -510,7 +510,11 @@ post_status() {
     mapping="$(mapping_status_json)"
     transport="$(transport_json)"
     payload="{\"schema\":3,\"inventory_synced\":${inventory_synced},\"wireguard\":${wg_json},\"firewall\":${fw},\"egress\":${egress},\"mapping\":${mapping},\"transport\":${transport}}"
-    control_request POST "/api/v1/agent/status" "$BODY" "$payload" >/dev/null 2>&1 || true
+    if control_request POST "/api/v1/agent/status" "$BODY" "$payload" && [ "$CONTROL_CODE" = "204" ]; then
+        return 0
+    fi
+    logger -t "$TAG" "agent status update failed (HTTP ${CONTROL_CODE:-000})" 2>/dev/null || true
+    return 1
 }
 
 sanitize_detail() {
@@ -532,6 +536,8 @@ rollback_batch_access() {
 }
 
 pull_once() {
+    mode="${1:-all}"
+    case "$mode" in all|close-only) ;; *) mode=close-only ;; esac
     control_request GET "/api/v1/agent/pull" "$BODY" || return 1
     code="$CONTROL_CODE"
     [ "$code" = "204" ] && return 0
@@ -539,6 +545,10 @@ pull_once() {
 
     id="$(jsonfilter -i "$BODY" -e '@.id' 2>/dev/null | sed -n '1p')"
     action="$(jsonfilter -i "$BODY" -e '@.action' 2>/dev/null | sed -n '1p')"
+    if [ "$mode" = "close-only" ] && [ "$action" != "close" ]; then
+        logger -t "$TAG" "status not published; pending ${action:-unknown} command left queued" 2>/dev/null || true
+        return 0
+    fi
     expires_at="$(jsonfilter -i "$BODY" -e '@.expires_at' 2>/dev/null | sed -n '1p')"
     now="$(date +%s)"
     case "$expires_at" in ''|*[!0-9]*) ack "$id" false "invalid-expiry"; return 1 ;; esac
@@ -710,9 +720,9 @@ report_only() {
     sync_firewall_policy || true
     sync_egress
     if maybe_post_inventory; then
-        post_status true
+        post_status true || true
     else
-        post_status false
+        post_status false || true
     fi
 }
 
@@ -720,15 +730,20 @@ run_once() {
     sync_firewall_policy || true
     sync_egress
     if ! maybe_post_inventory; then
-        post_status false
+        post_status false || true
         logger -t "$TAG" "inventory not synchronized; command pull skipped" 2>/dev/null || true
         return 0
     fi
-    post_status true
+
+    pull_mode=all
+    if ! post_status true; then
+        pull_mode=close-only
+        logger -t "$TAG" "status not published; only close commands may be pulled" 2>/dev/null || true
+    fi
     pull_rc=0
-    pull_once || pull_rc=$?
+    pull_once "$pull_mode" || pull_rc=$?
     sync_egress
-    post_status true
+    post_status true || true
     return "$pull_rc"
 }
 
