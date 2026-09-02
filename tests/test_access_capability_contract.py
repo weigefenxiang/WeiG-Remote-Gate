@@ -8,8 +8,8 @@ GATE = (ROOT / "server/app/static/js/gate-controls.js").read_text(encoding="utf-
 
 class AccessCapabilityContractTests(unittest.TestCase):
     def test_private_cgnat_is_not_a_user_access_endpoint(self):
-        self.assertIn("['direct', 'mapped', 'egress_probe'].includes(item.reachability)", APP)
         self.assertIn("['direct','mapped','egress_probe'].includes(item.reachability)", GATE)
+        self.assertNotIn("function reachableEndpoints", APP)
         self.assertNotIn("Private/CGNAT · Try", APP)
         self.assertNotIn("Private/CGNAT · Try", GATE)
 
