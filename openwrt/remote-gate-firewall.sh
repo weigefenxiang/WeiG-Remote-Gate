@@ -181,6 +181,60 @@ LIB_DIR="${REMOTE_GATE_LIB_DIR:-$(CDPATH= cd -- "$(dirname "$0")" && pwd)}"
 . "$LIB_DIR/remote-gate-firewall-backends.sh"
 . "$LIB_DIR/remote-gate-wireguard-verify.sh"
 
+flush_fw3_auth_set() {
+    local rg_set="$1"
+    ipset list "$rg_set" >/dev/null 2>&1 || return 0
+    ipset flush "$rg_set" >/dev/null 2>&1
+}
+
+flush_fw4_auth_set() {
+    local rg_set="$1"
+    nft list set inet fw4 "$rg_set" >/dev/null 2>&1 || return 1
+    nft flush set inet fw4 "$rg_set" >/dev/null 2>&1
+}
+
+clear_kernel_authorization() {
+    local rg_family="${1:-all}" rg_b rg_rc=0 rg_set
+    case "$rg_family" in ipv4|ipv6|all|'') ;; *) return 1 ;; esac
+    rg_b="$(backend 2>/dev/null || true)"
+    case "$rg_b" in
+        fw3-iptables)
+            case "$rg_family" in ipv4|all|'') flush_fw3_auth_set "$FW3_AUTH_SET_V4" || rg_rc=1 ;; esac
+            case "$rg_family" in ipv6|all|'') flush_fw3_auth_set "$FW3_AUTH_SET_V6" || rg_rc=1 ;; esac
+            ;;
+        fw4-nftables)
+            case "$rg_family" in
+                ipv4|all|'')
+                    for rg_set in weig_remote_gate_auth_ipv4 weig_remote_gate_auth_ifname_v4 weig_remote_gate_auth_ping_ifname_v4 weig_remote_gate_auth_udp_port_v4; do
+                        flush_fw4_auth_set "$rg_set" || rg_rc=1
+                    done
+                    ;;
+            esac
+            case "$rg_family" in
+                ipv6|all|'')
+                    for rg_set in weig_remote_gate_auth_ipv6 weig_remote_gate_auth_ifname_v6 weig_remote_gate_auth_ping_ifname_v6 weig_remote_gate_auth_udp_port_v6; do
+                        flush_fw4_auth_set "$rg_set" || rg_rc=1
+                    done
+                    ;;
+            esac
+            ;;
+        *) rg_rc=1 ;;
+    esac
+    [ "$rg_rc" -eq 0 ]
+}
+
+verified_clear_auth() {
+    local rg_family="${1:-all}" rg_rc=0
+    clear_kernel_authorization "$rg_family" || rg_rc=1
+    clear_auth "$rg_family" || rg_rc=1
+    clear_kernel_authorization "$rg_family" || rg_rc=1
+    if [ "$rg_rc" -ne 0 ]; then
+        logger -t "$TAG" "authorization cleanup incomplete ($rg_family)" 2>/dev/null || true
+        return 1
+    fi
+    return 0
+}
+
 case "${1:-}" in
     detect) detect_backend || { printf '%s\n' unsupported; exit 1; } ;;
     ipv6-capable) rg_b="$(detect_backend 2>/dev/null || true)"; case "$rg_b" in fw4-nftables) printf '%s\n' yes ;; fw3-iptables) fw3_ipv6_capable && printf '%s\n' yes || { printf '%s\n' no; exit 1; } ;; *) printf '%s\n' no; exit 1 ;; esac ;;
@@ -190,7 +244,7 @@ case "${1:-}" in
     verify) [ "$#" -eq 7 ] || fail "usage: $0 verify <source|any> <family> <wan-device> <udp-port> <seconds> <candidate|discovery>"; verify_open "$2" "$3" "$4" "$5" "$6" "$7" ;;
     verify-wireguard) [ "$#" -eq 5 ] || fail "usage: $0 verify-wireguard <source> <family> <wan-device> <udp-port>"; verify_wireguard_source "$2" "$3" "$4" "$5" ;;
     verify-clear) [ "$#" -eq 2 ] || fail "usage: $0 verify-clear <ipv4|ipv6>"; verify_clear "$2" ;;
-    clear) clear_auth "${2:-all}" ;;
+    clear) verified_clear_auth "${2:-all}" ;;
     restore) restore_rules ;;
     status-json) status_json ;;
     uninstall) uninstall_rules; rm -f "$MAPPED_INGRESS_V4_FILE" "$MAPPED_CONTROL_V4_FILE" ;;
