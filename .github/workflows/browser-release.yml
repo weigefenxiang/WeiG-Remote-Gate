@@ -78,6 +78,9 @@ jobs:
       - name: Browser layout regression
         run: node tests/browser_layout.mjs
 
+      - name: Access PathCard browser regression
+        run: node tests/browser_access_pathcard.mjs
+
       - name: Split WAN Dual browser regression
         run: node tests/browser_split_dual.mjs
 
