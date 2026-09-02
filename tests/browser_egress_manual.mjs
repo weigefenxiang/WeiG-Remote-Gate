@@ -14,12 +14,13 @@ async function assertThemeCycle(page, label) {
   for (const theme of ['light', 'dark']) {
     await page.locator('#utility-trigger').click();
     await page.waitForFunction(() => !document.querySelector('#utility-layer')?.hidden);
-    await page.locator(`[data-theme-choice="${theme}"]`).click();
+    const choice = page.locator(`#utility-layer [data-theme-choice="${theme}"]`);
+    await choice.click();
     await page.waitForFunction((expected) =>
       document.documentElement.dataset.themeChoice === expected &&
       document.documentElement.dataset.theme === expected,
     theme);
-    assert(await page.locator(`[data-theme-choice="${theme}"]`).evaluate((node) => node.classList.contains('active')), `${label}: ${theme} theme choice is not selected`);
+    assert(await choice.evaluate((node) => node.classList.contains('active')), `${label}: ${theme} theme choice is not selected`);
     await page.locator('.utility-close').click();
     await page.waitForFunction(() => document.querySelector('#utility-layer')?.hidden === true);
     const snapshot = await page.evaluate(() => {
