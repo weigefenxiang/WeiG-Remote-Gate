@@ -27,8 +27,7 @@
   // Security-critical client discovery and semantic Gate dependencies are loaded explicitly by dashboard.html.
   // Optional presentation modules inherit the immutable build SHA from this script URL.
   [
-    '/static/js/motion-feedback.js',
-    '/static/js/duration-control.js'
+    '/static/js/motion-feedback.js'
   ].forEach((src) => {
     if (document.querySelector(`script[data-remote-gate-module="${src}"]`)) return;
     const script = document.createElement('script');
