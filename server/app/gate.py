@@ -168,17 +168,16 @@ def _empty_queue() -> dict[str, Any]:
     return {"pending": None, "next": [], "last": None}
 
 
-def _rollback_command_for_expired_batch(command: dict[str, Any], now: int) -> dict[str, Any] | None:
+def _rollback_command_for_expired_activate(command: dict[str, Any], now: int) -> dict[str, Any] | None:
+    if command.get("action") != "activate":
+        return None
     try:
-        batch_count = int(command.get("batch_count", 1) or 1)
         ttl = int(command.get("ttl", 60) or 60)
     except (TypeError, ValueError):
-        return None
+        ttl = 60
     batch_id = str(command.get("batch_id") or "").strip()
-    if batch_count <= 1 or not batch_id:
-        return None
     rollback_window = max(60, min(max(0, ttl), CUSTOM_TTL_MAX))
-    return {
+    rollback = {
         "schema": 2,
         "id": secrets.token_hex(16),
         "action": "close",
@@ -187,8 +186,11 @@ def _rollback_command_for_expired_batch(command: dict[str, Any], now: int) -> di
         "source_ip": str(command.get("source_ip") or ""),
         "family": str(command.get("family") or "ipv4"),
         "state": "pending",
-        "rollback_for_batch": batch_id,
+        "rollback_for_command": str(command.get("id") or ""),
     }
+    if batch_id:
+        rollback["rollback_for_batch"] = batch_id
+    return rollback
 
 
 def _archive_expired_pending(
@@ -198,7 +200,7 @@ def _archive_expired_pending(
 ) -> dict[str, Any] | None:
     now = int(time.time())
     command["state"] = "expired"
-    rollback = _rollback_command_for_expired_batch(command, now)
+    rollback = _rollback_command_for_expired_activate(command, now)
     queue["last"] = command
     queue["pending"] = rollback
     queue["next"] = []
@@ -206,10 +208,17 @@ def _archive_expired_pending(
     store.append_activity({"type": "command_expired", "command_id": command.get("id", "")})
     if rollback is not None:
         store.append_activity({
-            "type": "batch_rollback_queued",
-            "batch_id": rollback.get("rollback_for_batch", ""),
+            "type": "activation_rollback_queued",
+            "expired_command_id": command.get("id", ""),
             "command_id": rollback.get("id", ""),
+            "batch_id": rollback.get("rollback_for_batch", ""),
         })
+        if rollback.get("rollback_for_batch"):
+            store.append_activity({
+                "type": "batch_rollback_queued",
+                "batch_id": rollback.get("rollback_for_batch", ""),
+                "command_id": rollback.get("id", ""),
+            })
     return rollback
 
 
