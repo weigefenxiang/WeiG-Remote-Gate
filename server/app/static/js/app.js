@@ -70,34 +70,9 @@
     return Array.isArray(data?.agent?.wireguard) ? data.agent.wireguard : [];
   }
 
-  function reachableEndpoints(data, family = state.family, wgName = $('wg-select')?.value || '') {
-    const list = Array.isArray(data?.endpoints) ? data.endpoints : [];
-    return list.filter((item) =>
-      item &&
-      item.family === family &&
-      ['direct', 'mapped', 'egress_probe'].includes(item.reachability) &&
-      (!wgName || item.wireguard === wgName)
-    );
-  }
-
   function sourceRecord(data, family) {
     const record = data?.client_sources?.[family];
     return record && record.address ? record : null;
-  }
-
-  function endpointAddress(item) {
-    const address = String(item?.external_address || '');
-    if (!address) return '—';
-    return item?.family === 'ipv6' ? `[${address}]:${item.external_port}` : `${address}:${item.external_port}`;
-  }
-
-  function endpointLabel(item) {
-    const family = item.family === 'ipv6' ? 'IPv6' : 'IPv4';
-    let method = 'Direct';
-    if (item.access_method === 'mapped' || item.reachability === 'mapped') method = 'Mapped';
-    else if (item.access_method === 'relay' || item.reachability === 'relay') method = 'Relay';
-    else if (item.reachability === 'egress_probe') method = 'NAT egress · Try';
-    return `${item.wan} · ${family} · ${method} · ${endpointAddress(item)}`;
   }
 
   function syncSelect(select, items, valueFn, labelFn) {
@@ -124,11 +99,6 @@
 
   function syncWireGuardSelect(data) {
     syncSelect($('wg-select'), wireguards(data), (item) => item.name, (item) => `${item.name} · UDP ${item.listen_port}`);
-  }
-
-  function syncEndpointSelect(data) {
-    const select = $('endpoint-select') || $('wan-select');
-    syncSelect(select, reachableEndpoints(data), (item) => item.id, endpointLabel);
   }
 
   function sourceDiagnostic(family) {
@@ -419,7 +389,6 @@
     if (!state.family) state.family = state.requestFamily === 'ipv6' ? 'ipv6' : 'ipv4';
 
     syncWireGuardSelect(data);
-    syncEndpointSelect(data);
     renderClient(data);
     renderWireGuard(data);
     renderFirewall(data);
@@ -502,12 +471,10 @@
     getData: () => state.data,
     onFamilyChange: () => {
       if (!state.data) return;
-      syncEndpointSelect(state.data);
       renderClient(state.data);
     },
     onWireGuardChange: () => {
       if (!state.data) return;
-      syncEndpointSelect(state.data);
       renderWireGuard(state.data);
     }
   });
