@@ -434,6 +434,10 @@ class Handler(BaseHandler):
         try:
             data = self._read_json()
             schema = max(1, min(3, int(data.get("schema", 1) or 1)))
+            inventory_synced_raw = data.get("inventory_synced", True)
+            if not isinstance(inventory_synced_raw, bool):
+                raise ValueError
+            inventory_synced = inventory_synced_raw
             wireguard = data.get("wireguard", [])
             if not isinstance(wireguard, list) or len(wireguard) > 32:
                 raise ValueError
@@ -473,6 +477,7 @@ class Handler(BaseHandler):
         STORE.write("agent-status.json", {
             "schema": schema,
             "reported_at": int(time.time()),
+            "inventory_synced": inventory_synced,
             "wireguard": clean_wg,
             "firewall": {
                 "backend": str(firewall.get("backend", ""))[:32],
