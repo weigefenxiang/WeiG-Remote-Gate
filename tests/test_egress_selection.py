@@ -66,7 +66,7 @@ class EgressSelectionTests(unittest.TestCase):
         })
         self.store.write("agent-status.json", {
             "schema": 3,
-            "wireguard": [{"name": "WG_HOME", "listen_port": 51820}],
+            "wireguard": [{"name": "WG_HOME", "listen_port": 53127}],
         })
 
     def tearDown(self):
@@ -75,7 +75,7 @@ class EgressSelectionTests(unittest.TestCase):
     def reset_queue(self):
         self.store.write("commands.json", {"pending": None, "next": [], "last": None})
 
-    def activate(self, egress_name=""):
+    def activate(self, egress_name="", **kwargs):
         return queue_activate(
             self.store,
             source_ip="198.51.100.7",
@@ -83,10 +83,18 @@ class EgressSelectionTests(unittest.TestCase):
             wg_name="WG_HOME",
             egress_name=egress_name,
             ttl=300,
+            **kwargs,
         )
 
     def test_lan_only_keeps_egress_empty(self):
         self.assertEqual(self.activate()["egress_wan"], "")
+
+    def test_explicit_none_mode_keeps_egress_empty(self):
+        command = self.activate("WAN2", egress_mode="none")
+        self.assertEqual(command["egress_mode"], "")
+        self.assertEqual(command["egress_wan"], "")
+        self.assertEqual(command["egress_wan_ipv4"], "")
+        self.assertEqual(command["egress_wan_ipv6"], "")
 
     def test_public_or_cgnat_default_wan_can_be_selected_as_ipv4_exit(self):
         self.assertEqual(self.activate("WAN2")["egress_wan"], "WAN2")
@@ -94,6 +102,34 @@ class EgressSelectionTests(unittest.TestCase):
         command = self.activate("WAN")
         self.assertEqual(command["egress_wan"], "WAN")
         self.assertEqual(command["egress_mode"], "ipv4")
+
+    def test_ipv4_access_can_request_ipv6_only_exit(self):
+        command = self.activate(
+            egress_mode="ipv6",
+            egress_names={"ipv6": "V6ONLY"},
+        )
+        self.assertEqual(command["family"], "ipv4")
+        self.assertEqual(command["egress_mode"], "ipv6")
+        self.assertEqual(command["egress_wan"], "V6ONLY")
+        self.assertEqual(command["egress_wan_ipv4"], "")
+        self.assertEqual(command["egress_wan_ipv6"], "V6ONLY")
+
+    def test_ipv4_access_can_request_split_dual_exit(self):
+        command = self.activate(
+            egress_mode="dual",
+            egress_names={"ipv4": "WAN", "ipv6": "V6ONLY"},
+        )
+        self.assertEqual(command["family"], "ipv4")
+        self.assertEqual(command["egress_mode"], "dual")
+        self.assertEqual(command["egress_wan"], "")
+        self.assertEqual(command["egress_wan_ipv4"], "WAN")
+        self.assertEqual(command["egress_wan_ipv6"], "V6ONLY")
+
+    def test_wireguard_service_port_is_dynamic_not_51820(self):
+        command = self.activate()
+        self.assertEqual(command["service_port"], 53127)
+        self.assertEqual(command["ingress_port"], 53127)
+        self.assertEqual(command["wg_port"], 53127)
 
     def test_dual_exit_requires_both_default_routes_and_global_ipv6(self):
         self.assertEqual(egress_wan(self.store, "WAN2", "dual"), "WAN2")
@@ -153,6 +189,9 @@ class EgressSelectionTests(unittest.TestCase):
             egress_wan(self.store, "WAN2", "invalid")
         with self.assertRaisesRegex(GateError, "egress_wan_unavailable"):
             self.activate("MISSING")
+        self.reset_queue()
+        with self.assertRaisesRegex(GateError, "invalid_egress_mode"):
+            self.activate(egress_mode="invalid")
 
 
 if __name__ == "__main__":

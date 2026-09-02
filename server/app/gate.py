@@ -15,7 +15,7 @@ CUSTOM_TTL_MIN = 1800
 CUSTOM_TTL_MAX = 12 * 60 * 60
 CUSTOM_TTL_STEP = 1800
 ALLOWED_SCOPES = {"wg", "wg_ping"}
-ALLOWED_EGRESS_MODES = {"ipv4", "ipv6", "dual"}
+ALLOWED_EGRESS_MODES = {"none", "ipv4", "ipv6", "dual"}
 QUEUE_LOCK = threading.RLock()
 
 
@@ -65,7 +65,7 @@ def egress_wan(store: JsonStore, name: str | None, mode: str = "ipv4") -> str:
     if not selected:
         return ""
     selected_mode = str(mode or "").strip()
-    if selected_mode not in ALLOWED_EGRESS_MODES:
+    if selected_mode not in {"ipv4", "ipv6", "dual"}:
         raise GateError("invalid_egress_mode")
     inventory = normalize_inventory(store)
     for item in inventory.get("wans", []) if isinstance(inventory, dict) else []:
@@ -92,6 +92,8 @@ def _egress_plan(
     selected_mode = str(mode or "").strip()
     if selected_mode not in ALLOWED_EGRESS_MODES:
         raise GateError("invalid_egress_mode")
+    if selected_mode == "none":
+        return "", "", "", ""
 
     requested = egress_names if isinstance(egress_names, dict) else {}
     if selected_mode == "dual" and requested:
@@ -113,10 +115,12 @@ def _egress_plan(
         return shared, shared, shared, "dual"
 
     if selected_mode == "ipv4":
-        selected4 = egress_wan(store, egress_name, "ipv4")
+        raw4 = str(requested.get("ipv4") or egress_name or "").strip()
+        selected4 = egress_wan(store, raw4, "ipv4")
         return selected4, selected4, "", "ipv4" if selected4 else ""
 
-    selected6 = egress_wan(store, egress_name, "ipv6")
+    raw6 = str(requested.get("ipv6") or egress_name or "").strip()
+    selected6 = egress_wan(store, raw6, "ipv6")
     return selected6, "", selected6, "ipv6" if selected6 else ""
 
 
@@ -290,7 +294,6 @@ def _activation_command(
             "wireguard": str(endpoint["wireguard"]),
             "ingress_port": ingress_port,
             "service_port": service_port,
-            # wg_port remains for rolling compatibility and Internet Exit.
             "wg_port": service_port,
             "external_address": str(endpoint.get("external_address", "")),
             "external_port": int(endpoint.get("external_port", ingress_port)),
@@ -353,8 +356,12 @@ def queue_activate(
     wan_name: str | None = None,
     wg_name: str | None = None,
     egress_name: str | None = None,
+    egress_names: dict[str, str] | None = None,
+    egress_mode: str | None = None,
 ) -> dict[str, Any]:
-    egress_mode = family if family in {"ipv4", "ipv6"} else "ipv4"
+    selected_egress_mode = str(egress_mode or "").strip()
+    if not selected_egress_mode:
+        selected_egress_mode = family if family in {"ipv4", "ipv6"} else "ipv4"
     command = _activation_command(
         store,
         source_ip=source_ip,
@@ -366,7 +373,8 @@ def queue_activate(
         wan_name=wan_name,
         wg_name=wg_name,
         egress_name=egress_name,
-        egress_mode=egress_mode,
+        egress_names=egress_names,
+        egress_mode=selected_egress_mode,
     )
     with QUEUE_LOCK:
         _queue_for_write(store)
@@ -383,6 +391,7 @@ def queue_activate_many(
     scope: str,
     egress_name: str | None = None,
     egress_names: dict[str, str] | None = None,
+    egress_mode: str | None = None,
 ) -> dict[str, Any]:
     if not isinstance(requests, list) or not 1 <= len(requests) <= 2:
         raise GateError("invalid_families")
@@ -390,7 +399,9 @@ def queue_activate_many(
     if len(families) != len(requests) or any(f not in {"ipv4", "ipv6"} for f in families) or len(set(families)) != len(families):
         raise GateError("invalid_families")
 
-    egress_mode = "dual" if set(families) == {"ipv4", "ipv6"} else families[0]
+    selected_egress_mode = str(egress_mode or "").strip()
+    if not selected_egress_mode:
+        selected_egress_mode = "dual" if set(families) == {"ipv4", "ipv6"} else families[0]
     batch_id = secrets.token_hex(12)
     commands = [
         _activation_command(
@@ -403,7 +414,7 @@ def queue_activate_many(
             ttl=ttl,
             egress_name=egress_name,
             egress_names=egress_names,
-            egress_mode=egress_mode,
+            egress_mode=selected_egress_mode,
             batch_id=batch_id,
             batch_index=index,
             batch_count=len(requests),

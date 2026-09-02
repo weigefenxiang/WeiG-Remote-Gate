@@ -16,6 +16,7 @@ from app.main import SETTINGS, STORE
 ENDPOINT_RE = re.compile(r"^ep_[a-f0-9]{20}$")
 NAME_RE = re.compile(r"^[A-Za-z0-9_.:@-]{1,64}$")
 DEVICE_RE = re.compile(r"^[A-Za-z0-9_.:@+-]{1,128}$")
+EGRESS_MODES = {"none", "ipv4", "ipv6", "dual"}
 
 
 def _endpoint_id(value: object) -> str:
@@ -29,6 +30,13 @@ def _family(value: object) -> str:
     text = str(value or "").strip()
     if text not in {"ipv4", "ipv6"}:
         raise ValueError("invalid_family")
+    return text
+
+
+def _egress_mode(value: object) -> str:
+    text = str(value or "").strip()
+    if text not in EGRESS_MODES:
+        raise ValueError("invalid_egress_mode")
     return text
 
 
@@ -298,6 +306,8 @@ class Handler(BaseHandler):
             data = self._read_json()
             ttl = int(data.get("ttl", 300))
             scope = str(data.get("scope") or "wg")
+            egress_mode_raw = str(data.get("egress_mode") or "").strip()
+            egress_mode = _egress_mode(egress_mode_raw) if egress_mode_raw else ""
             egress_raw = str(data.get("egress_wan") or "").strip()
             egress_name = _safe_name(egress_raw) if egress_raw else ""
             egress_names = None
@@ -334,6 +344,7 @@ class Handler(BaseHandler):
                     ttl=ttl,
                     egress_name=egress_name,
                     egress_names=egress_names,
+                    egress_mode=egress_mode or None,
                 )
                 self._json(202, {
                     "batch_id": batch["batch_id"],
@@ -353,6 +364,8 @@ class Handler(BaseHandler):
                 scope=scope,
                 ttl=ttl,
                 egress_name=egress_name,
+                egress_names=egress_names,
+                egress_mode=egress_mode or None,
             )
         except (ValueError, KeyError, GateError) as exc:
             self._json(409 if str(exc) == "command_pending" else 400, {"error": str(exc)})
@@ -370,8 +383,6 @@ class Handler(BaseHandler):
                 self._empty(204)
                 return
             if schema == 2:
-                # A downgrade/rolling old Agent must not leave a stale schema-3
-                # inventory authoritative forever.
                 STORE.write("inventory-v3.json", {})
                 STORE.write("inventory-v2.json", validate_inventory_v2(data))
                 self._empty(204)
