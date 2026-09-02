@@ -1,5 +1,5 @@
 ---
-version: 5
+version: 6
 name: WeiG-Remote-Gate
 description: "A dense, tactile, adaptive network-security workspace with standardized spatial depth, modular controls, and a distinct Wei.G security identity."
 ---
@@ -108,6 +108,27 @@ Do not use 9-11px as the normal reading size for primary information.
 
 A complete IPv6 address must remain on exactly one line. It must never wrap, ellipsize, truncate or replace middle groups with `...`. Dynamic font fitting may reduce only that value's font size as the available width changes.
 
+## NetworkIdentityText
+
+Machine-identifying network values use one shared responsive text primitive. This includes public WireGuard endpoints, Current Client addresses, authorization sources, Access Endpoint WAN identities and addresses, EndpointPicker cards, Multi-WAN/WAN PATH identities and addresses, and equivalent future network identifiers.
+
+The only fitting engine is `server/app/static/js/fit-text.js`. Do not create IPv6-, Endpoint-, WAN- or Dual-specific fitting utilities.
+
+Canonical contract:
+- new consumers declare `fit-single-line` and a semantic `data-fit-profile` when the default is not sufficient;
+- `hero` is for the current public WireGuard Endpoint;
+- `value` is for primary IP/address values;
+- `identity` is for WAN/interface identity strings;
+- `compact` is for EndpointPicker addresses and similarly dense controls;
+- existing legacy selectors may be adapted centrally by `fit-text.js`, but new components must use the explicit contract;
+- fitting starts at the normal semantic type size and only shrinks when the rendered value would overflow;
+- a complete network identity must stay on one line and must not use ellipsis, truncation or middle replacement;
+- fitting may use an emergency smaller size only when necessary to preserve the complete value inside the viewport;
+- containing flex/grid items must permit shrinking (`min-width: 0` / `minmax(0, 1fr)` as appropriate);
+- whole-page horizontal overflow is a contract failure, not an acceptable fallback.
+
+Dual-stack presentation is not a separate text system. IPv4, IPv6, same-WAN Dual and split-WAN Dual all consume the same NetworkIdentityText primitive.
+
 # 5. Brand identity
 
 The canonical product asset is:
@@ -152,7 +173,7 @@ Mobile:
 Each `EndpointCard` exposes:
 - WAN name;
 - family;
-- Direct / NATMap / NAT egress / Private-CGNAT reachability;
+- Direct / Mapped / NAT egress / Private-CGNAT reachability;
 - external address and port;
 - Primary / Try state where applicable;
 - selected state that is textual/iconic as well as visual.
@@ -272,7 +293,7 @@ Mobile persistent header contains BrandIcon, product name and the circular resol
 - 44px-class primary touch targets;
 - EndpointPicker becomes a bottom sheet;
 - custom duration remains comfortably draggable without horizontal page overflow;
-- full IPv6 remains one line by dynamic fitting.
+- full network identities, including IPv6 endpoints, remain one line by dynamic fitting.
 
 # 17. Accessibility
 
@@ -301,7 +322,7 @@ JavaScript:
 - `theme.js`: theme state.
 - `utility-panel.js`: Utility Sheet lifecycle/focus.
 - `i18n.js`: language state/dictionaries.
-- `fit-text.js`: single-line fitting such as IPv6.
+- `fit-text.js`: the only NetworkIdentityText/single-line fitting engine; owns semantic profiles, resize observation and dynamic-content refitting.
 - `workspace.js`: card flow/zones/order/drag persistence.
 - `activity.js`: event summaries/expansion.
 - `motion-feedback.js`: sound/haptic feedback abstraction.
@@ -320,7 +341,7 @@ Do:
 - use the canonical Wei.G asset;
 - preserve both observed IP families;
 - make recommendation separate from user choice;
-- reuse component/elevation/motion primitives;
+- reuse component/elevation/motion/text-fit primitives;
 - test mobile and desktop interactions before release.
 
 Don't:
@@ -329,8 +350,9 @@ Don't:
 - allow Custom duration above 12h or off the 0.5h detents;
 - delete IPv6 merely because IPv4 becomes available, or vice versa;
 - add decorative neon everywhere;
-- force a one-screen layout by shrinking typography;
+- force a one-screen layout by globally shrinking typography;
 - allow whole-page horizontal scrolling;
+- create per-component IPv6/WAN/Endpoint fitting utilities;
 - hard-code WAN2, wg0 or UDP 51820 in frontend business logic;
 - create a second activation implementation;
 - expose WRITE_TOKEN, session secret or WireGuard private keys.

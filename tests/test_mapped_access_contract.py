@@ -11,8 +11,10 @@ REGISTRY = (ROOT / "openwrt" / "remote-gate-service-registry.sh").read_text(enco
 APP = (ROOT / "server" / "app" / "static" / "js" / "app.js").read_text(encoding="utf-8")
 GATE_CONTROLS = (ROOT / "server" / "app" / "static" / "js" / "gate-controls.js").read_text(encoding="utf-8")
 ENDPOINT_PICKER = (ROOT / "server" / "app" / "static" / "js" / "endpoint-picker.js").read_text(encoding="utf-8")
+FIT_TEXT = (ROOT / "server" / "app" / "static" / "js" / "fit-text.js").read_text(encoding="utf-8")
 BOOTSTRAP = (ROOT / "server" / "app" / "static" / "js" / "theme-bootstrap.js").read_text(encoding="utf-8")
 DASHBOARD_CSS = (ROOT / "server" / "app" / "static" / "css" / "dashboard.css").read_text(encoding="utf-8")
+DESIGN = (ROOT / "DESIGN.md").read_text(encoding="utf-8")
 MAPPER = (ROOT / "native" / "remote-gate-mapper.c").read_text(encoding="utf-8")
 
 
@@ -89,6 +91,31 @@ class MappedAccessContractTests(unittest.TestCase):
         self.assertNotIn("return 'NATMap'", GATE_CONTROLS)
         self.assertIn('/Direct|Mapped/', ENDPOINT_PICKER)
         self.assertNotIn('/Direct|NATMap/', ENDPOINT_PICKER)
+        self.assertIn('Direct / Mapped / NAT egress / Private-CGNAT', DESIGN)
+        self.assertNotIn('Direct / NATMap / NAT egress / Private-CGNAT', DESIGN)
+
+    def test_network_identity_text_uses_one_shared_fit_engine(self):
+        self.assertIn("hero: {max: 22, min: 7.5, floor: 6}", FIT_TEXT)
+        self.assertIn("value: {max: 20, min: 7.5, floor: 6}", FIT_TEXT)
+        self.assertIn("identity: {max: 17, min: 8.5, floor: 7}", FIT_TEXT)
+        self.assertIn("compact: {max: 13, min: 7.5, floor: 6}", FIT_TEXT)
+        for selector in (
+            '.verified-endpoint-value',
+            '.address-value',
+            '.wan-address-copy',
+            '.endpoint-trigger-copy strong',
+            '.endpoint-option-topline strong',
+            '.wan-row h3',
+            '.endpoint-trigger-address',
+            '.endpoint-option-address',
+        ):
+            self.assertIn(selector, FIT_TEXT)
+        self.assertIn("element.classList.add('fit-single-line')", FIT_TEXT)
+        self.assertIn("setProperty('font-size', `${Math.max(1, size).toFixed(1)}px`, 'important')", FIT_TEXT)
+        self.assertIn("{subtree: true, childList: true, characterData: true}", FIT_TEXT)
+        self.assertIn('NetworkIdentityText', DESIGN)
+        self.assertIn('Do not create IPv6-, Endpoint-, WAN- or Dual-specific fitting utilities.', DESIGN)
+        self.assertIn('whole-page horizontal overflow is a contract failure', DESIGN)
 
     def test_activate_resolves_latest_mapping_on_openwrt(self):
         self.assertIn('resolve-current <wan> <device> <service-id>', MAPPING)
