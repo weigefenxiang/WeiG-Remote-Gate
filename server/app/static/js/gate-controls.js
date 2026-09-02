@@ -51,6 +51,14 @@
     })[0] || null;
   }
 
+  function endpointMethod(item) {
+    const accessMethod = String(item?.access_method || '');
+    if (['direct','mapped','relay'].includes(accessMethod)) return accessMethod;
+    const reachability = String(item?.reachability || '');
+    if (['direct','mapped','relay','egress_probe'].includes(reachability)) return reachability;
+    return item?.provider === 'egress_probe' ? 'egress_probe' : '';
+  }
+
   function accessRole(item) {
     if (item?.access_method === 'mapped' || item?.reachability === 'mapped') return 'Mapped';
     if (item?.access_method === 'relay' || item?.reachability === 'relay') return 'Relay';
@@ -140,10 +148,34 @@
     return family === 'ipv6' ? {ipv4:'', ipv6:String(wan)} : {ipv4:String(wan), ipv6:''};
   }
 
+  function endpointMethodsForSelection(family, value) {
+    if (!value) return {method:'', method4:'', method6:''};
+    if (family === 'dual') {
+      const pair = dualEndpointPairs().find((item) => item.id === value);
+      return {method:'', method4:endpointMethod(pair?.ipv4), method6:endpointMethod(pair?.ipv6)};
+    }
+    const endpoint = endpointsFor(family).find((item) => item.id === value);
+    return {method:endpointMethod(endpoint), method4:'', method6:''};
+  }
+
   function endpointWanForSelection(family, value) {
     const wans = endpointWansForSelection(family, value);
     if (family === 'dual') return wans.ipv4 && wans.ipv4 === wans.ipv6 ? wans.ipv4 : '';
     return family === 'ipv6' ? wans.ipv6 : wans.ipv4;
+  }
+
+  function endpointSelectionRecord(family, value) {
+    const wans = endpointWansForSelection(family, value);
+    const methods = endpointMethodsForSelection(family, value);
+    return {
+      value:String(value || ''),
+      wan:wans.ipv4 && wans.ipv4 === wans.ipv6 ? wans.ipv4 : endpointWanForSelection(family, value),
+      wan4:wans.ipv4,
+      wan6:wans.ipv6,
+      method:methods.method,
+      method4:methods.method4,
+      method6:methods.method6
+    };
   }
 
   function selectedAccessWans() {
@@ -212,13 +244,7 @@
     const value = String(select?.value || '');
     if (!value) { publishEndpointSelection(family); return; }
     if (!context.state.endpointSelections || typeof context.state.endpointSelections !== 'object') context.state.endpointSelections = {};
-    const wans = endpointWansForSelection(family, value);
-    context.state.endpointSelections[family] = {
-      value,
-      wan: wans.ipv4 && wans.ipv4 === wans.ipv6 ? wans.ipv4 : endpointWanForSelection(family, value),
-      wan4: wans.ipv4,
-      wan6: wans.ipv6
-    };
+    context.state.endpointSelections[family] = endpointSelectionRecord(family, value);
     publishEndpointSelection(family);
   }
 
@@ -238,14 +264,19 @@
       const exact = options.find((option) => option.value === saved.value);
       if (exact) {
         select.value = exact.value;
+        context.state.endpointSelections[family] = endpointSelectionRecord(family, exact.value);
         publishEndpointSelection(family);
         window.RemoteGateEndpointPicker?.sync?.('endpoint-select');
         return;
       }
-      const fallback = saved.wan ? options.find((option) => endpointWanForSelection(family, option.value) === saved.wan) : null;
+      const fallback = saved.wan ? options.find((option) => {
+        if (endpointWanForSelection(family, option.value) !== saved.wan) return false;
+        if (!saved.method) return true;
+        return endpointMethodsForSelection(family, option.value).method === saved.method;
+      }) : null;
       if (fallback) {
         select.value = fallback.value;
-        context.state.endpointSelections[family] = {value:fallback.value, wan:saved.wan, wan4:family === 'ipv4' ? saved.wan : '', wan6:family === 'ipv6' ? saved.wan : ''};
+        context.state.endpointSelections[family] = endpointSelectionRecord(family, fallback.value);
         publishEndpointSelection(family);
         window.RemoteGateEndpointPicker?.sync?.('endpoint-select');
         return;
@@ -268,6 +299,8 @@
     const prior = manual ? String(saved?.value || '') : '';
     const priorWan4 = manual ? String(saved?.wan4 || saved?.wan || '') : '';
     const priorWan6 = manual ? String(saved?.wan6 || saved?.wan || '') : '';
+    const priorMethod4 = manual ? String(saved?.method4 || '') : '';
+    const priorMethod6 = manual ? String(saved?.method6 || '') : '';
     const pairs = dualEndpointPairs();
     select.replaceChildren();
     select.disabled = false;
@@ -297,12 +330,19 @@
       select.append(option);
     });
     const exact = [...select.options].find((option) => option.value === prior);
-    if (exact) select.value = exact.value;
-    else if (manual && (priorWan4 || priorWan6)) {
-      const pair = pairs.find((item) => item.wan4 === priorWan4 && item.wan6 === priorWan6);
+    if (exact) {
+      select.value = exact.value;
+      context.state.endpointSelections.dual = endpointSelectionRecord('dual', exact.value);
+    } else if (manual && (priorWan4 || priorWan6)) {
+      const pair = pairs.find((item) =>
+        item.wan4 === priorWan4 &&
+        item.wan6 === priorWan6 &&
+        (!priorMethod4 || endpointMethod(item.ipv4) === priorMethod4) &&
+        (!priorMethod6 || endpointMethod(item.ipv6) === priorMethod6)
+      );
       if (pair) {
         select.value = pair.id;
-        context.state.endpointSelections.dual = {value:pair.id, wan:pair.sameWan ? pair.wan : '', wan4:pair.wan4, wan6:pair.wan6};
+        context.state.endpointSelections.dual = endpointSelectionRecord('dual', pair.id);
       } else {
         context.state.endpointManualSelections.dual = false;
         delete context.state.endpointSelections.dual;
@@ -772,10 +812,10 @@
     if (pendingAction === 'activate' || (locked && lockAction(currentData) === 'activate')) {
       mode='authorizing'; title=t('gate.authorizing');
       const queued = Array.isArray(next) ? next.length : 0;
-      subtitle = queued > 0 ? (zh() ? `正在授权 ${String(pending?.family||'').toUpperCase()}，随后继续下一协议族…` : `Authorizing ${String(pending?.family||'').toUpperCase()}, then continuing with the next family…`) : (zh() ? '正在等待 OpenWrt 应用临时授权…' : 'Waiting for OpenWrt to apply the temporary authorization…');
-      badge=t('gate.pendingBadge');
+      subtitle = queued > 0 ? (zh() ? `正在授权 ${String(pending?.family||'').toUpperCase()}，随后继续下一协议族…` : `Authorizing ${String(pending?.family||'').toUpperCase()}, then continuing with the next family...`) : t('gate.authorizingSub');
+      badge=t('gate.authorizingBadge');
     } else if (pendingAction === 'close' || (locked && lockAction(currentData) === 'close')) {
-      mode='authorizing'; title=t('gate.closing'); subtitle=zh() ? '正在等待 OpenWrt 清除临时授权…' : 'Waiting for OpenWrt to clear temporary authorizations…'; badge=t('gate.pendingBadge');
+      mode='authorizing'; title=zh() ? '正在关闭' : 'CLOSING'; subtitle=zh() ? '正在等待 OpenWrt 清理临时授权与 Internet 出口。' : 'Waiting for OpenWrt to clear temporary authorization and Internet egress.'; badge=zh() ? '关闭中' : 'CLOSING';
     } else if (active) {
       mode='open'; title=t('gate.open');
       const selected = state.family === 'dual' ? [sourceExpiresIn(fw,'ipv4'), sourceExpiresIn(fw,'ipv6')] : [sourceExpiresIn(fw,state.family)];
