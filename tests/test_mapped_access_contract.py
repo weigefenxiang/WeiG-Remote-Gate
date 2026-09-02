@@ -126,12 +126,13 @@ class MappedAccessContractTests(unittest.TestCase):
         self.assertLess(activate.index('sync_firewall_policy || true'), activate.index('"$MAPPING" resolve-current'))
         self.assertLess(activate.index('"$MAPPING" resolve-current'), activate.index('"$FIREWALL" activate'))
 
-    def test_mapped_picker_hides_runtime_endpoint_until_explicit_wan_selection(self):
-        self.assertIn('function rewriteMappedOptions()', BOOTSTRAP)
-        self.assertIn("const mappedIndex = parts.indexOf('Mapped')", BOOTSTRAP)
-        self.assertIn('选择 WAN 后显示实时 Endpoint', BOOTSTRAP)
-        self.assertIn('Live endpoint shown after WAN selection', BOOTSTRAP)
+    def test_mapped_endpoint_display_uses_confirmed_selection_without_option_rewriting(self):
+        self.assertNotIn('function rewriteMappedOptions()', BOOTSTRAP)
+        self.assertNotIn("const mappedIndex = parts.indexOf('Mapped')", BOOTSTRAP)
+        self.assertNotIn('function observeMappedPicker()', BOOTSTRAP)
+        self.assertIn('function selectedEndpointRecord(data)', BOOTSTRAP)
         self.assertIn("select.dataset.selectionConfirmed !== '1'", BOOTSTRAP)
+        self.assertIn('function selectedPublicEndpoint(data)', BOOTSTRAP)
 
     def test_current_mapped_endpoint_matches_selected_mapping_and_is_copyable(self):
         self.assertIn('function selectedEndpointRecord(data)', BOOTSTRAP)
