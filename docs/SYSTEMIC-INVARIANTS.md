@@ -196,7 +196,7 @@ Dual Access: same-WAN Public+IPv6 -> same-WAN Mapped+IPv6 -> split best pair
 
 There is no user-facing `Private/CGNAT Try` Access Endpoint.
 
-A manual selection is remembered while it remains valid. Refresh, PPPoE churn, mapping changes or a new recommendation must not create or migrate authorization automatically.
+A manual selection is remembered while it remains valid. When a dynamic Endpoint id changes, a browser-local fallback may preserve the same user intent only if the stable logical WAN **and Access Method** still match; for Dual, both family WANs and both family Access Methods must match. WAN identity alone is insufficient when Direct, Mapped or future Relay candidates coexist on the same WAN. Older preferences that do not yet contain a method hint may use the historical WAN-only compatibility fallback, but the current eligible selection must enrich the stored hint for subsequent churn. These hints remain non-authoritative UI state: refresh, PPPoE churn, mapping changes or a new recommendation must not create or migrate authorization automatically.
 
 `Activate` remains the authority boundary.
 
