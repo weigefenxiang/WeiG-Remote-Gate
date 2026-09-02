@@ -108,6 +108,18 @@ class AgentStatusFreshnessTests(unittest.TestCase):
         self.assertNotIn("Date.now()", render_system)
         self.assertNotIn("< 45", render_system)
 
+    def test_activate_requires_fresh_agent_but_close_remains_deliverable(self):
+        source = SERVER.read_text(encoding="utf-8")
+        activate = source.split("def _activate_post(self) -> None:", 1)[1].split("def _inventory_post(self) -> None:", 1)[0]
+        self.assertIn('agent_status_is_fresh(STORE.read("agent-status.json", {}))', activate)
+        self.assertIn('self._json(503, {"error": "agent_unavailable"})', activate)
+        self.assertLess(
+            activate.index('agent_status_is_fresh(STORE.read("agent-status.json", {}))'),
+            activate.index("observe_source(STORE, session.token, current_source)"),
+        )
+        close_route = source.split('if path == "/api/v1/gate/activate":', 1)[1]
+        self.assertNotIn("agent_status_is_fresh", close_route.split('if path == "/api/v1/inventory":', 1)[0])
+
 
 if __name__ == "__main__":
     unittest.main()
