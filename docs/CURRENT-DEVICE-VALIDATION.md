@@ -170,6 +170,8 @@ Single-family Activate failure after Gate authorization now has executable Agent
 
 Multi-family Activate command expiry now has explicit Server queue coverage for ACK-loss ambiguity. If either the first or a later member of a Dual batch expires before its ACK is accepted, the Server archives that member as expired, clears the remaining batch tail and queues a Close rollback for the batch. A late ACK for the expired command cannot revive it. This preserves fail-closed Dual transaction semantics under control-plane uncertainty; real same-WAN/split-WAN Dual data-plane validation remains pending.
 
+Agent-side Activate delivery is now also executable-tested as an at-least-once, replay-safe transaction. Before Gate or Internet Exit side effects, the Agent writes a runtime `pending` command-result journal. A completed result is journaled before ACK. The regression suite proves three control-plane failure cases: an initial success ACK returning HTTP 503 causes the next pull of the same command to replay the identical ACK without a second firewall Activate or egress enable; a same-id `pending` journal after an interrupted execution causes only `firewall clear + egress disable + failure ACK`, never command re-execution; and a stale `pending` journal from another command is rolled back before a newly delivered Activate may execute. This is executable software/CI evidence only and does not add any real-device PASS item.
+
 ## Approved design target that is not yet hardware validation
 
 The next implementation is expected to follow these documented rules:
