@@ -6,6 +6,7 @@
 
   let context = null;
   let wireguardRestoreDone = false;
+  const runtimeWireguards = {};
   const originalBind = controls.bind.bind(controls);
   const originalRender = controls.render.bind(controls);
 
@@ -76,6 +77,7 @@
       if (!item || item.wireguard !== saved.lastWireguard) return;
       state.endpointSelections[family] = {...item.selection};
       state.endpointManualSelections[family] = true;
+      runtimeWireguards[family] = item.wireguard;
       hydrated = true;
     });
     if (hydrated && saved.lastFamily && saved.endpoints[saved.lastFamily]?.wireguard === saved.lastWireguard) {
@@ -87,9 +89,12 @@
   function discardWireguard(saved, wireguard) {
     FAMILIES.forEach((family) => {
       if (saved.endpoints[family]?.wireguard === wireguard) delete saved.endpoints[family];
-      if (context?.state?.endpointSelections?.[family] && context?.state?.endpointManualSelections?.[family]) {
-        delete context.state.endpointSelections[family];
-        context.state.endpointManualSelections[family] = false;
+      if (runtimeWireguards[family] === wireguard) {
+        delete runtimeWireguards[family];
+        if (context?.state?.endpointSelections?.[family] && context?.state?.endpointManualSelections?.[family]) {
+          delete context.state.endpointSelections[family];
+          context.state.endpointManualSelections[family] = false;
+        }
       }
     });
     if (saved.lastWireguard === wireguard) {
@@ -123,6 +128,23 @@
     wireguardRestoreDone = true;
   }
 
+  function reconcileRuntimeWireguard() {
+    const state = context?.state;
+    const wireguard = safeText(document.getElementById('wg-select')?.value, 64);
+    if (!state || !wireguard) return;
+    FAMILIES.forEach((family) => {
+      if (!state.endpointManualSelections?.[family]) {
+        delete runtimeWireguards[family];
+        return;
+      }
+      const boundWireguard = safeText(runtimeWireguards[family], 64);
+      if (!boundWireguard || boundWireguard === wireguard) return;
+      delete state.endpointSelections[family];
+      state.endpointManualSelections[family] = false;
+      delete runtimeWireguards[family];
+    });
+  }
+
   function persistFamily(family) {
     if (!context || !FAMILIES.includes(family)) return;
     const state = context.state || {};
@@ -132,6 +154,7 @@
     const wireguard = safeText(document.getElementById('wg-select')?.value, 64);
 
     if (!manual || !selection || !wireguard) {
+      delete runtimeWireguards[family];
       delete saved.endpoints[family];
       if (saved.lastFamily === family) {
         const fallback = FAMILIES.find((name) => saved.endpoints[name]);
@@ -142,6 +165,7 @@
       return;
     }
 
+    runtimeWireguards[family] = wireguard;
     saved.endpoints[family] = {wireguard, selection};
     saved.lastFamily = family;
     saved.lastWireguard = wireguard;
@@ -155,6 +179,7 @@
 
   controls.render = (currentData) => {
     restoreWireguard();
+    reconcileRuntimeWireguard();
     return originalRender(currentData);
   };
 
