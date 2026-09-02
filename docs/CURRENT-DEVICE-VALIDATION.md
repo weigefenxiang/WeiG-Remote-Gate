@@ -164,6 +164,8 @@ Access family and Internet Exit family independence now has explicit software co
 
 fw4/nftables Mapped restore now has an executable CI harness on `dev`, not only static source assertions. With fake `fw4`/`nft` commands and an isolated injected state directory, the real shell `restore` path is executed to verify that the current mapped `(ifname, ingress_port)` tuple, exact STUN control tuple and current mapped authorization source/device/port are rebuilt into nft set commands, while stale authorization and stale STUN tuples from a changed Mapping are discarded. This is software state-machine/command-generation evidence only; no real fw4/nftables router data plane has been validated, so the hardware item remains pending.
 
+Dual/single-family Internet Exit runtime health checking now also has executable CI coverage. `sync_egress()` no longer treats the presence of any one fw4 egress comment as proof that the whole firewall runtime is healthy: every enabled family must retain its outbound rule, return rule and NAT/NAT66 rule. The fw3 path likewise verifies its family-specific forward/return rules, FORWARD/POSTROUTING jumps and MASQUERADE rule instead of checking only the filter-chain jump. An executable fake-fw4 regression proves that a complete Dual firewall remains active while a Dual runtime with only IPv6 NAT66 removed is detected as incomplete, the old state is cleared and the existing atomic rebuild/fail-closed path is entered. This is software evidence only; same-WAN/split-WAN Dual hardware data-plane validation remains pending.
+
 ## Approved design target that is not yet hardware validation
 
 The next implementation is expected to follow these documented rules:
