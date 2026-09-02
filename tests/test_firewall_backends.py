@@ -73,7 +73,7 @@ class FirewallBackendTests(unittest.TestCase):
         self.assertIn('2>"$error_file"', source)
         self.assertIn("sed -n 's/^ERROR: //p'", source)
         self.assertIn('logger -t "$TAG" "activation failed: $detail"', source)
-        self.assertIn('ack "$id" false "$detail"', source)
+        self.assertIn('finish_activation_command "$id" false "$detail"', source)
         self.assertNotIn('ack "$id" false "firewall-activation-failed"', source)
         self.assertIn("sanitize_detail", source)
 
