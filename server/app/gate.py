@@ -167,6 +167,52 @@ def _empty_queue() -> dict[str, Any]:
     return {"pending": None, "next": [], "last": None}
 
 
+def _rollback_command_for_expired_batch(command: dict[str, Any], now: int) -> dict[str, Any] | None:
+    try:
+        batch_count = int(command.get("batch_count", 1) or 1)
+        batch_index = int(command.get("batch_index", 0) or 0)
+        ttl = int(command.get("ttl", 60) or 60)
+    except (TypeError, ValueError):
+        return None
+    batch_id = str(command.get("batch_id") or "").strip()
+    if batch_count <= 1 or batch_index <= 0 or not batch_id:
+        return None
+    rollback_window = max(60, min(max(0, ttl), CUSTOM_TTL_MAX))
+    return {
+        "schema": 2,
+        "id": secrets.token_hex(16),
+        "action": "close",
+        "created_at": now,
+        "expires_at": now + rollback_window,
+        "source_ip": str(command.get("source_ip") or ""),
+        "family": str(command.get("family") or "ipv4"),
+        "state": "pending",
+        "rollback_for_batch": batch_id,
+    }
+
+
+def _archive_expired_pending(
+    store: JsonStore,
+    queue: dict[str, Any],
+    command: dict[str, Any],
+) -> dict[str, Any] | None:
+    now = int(time.time())
+    command["state"] = "expired"
+    rollback = _rollback_command_for_expired_batch(command, now)
+    queue["last"] = command
+    queue["pending"] = rollback
+    queue["next"] = []
+    store.write("commands.json", queue)
+    store.append_activity({"type": "command_expired", "command_id": command.get("id", "")})
+    if rollback is not None:
+        store.append_activity({
+            "type": "batch_rollback_queued",
+            "batch_id": rollback.get("rollback_for_batch", ""),
+            "command_id": rollback.get("id", ""),
+        })
+    return rollback
+
+
 def _queue_for_write(store: JsonStore) -> dict[str, Any]:
     queue = store.read("commands.json", _empty_queue())
     if not isinstance(queue, dict):
@@ -182,12 +228,9 @@ def _queue_for_write(store: JsonStore) -> dict[str, Any]:
     if int(command.get("expires_at", 0) or 0) > now:
         raise GateError("command_pending")
 
-    command["state"] = "expired"
-    queue["last"] = command
-    queue["pending"] = None
-    queue["next"] = []
-    store.write("commands.json", queue)
-    store.append_activity({"type": "command_expired", "command_id": command.get("id", "")})
+    rollback = _archive_expired_pending(store, queue, command)
+    if rollback is not None:
+        raise GateError("command_pending")
     return queue
 
 
@@ -488,13 +531,7 @@ def pull_command(store: JsonStore) -> dict[str, Any] | None:
         if not isinstance(command, dict) or command.get("state") != "pending":
             return None
         if int(command.get("expires_at", 0)) <= int(time.time()):
-            command["state"] = "expired"
-            queue["last"] = command
-            queue["pending"] = None
-            queue["next"] = []
-            store.write("commands.json", queue)
-            store.append_activity({"type": "command_expired", "command_id": command.get("id", "")})
-            return None
+            return _archive_expired_pending(store, queue, command)
         return command
 
 
@@ -548,12 +585,7 @@ def gate_view(store: JsonStore) -> dict[str, Any]:
             queue = _empty_queue()
         pending = queue.get("pending")
         if isinstance(pending, dict) and pending.get("state") == "pending" and int(pending.get("expires_at", 0) or 0) <= int(time.time()):
-            pending["state"] = "expired"
-            queue["last"] = pending
-            queue["pending"] = None
-            queue["next"] = []
-            store.write("commands.json", queue)
-            store.append_activity({"type": "command_expired", "command_id": pending.get("id", "")})
+            _archive_expired_pending(store, queue, pending)
     agent = store.read("agent-status.json", {})
     return {
         "queue": queue,
