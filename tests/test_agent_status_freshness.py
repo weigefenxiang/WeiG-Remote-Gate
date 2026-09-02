@@ -165,7 +165,29 @@ class AgentStatusFreshnessTests(unittest.TestCase):
         self.assertIn("inventory not synchronized; command pull skipped", run_once)
         failure = run_once.split("if ! maybe_post_inventory; then", 1)[1].split("fi", 1)[0]
         self.assertNotIn("pull_once", failure)
-        self.assertLess(run_once.index("post_status true"), run_once.index("pull_once"))
+
+    def test_status_publish_failure_allows_close_but_not_activate_execution(self):
+        source = AGENT.read_text(encoding="utf-8")
+        post_status = source.split("post_status() {", 1)[1].split("sanitize_detail() {", 1)[0]
+        self.assertIn('[ "$CONTROL_CODE" = "204" ]', post_status)
+        self.assertIn("agent status update failed", post_status)
+        self.assertIn("return 1", post_status)
+
+        pull_once = source.split("pull_once() {", 1)[1].split("report_only() {", 1)[0]
+        self.assertIn('mode="${1:-all}"', pull_once)
+        self.assertIn("all|close-only", pull_once)
+        guard = 'if [ "$mode" = "close-only" ] && [ "$action" != "close" ]; then'
+        self.assertIn(guard, pull_once)
+        self.assertLess(pull_once.index(guard), pull_once.index('case "$action" in'))
+        guard_block = pull_once.split(guard, 1)[1].split("fi", 1)[0]
+        self.assertIn("return 0", guard_block)
+        self.assertNotIn("ack ", guard_block)
+
+        run_once = source.split("run_once() {", 1)[1].split('case "${1:-once}"', 1)[0]
+        self.assertIn("pull_mode=all", run_once)
+        self.assertIn("if ! post_status true; then", run_once)
+        self.assertIn("pull_mode=close-only", run_once)
+        self.assertIn('pull_once "$pull_mode"', run_once)
 
 
 if __name__ == "__main__":
