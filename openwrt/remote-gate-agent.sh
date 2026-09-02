@@ -352,7 +352,7 @@ control_candidates() {
         if [ -f "$base.v6" ] && [ -f "$base.def6" ]; then
             has6=0
             while IFS= read -r a; do is_global_ipv6 "$a" && has6=1; done < "$base.v6"
-            [ "$has6" -eq 1 ] && printf '20|ipv6|%s\n' "$dev" >> "$tmp"
+            [ "$has6" -eq 1 ] && printf '20|ipv6|%s\n' "$rank" "$dev" >> "$tmp"
         fi
     done
 
@@ -775,8 +775,6 @@ pull_once() {
                 *) source_kind=web_verified ;;
             esac
 
-            if [ "$batch_index" -eq 0 ] && [ -x "$EGRESS" ]; then "$EGRESS" disable >/dev/null 2>&1 || true; fi
-
             sync_firewall_policy || true
             mapped_detail=""
             if [ "$access_method" = "mapped" ]; then
@@ -800,6 +798,19 @@ pull_once() {
                 logger -t "$TAG" "activation result journal unavailable before side effects" 2>/dev/null || true
                 ack_after_batch_rollback "$id" "$batch_count" "activation-result-journal-unavailable"
                 return 1
+            fi
+
+            if [ "$batch_index" -eq 0 ] && [ -x "$EGRESS" ]; then
+                rm -f "${TMP_BASE}.egress-error"
+                if ! "$EGRESS" disable >/dev/null 2>"${TMP_BASE}.egress-error"; then
+                    detail="$(sed -n 's/^ERROR: //p' "${TMP_BASE}.egress-error" 2>/dev/null | tail -n 1)"
+                    [ -n "$detail" ] || detail="$(tail -n 1 "${TMP_BASE}.egress-error" 2>/dev/null || true)"
+                    [ -n "$detail" ] || detail="existing-egress-disable-failed"
+                    logger -t "$TAG" "existing egress cleanup failed: $detail" 2>/dev/null || true
+                    rollback_activation_failure "$id" "$detail" || true
+                    rm -f "${TMP_BASE}.egress-error"
+                    return 1
+                fi
             fi
 
             error_file="${TMP_BASE}.firewall-error"
@@ -833,7 +844,6 @@ pull_once() {
                 elif [ "$egress_requested" -eq 1 ]; then
                     finish_activation_command "$id" true "web-authorization-active-pending-egress${mapped_detail}"
                 else
-                    [ -x "$EGRESS" ] && "$EGRESS" disable >/dev/null 2>&1 || true
                     finish_activation_command "$id" true "web-authorization-active${mapped_detail}"
                 fi
             else
