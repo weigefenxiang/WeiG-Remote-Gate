@@ -54,8 +54,8 @@
   function accessRole(item) {
     if (item?.access_method === 'mapped' || item?.reachability === 'mapped') return 'Mapped';
     if (item?.access_method === 'relay' || item?.reachability === 'relay') return 'Relay';
-    if (item?.provider === 'egress_probe' || item?.reachability === 'egress_probe') return 'NAT egress · Try';
-    return 'Direct';
+    if (item?.provider === 'egress_probe' || item?.reachability === 'egress_probe') return 'Try';
+    return item?.family === 'ipv6' ? 'Global Direct' : 'Public Direct';
   }
 
   function endpointAddress(item) {
@@ -170,17 +170,29 @@
     window.dispatchEvent(new CustomEvent('remote-gate-endpoint-selection', {detail: {family, value, confirmed, source}}));
   }
 
-  function decorateSingleEndpointOptions(family) {
+  function populateSingleEndpointOptions(family) {
     if (!['ipv4','ipv6'].includes(family)) return;
     const select = endpointSelect();
     if (!select) return;
-    const byId = new Map(endpointsFor(family).map((item) => [item.id, item]));
+    const items = [...endpointsFor(family)].sort(endpointCompare);
     const preferred = preferredSelection(family);
-    [...select.options].forEach((option) => {
-      const item = byId.get(option.value);
-      if (!item) return;
-      setPathRows(option, [pathRow(family, item.wan, accessRole(item), endpointAddress(item))], option.value === preferred);
+    select.replaceChildren();
+    if (!items.length) {
+      const option = document.createElement('option');
+      option.value = '';
+      option.textContent = context?.t?.('common.unavailable') || 'Unavailable';
+      select.append(option);
+      select.disabled = true;
+      return;
+    }
+    items.forEach((item) => {
+      const option = document.createElement('option');
+      option.value = item.id;
+      setPathRows(option, [pathRow(family, item.wan, accessRole(item), endpointAddress(item))], item.id === preferred);
+      option.textContent = `${item.wan} · ${family === 'ipv6' ? 'IPv6' : 'IPv4'} · ${accessRole(item)} · ${endpointAddress(item)}`;
+      select.append(option);
     });
+    select.disabled = false;
   }
 
   function egressSelectionIsManual(family = context?.state?.family) {
@@ -214,10 +226,14 @@
     if (!context || !['ipv4','ipv6'].includes(family)) return;
     const select = endpointSelect();
     if (!select) return;
-    decorateSingleEndpointOptions(family);
-    select.disabled = false;
+    populateSingleEndpointOptions(family);
     const saved = context.state.endpointSelections?.[family];
     const options = [...select.options].filter((option) => option.value);
+    if (!options.length) {
+      publishEndpointSelection(family);
+      window.RemoteGateEndpointPicker?.sync?.('endpoint-select');
+      return;
+    }
     if (endpointSelectionIsManual(family) && saved) {
       const exact = options.find((option) => option.value === saved.value);
       if (exact) {
@@ -238,7 +254,7 @@
       delete context.state.endpointSelections[family];
     }
     const preferred = preferredSelection(family);
-    select.value = options.some((option) => option.value === preferred) ? preferred : '';
+    select.value = options.some((option) => option.value === preferred) ? preferred : options[0].value;
     publishEndpointSelection(family);
     window.RemoteGateEndpointPicker?.sync?.('endpoint-select');
   }
@@ -260,6 +276,7 @@
       option.value = '';
       option.textContent = context.t('common.unavailable');
       select.append(option);
+      select.disabled = true;
       publishEndpointSelection('dual');
       window.RemoteGateEndpointPicker?.sync?.('endpoint-select');
       return;
@@ -294,6 +311,11 @@
     } else select.value = pairs[0].id;
     publishEndpointSelection('dual');
     window.RemoteGateEndpointPicker?.sync?.('endpoint-select');
+  }
+
+  function syncEndpointSelect(family = context?.state?.family) {
+    if (family === 'dual') syncDualEndpointSelect();
+    else if (['ipv4','ipv6'].includes(family)) restoreEndpointSelection(family);
   }
 
   function wanSupportsEgress(wan, family) {
@@ -661,10 +683,7 @@
       button.title = familyReason(family);
     });
     const note = $('family-note'); if (note) note.textContent = familyReason(state.family);
-    if (previous !== state.family) {
-      context.onFamilyChange?.(state.family);
-      if (state.family === 'dual') syncDualEndpointSelect(); else restoreEndpointSelection(state.family);
-    }
+    if (previous !== state.family) context.onFamilyChange?.(state.family);
   }
 
   function syncScope() {
@@ -742,7 +761,7 @@
     if (!context) return;
     const state = context.state, t = context.t, remaining = context.remaining;
     syncFamily(); syncScope();
-    if (state.family === 'dual') syncDualEndpointSelect(); else restoreEndpointSelection(state.family);
+    syncEndpointSelect(state.family);
     syncEgressSelect();
     const locked = syncTransaction(currentData);
     const pending = currentData?.gate?.queue?.pending, next = currentData?.gate?.queue?.next, last = currentData?.gate?.queue?.last;
@@ -805,7 +824,6 @@
       } else authorizationSource.textContent=sourceFor(state.family)||t('common.unavailable');
     }
     setLockedControls(locked, action, active, activatable, currentData);
-    if (state.family === 'dual') queueMicrotask(syncDualEndpointSelect);
   }
 
   async function submit(path, body, action) {
@@ -867,18 +885,18 @@
     const gateCard=document.querySelector('.gate-card');
     gateCard?.addEventListener('pointerdown',transactionGuard,true); gateCard?.addEventListener('click',transactionGuard,true); gateCard?.addEventListener('change',transactionGuard,true);
     $('ttl-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-ttl]');if(!button||transactionLocked())return;state.ttl=Number(button.dataset.ttl);$('ttl-segment').querySelectorAll('button').forEach((item)=>{item.classList.toggle('active',item===button);item.setAttribute('aria-pressed',item===button?'true':'false');});});
-    $('family-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-family]');if(!button||button.disabled||transactionLocked()||!familySelectable(button.dataset.family))return;rememberEndpointSelection(state.family);state.familyManual=true;state.family=button.dataset.family;context.onFamilyChange?.(state.family);if(state.family==='dual')syncDualEndpointSelect();else restoreEndpointSelection(state.family);syncEgressSelect();render();});
+    $('family-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-family]');if(!button||button.disabled||transactionLocked()||!familySelectable(button.dataset.family))return;rememberEndpointSelection(state.family);state.familyManual=true;state.family=button.dataset.family;context.onFamilyChange?.(state.family);render();});
     $('scope-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-scope]');if(!button||transactionLocked()||!['wg','wg_ping'].includes(button.dataset.scope))return;state.scope=button.dataset.scope;syncScope();});
     endpointSelect()?.addEventListener('change',()=>{if(transactionLocked())return;const select=endpointSelect();state.endpointManualSelections[state.family]=Boolean(select?.value);if(!select?.value)delete state.endpointSelections[state.family];rememberEndpointSelection(state.family);publishEndpointSelection(state.family);syncEgressSelect();render();});
     egressSelect()?.addEventListener('change',()=>{if(transactionLocked())return;state.egressWan=egressSelect().value||'__lan__';state.egressManualSelections[state.family]=true;render();});
-    $('wg-select')?.addEventListener('change',()=>{if(transactionLocked())return;context.onWireGuardChange?.();syncFamily();render();});
+    $('wg-select')?.addEventListener('change',()=>{if(transactionLocked())return;context.onWireGuardChange?.();render();});
     $('activate-button')?.addEventListener('click',activate); $('gate-orb')?.addEventListener('click',toggleAccess); $('close-button')?.addEventListener('click',closeAccess);
-    window.addEventListener('remote-gate-language',()=>{syncEgressSelect();render();});
+    window.addEventListener('remote-gate-language',()=>render());
   }
 
   window.RemoteGateGateControls={
     bind,render,canActivate,activate,toggleAccess,familyAvailable,familySelectable,transactionLocked,dualEndpointPairs,
     egressCandidates,egressPlans,selectedEgressWan,selectedEgressPlan,reportedEgress,egressMatchesSelection,
-    endpointSelectionIsManual,rememberEndpointSelection,restoreEndpointSelection,preferredIpv4Endpoint,preferredIpv6Endpoint,preferredSelection,selectedAccessWans
+    endpointSelectionIsManual,rememberEndpointSelection,restoreEndpointSelection,syncEndpointSelect,preferredIpv4Endpoint,preferredIpv6Endpoint,preferredSelection,selectedAccessWans
   };
 })();
