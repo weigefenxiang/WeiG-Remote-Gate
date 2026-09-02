@@ -230,7 +230,7 @@ def _activation_command(
             raise GateError("endpoint_family_mismatch")
         if family and family != endpoint_family:
             raise GateError("endpoint_family_mismatch")
-        if endpoint.get("reachability") not in {"direct", "mapped", "private", "egress_probe"}:
+        if endpoint.get("reachability") not in {"direct", "mapped", "egress_probe"}:
             raise GateError("endpoint_not_reachable")
 
         inventory = normalize_inventory(store)
@@ -261,7 +261,7 @@ def _activation_command(
             or scope != "wg_ping"
             or access_method == "mapped"
             or endpoint.get("provider") != "native"
-            or endpoint.get("reachability") in {"private", "egress_probe"}
+            or endpoint.get("reachability") == "egress_probe"
             or source_confidence == "candidate"
             or batch_count > 1
             or bool(selected_egress4 or selected_egress6)
