@@ -270,7 +270,35 @@ Before a write:
 
 Commit messages are English.
 
-## 14. Pre-change checklist
+## 14. Fresh Agent authority requires synchronized facts
+
+A recently received Agent status is not sufficient runtime authority by itself. Current control-plane authority requires both:
+
+```text
+status report is inside the shared Server freshness window
++
+current OpenWrt inventory is synchronized with the VPS
+```
+
+The Server owns this decision. Browser code must consume the Server-projected `agent.fresh` value and must not create another clock threshold.
+
+Current schema-3 Agents explicitly publish `inventory_synced`. A failed inventory upload must publish `inventory_synced=false`, which immediately makes cached Gate, WireGuard, Internet Exit, Mapping and transport claims non-authoritative even if `reported_at` is recent. Missing `inventory_synced` remains a rolling-upgrade compatibility path for older Agents; new Agents must publish it explicitly.
+
+`Activate` requires fresh Agent authority on the Server before source observation, endpoint validation or queue creation. UI disabled state is never the security boundary.
+
+Command delivery must preserve the asymmetric safety rule:
+
+```text
+fresh status + synchronized inventory -> normal command pull
+inventory not synchronized            -> do not pull commands
+status publication failed             -> close-only pull
+```
+
+A close-only pull may inspect the pending command because GET `/api/v1/agent/pull` does not consume it. `Close` may execute and ACK because it reduces access. `Activate` must remain queued and unacknowledged until the Agent has successfully published fresh synchronized status again.
+
+This preserves long-lived Close delivery without allowing a previously queued Activate to execute while the VPS lacks current Agent authority.
+
+## 15. Pre-change checklist
 
 Before implementing any network/UI change, answer all of these:
 
@@ -284,3 +312,4 @@ Before implementing any network/UI change, answer all of these:
 8. Are auto selection and explicit Activate still separate?
 9. Are tests labeled by their real validation level?
 10. If the UI changed, does the design follow `DESIGN.md`, PathCard/NetworkIdentityText and the awesome-design-md methodology?
+11. Does Activate still require fresh, inventory-synchronized Agent authority while Close remains deliverable under degraded control-plane conditions?
