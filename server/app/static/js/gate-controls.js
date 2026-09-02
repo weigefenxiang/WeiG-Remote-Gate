@@ -187,17 +187,6 @@
     return Boolean(context?.state?.egressManualSelections?.[family]);
   }
 
-  function rememberEgressSelection(family = context?.state?.family) {
-    if (!context || !['ipv4','ipv6','dual'].includes(family)) return;
-    const state = context.state;
-    if (!state.egressSelections || typeof state.egressSelections !== 'object') state.egressSelections = {};
-    if (!state.egressManualSelections || typeof state.egressManualSelections !== 'object') state.egressManualSelections = {};
-    const value = String(egressSelect()?.value || '__lan__');
-    state.egressSelections[family] = value;
-    state.egressWan = value;
-    state.egressManualSelections[family] = true;
-  }
-
   function recentTerminalFailure(last) {
     if (!last || !['failed','expired'].includes(String(last.state || ''))) return false;
     const terminalAt = Number(last.acked_at || last.expires_at || last.created_at || 0);
@@ -416,7 +405,6 @@
     if (!select) return;
     const state = context.state;
     const family = state.family;
-    if (!state.egressSelections || typeof state.egressSelections !== 'object') state.egressSelections = {};
     if (!state.egressManualSelections || typeof state.egressManualSelections !== 'object') state.egressManualSelections = {};
     const label = document.querySelector('[data-egress-label]');
     if (label) label.textContent = zh() ? 'Internet 出口' : 'Internet Exit';
@@ -454,10 +442,7 @@
     const defaultValue = defaultEgressValue(plans);
     if (egressSelectionIsManual(family) && hasOption(remembered)) select.value = remembered;
     else {
-      if (egressSelectionIsManual(family) && !hasOption(remembered)) {
-        state.egressManualSelections[family] = false;
-        delete state.egressSelections[family];
-      }
+      if (egressSelectionIsManual(family) && !hasOption(remembered)) state.egressManualSelections[family] = false;
       select.value = hasOption(defaultValue) ? defaultValue : '__lan__';
     }
     state.egressWan = select.value;
@@ -577,7 +562,7 @@
   function lockAction(currentData = data()) { return transaction?.action || pendingCommand(currentData)?.action || ''; }
   function lockMessage(currentData = data()) {
     if (lockAction(currentData) === 'close') return zh() ? '正在关闭远程访问，请等待操作完成。' : 'Closing remote access. Please wait for the operation to finish.';
-    return zh() ? '正在激活远程访问，请等待 OpenWrt 应用授权。' : 'Activating remote access. Waiting for OpenWrt to apply the authorization.';
+    return zh() ? '正在激活远程访问，请等待 OpenWrt 应用临时授权。' : 'Activating remote access. Waiting for OpenWrt to apply the authorization.';
   }
   function startTransactionPoll() { if (!transactionPoll) transactionPoll = window.setInterval(() => window.RemoteGateApp?.refresh?.(), 1000); }
   function stopTransactionPoll() { if (transactionPoll) window.clearInterval(transactionPoll); transactionPoll = 0; }
@@ -876,7 +861,6 @@
     if(!state.egressWan)state.egressWan='__lan__';
     if(!state.endpointSelections||typeof state.endpointSelections!=='object')state.endpointSelections={};
     if(!state.endpointManualSelections||typeof state.endpointManualSelections!=='object')state.endpointManualSelections={};
-    if(!state.egressSelections||typeof state.egressSelections!=='object')state.egressSelections={};
     if(!state.egressManualSelections||typeof state.egressManualSelections!=='object')state.egressManualSelections={};
     if(typeof state.familyManual!=='boolean')state.familyManual=false;
     ensureDualButton(); ensureEgressControl(); syncEgressSelect();
@@ -886,7 +870,7 @@
     $('family-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-family]');if(!button||button.disabled||transactionLocked()||!familySelectable(button.dataset.family))return;rememberEndpointSelection(state.family);state.familyManual=true;state.family=button.dataset.family;context.onFamilyChange?.(state.family);if(state.family==='dual')syncDualEndpointSelect();else restoreEndpointSelection(state.family);syncEgressSelect();render();});
     $('scope-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-scope]');if(!button||transactionLocked()||!['wg','wg_ping'].includes(button.dataset.scope))return;state.scope=button.dataset.scope;syncScope();});
     endpointSelect()?.addEventListener('change',()=>{if(transactionLocked())return;const select=endpointSelect();state.endpointManualSelections[state.family]=Boolean(select?.value);if(!select?.value)delete state.endpointSelections[state.family];rememberEndpointSelection(state.family);publishEndpointSelection(state.family);syncEgressSelect();render();});
-    egressSelect()?.addEventListener('change',()=>{if(transactionLocked())return;rememberEgressSelection(state.family);render();});
+    egressSelect()?.addEventListener('change',()=>{if(transactionLocked())return;state.egressWan=egressSelect().value||'__lan__';state.egressManualSelections[state.family]=true;render();});
     $('wg-select')?.addEventListener('change',()=>{if(transactionLocked())return;context.onWireGuardChange?.();syncFamily();render();});
     $('activate-button')?.addEventListener('click',activate); $('gate-orb')?.addEventListener('click',toggleAccess); $('close-button')?.addEventListener('click',closeAccess);
     window.addEventListener('remote-gate-language',()=>{syncEgressSelect();render();});
@@ -894,7 +878,7 @@
 
   window.RemoteGateGateControls={
     bind,render,canActivate,activate,toggleAccess,familyAvailable,familySelectable,transactionLocked,dualEndpointPairs,
-    egressCandidates,egressPlans,selectedEgressWan,selectedEgressPlan,reportedEgress,egressMatchesSelection,rememberEgressSelection,
+    egressCandidates,egressPlans,selectedEgressWan,selectedEgressPlan,reportedEgress,egressMatchesSelection,
     endpointSelectionIsManual,rememberEndpointSelection,restoreEndpointSelection,preferredIpv4Endpoint,preferredIpv6Endpoint,preferredSelection,selectedAccessWans
   };
 })();
