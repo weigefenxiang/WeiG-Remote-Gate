@@ -85,15 +85,19 @@ class PlanPreferenceContractTests(unittest.TestCase):
         self.assertIn("selection?.method6 === 'direct'", source)
         self.assertIn("activatePosts === 0", source)
 
-    def test_browser_regression_covers_in_session_wireguard_service_churn(self):
+    def test_browser_regression_covers_visible_multi_wireguard_choice_and_in_session_churn(self):
         source = BROWSER_SERVICE_TEST.read_text(encoding="utf-8")
         self.assertIn("WG_HOME", source)
         self.assertIn("WG_ALT", source)
+        self.assertIn("topology = 'both'", source)
         self.assertIn("window.RemoteGateApp.refresh()", source)
+        self.assertIn("#wg-select').isVisible()", source)
+        self.assertIn("selectOption('WG_ALT')", source)
         self.assertIn("selectionSource === 'auto'", source)
-        self.assertIn("!afterSwitch.endpoints?.ipv4", source)
+        self.assertIn("!afterExplicitSwitch.endpoints?.ipv4", source)
+        self.assertIn("!afterDisappear.endpoints?.ipv4", source)
         self.assertIn("activatePosts === 0", source)
-        self.assertNotIn("page.reload", source.split("topology = 'alt'", 1)[1])
+        self.assertNotIn("page.reload", source.split("activatePosts = 0;", 1)[1])
 
     def test_ci_contract_keeps_browser_regressions_syntax_checked_and_release_only(self):
         core = CORE_CI.read_text(encoding="utf-8")
