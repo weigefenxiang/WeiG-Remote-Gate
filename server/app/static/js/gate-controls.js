@@ -576,6 +576,9 @@
     const queue = currentData?.gate?.queue || {};
     const pending = queue.pending;
     const last = queue.last;
+    if (pending && transaction && pending.action === 'close' && transaction.action === 'activate') {
+      transaction = {action:'close', commandId:String(pending.id || ''), batchId:String(pending.batch_id || ''), startedAt:Number(pending.created_at || 0) * 1000 || Date.now(), serverOwned:true};
+    }
     if (pending && !transaction) {
       transaction = {action:String(pending.action || 'activate'), commandId:String(pending.id || ''), batchId:String(pending.batch_id || ''), startedAt:Number(pending.created_at || 0) * 1000 || Date.now(), serverOwned:true};
       startTransactionPoll();
