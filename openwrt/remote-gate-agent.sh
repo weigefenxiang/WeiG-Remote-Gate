@@ -585,6 +585,13 @@ replay_activation_result() {
     saved_state="$(sed -n '2p' "$COMMAND_RESULT_FILE" 2>/dev/null)"
     saved_detail="$(sed -n '3p' "$COMMAND_RESULT_FILE" 2>/dev/null)"
     if [ "$saved_id" != "$expected" ]; then
+        case "$saved_state" in
+            true|false) ;;
+            *)
+                logger -t "$TAG" "stale uncertain activation $saved_id superseded by $expected; rolling back before new command" 2>/dev/null || true
+                rollback_active_access
+                ;;
+        esac
         rm -f "$COMMAND_RESULT_FILE"
         return 1
     fi
