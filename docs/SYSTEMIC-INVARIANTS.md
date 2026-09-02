@@ -282,6 +282,10 @@ current OpenWrt inventory is synchronized with the VPS
 
 The Server owns this decision. Browser code must consume the Server-projected `agent.fresh` value and must not create another clock threshold.
 
+The raw Agent report and the current authority view are different layers. `agent-status.json` preserves the last sanitized Agent POST and must only be written by the Agent status endpoint. Dashboard reads project that raw report through the shared fail-closed freshness helper in memory. A stale or inventory-unsynced projection must never be persisted back over the raw report.
+
+A projected `may_have_active_runtime=true` is only a last-known safety hint. It may keep `Close` visible when current Agent authority is unavailable, because Close reduces access. It must never make the Gate appear OPEN, enable Activate, restore WireGuard/egress runtime claims, or otherwise become authorization authority.
+
 Current schema-3 Agents explicitly publish `inventory_synced`. A failed inventory upload must publish `inventory_synced=false`, which immediately makes cached Gate, WireGuard, Internet Exit, Mapping and transport claims non-authoritative even if `reported_at` is recent. Missing `inventory_synced` remains a rolling-upgrade compatibility path for older Agents; new Agents must publish it explicitly.
 
 `Activate` requires fresh Agent authority on the Server before source observation, endpoint validation or queue creation. UI disabled state is never the security boundary.
@@ -313,3 +317,4 @@ Before implementing any network/UI change, answer all of these:
 9. Are tests labeled by their real validation level?
 10. If the UI changed, does the design follow `DESIGN.md`, PathCard/NetworkIdentityText and the awesome-design-md methodology?
 11. Does Activate still require fresh, inventory-synchronized Agent authority while Close remains deliverable under degraded control-plane conditions?
+12. Is last-known diagnostic state kept separate from the projected authority view, with any stale runtime hint limited to safe Close behavior only?
