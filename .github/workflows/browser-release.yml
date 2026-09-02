@@ -87,6 +87,9 @@ jobs:
       - name: Manual Internet exit regression
         run: node tests/browser_egress_manual.mjs
 
+      - name: Mixed Access and Internet exit regression
+        run: node tests/browser_mixed_egress.mjs
+
       - name: Stop fixture server (Linux)
         if: always() && runner.os == 'Linux'
         shell: bash
