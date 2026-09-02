@@ -1,0 +1,18 @@
+name: Dev Candidate Browser Matrix
+
+on:
+  push:
+    branches:
+      - dev
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dev-browser-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-matrix:
+    if: contains(github.event.head_commit.message, '[browser-matrix]')
+    uses: ./.github/workflows/browser-matrix.yml
