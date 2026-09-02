@@ -81,6 +81,9 @@ jobs:
       - name: Split WAN Dual browser regression
         run: node tests/browser_split_dual.mjs
 
+      - name: Manual endpoint preference regression
+        run: node tests/browser_plan_preferences.mjs
+
       - name: Stop fixture server (Linux)
         if: always() && runner.os == 'Linux'
         shell: bash
