@@ -107,6 +107,8 @@ def fixture() -> dict:
         "agent": {
             "schema": 2,
             "reported_at": now,
+            "fresh": True,
+            "may_have_active_runtime": False,
             "wireguard": [{"name": "WG_HOME", "listen_port": 51820, "latest_handshake": now - 70, "rx": 1628, "tx": 1012}],
             "firewall": {
                 "backend": "fw3-iptables",

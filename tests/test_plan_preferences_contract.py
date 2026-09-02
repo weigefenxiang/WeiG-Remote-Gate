@@ -7,6 +7,7 @@ TEMPLATE = ROOT / "server/app/templates/dashboard.html"
 GATE_CONTROLS = ROOT / "server/app/static/js/gate-controls.js"
 CORE_CI = ROOT / ".github/workflows/v030-ci.yml"
 BROWSER_CI = ROOT / ".github/workflows/browser-release.yml"
+BROWSER_MATRIX_CI = ROOT / ".github/workflows/browser-matrix.yml"
 BROWSER_TEST = ROOT / "tests/browser_plan_preferences.mjs"
 BROWSER_SERVICE_TEST = ROOT / "tests/browser_plan_service_identity.mjs"
 
@@ -99,13 +100,15 @@ class PlanPreferenceContractTests(unittest.TestCase):
         self.assertIn("activatePosts === 0", source)
         self.assertNotIn("page.reload", source.split("topology = 'both';", 1)[1])
 
-    def test_ci_contract_keeps_browser_regressions_syntax_checked_and_release_only(self):
+    def test_ci_contract_keeps_browser_regressions_syntax_checked_and_in_shared_matrix(self):
         core = CORE_CI.read_text(encoding="utf-8")
         release = BROWSER_CI.read_text(encoding="utf-8")
+        matrix = BROWSER_MATRIX_CI.read_text(encoding="utf-8")
         self.assertIn("node --check tests/browser_plan_preferences.mjs", core)
         self.assertIn("node --check tests/browser_plan_service_identity.mjs", core)
-        self.assertIn("node tests/browser_plan_preferences.mjs", release)
-        self.assertIn("node tests/browser_plan_service_identity.mjs", release)
+        self.assertIn("node tests/browser_plan_preferences.mjs", matrix)
+        self.assertIn("node tests/browser_plan_service_identity.mjs", matrix)
+        self.assertIn("uses: ./.github/workflows/browser-matrix.yml", release)
         self.assertIn("if: github.ref == 'refs/heads/main'", release)
         self.assertNotIn("playwright", core.lower())
 

@@ -9,6 +9,40 @@ async function selectExitMode(page, mode) {
   await page.waitForFunction((value) => document.querySelector('#egress-mode-segment .active')?.dataset.egressMode === value, mode);
 }
 
+async function assertThemeCycle(page, label) {
+  const snapshots = [];
+  for (const theme of ['light', 'dark']) {
+    await page.locator('#utility-trigger').click();
+    await page.waitForFunction(() => !document.querySelector('#utility-layer')?.hidden);
+    await page.locator(`[data-theme-choice="${theme}"]`).click();
+    await page.waitForFunction((expected) =>
+      document.documentElement.dataset.themeChoice === expected &&
+      document.documentElement.dataset.theme === expected,
+    theme);
+    assert(await page.locator(`[data-theme-choice="${theme}"]`).evaluate((node) => node.classList.contains('active')), `${label}: ${theme} theme choice is not selected`);
+    await page.locator('.utility-close').click();
+    await page.waitForFunction(() => document.querySelector('#utility-layer')?.hidden === true);
+    const snapshot = await page.evaluate(() => {
+      const trigger = document.querySelector('#egress-ipv4-select-picker-trigger:not([hidden]), #egress-ipv6-select-picker-trigger:not([hidden])');
+      const rect = trigger?.getBoundingClientRect();
+      return {
+        theme: document.documentElement.dataset.theme || '',
+        canvas: getComputedStyle(document.documentElement).getPropertyValue('--canvas').trim(),
+        triggerWidth: rect?.width || 0,
+        triggerHeight: rect?.height || 0,
+        innerWidth: window.innerWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+      };
+    });
+    assert(snapshot.theme === theme, `${label}: resolved theme did not become ${theme}`);
+    assert(snapshot.canvas, `${label}: ${theme} theme did not resolve the shared --canvas token`);
+    assert(snapshot.triggerWidth > 0 && snapshot.triggerHeight > 0, `${label}: Internet Exit trigger disappeared in ${theme} theme`);
+    assert(snapshot.scrollWidth <= snapshot.innerWidth + 1, `${label}: ${theme} theme caused horizontal overflow`);
+    snapshots.push(snapshot);
+  }
+  assert(snapshots[0].canvas !== snapshots[1].canvas, `${label}: Light/Dark resolved to the same --canvas token`);
+}
+
 async function assertExitPicker(page, family, expectedSurface) {
   const opposite = family === 'ipv4' ? 'ipv6' : 'ipv4';
   const trigger = page.locator(`#egress-${family}-select-picker-trigger`);
@@ -126,6 +160,7 @@ try {
   await page.waitForFunction(() => document.querySelector('#egress-ipv4-select')?.value === 'WAN2');
   await assertModeVisibility(page, 'ipv4');
   await assertExitLayout(page, 'ipv4', 'stacked');
+  await assertThemeCycle(page, 'mobile Internet Exit');
   await assertExitPicker(page, 'ipv4', 'sheet');
 
   await page.selectOption('#egress-ipv4-select', 'WAN');
@@ -181,6 +216,7 @@ try {
   await desktop.waitForFunction(() => document.querySelector('#egress-mode-segment .active')?.dataset.egressMode === 'ipv4');
   await assertModeVisibility(desktop, 'ipv4');
   await assertExitLayout(desktop, 'ipv4', 'side-by-side');
+  await assertThemeCycle(desktop, 'desktop Internet Exit');
   await assertExitPicker(desktop, 'ipv4', 'popover');
   await selectExitMode(desktop, 'ipv6');
   await assertModeVisibility(desktop, 'ipv6');
@@ -197,7 +233,7 @@ try {
   assert(desktopActivatePosts === 0, `desktop Internet Exit state changes posted Activate (${desktopActivatePosts})`);
   await desktop.close();
 
-  console.log('Browser Internet Exit regression passed: LAN has zero WAN pickers, single-family modes span one family only, Dual uses one scalar per family with responsive layout, mobile uses the shared sheet, desktop uses the shared popover, no Access port identity leaks, and zero auto-Activate.');
+  console.log('Browser Internet Exit regression passed: LAN has zero WAN pickers, single-family modes span one family only, Dual uses one scalar per family with responsive layout, mobile uses the shared sheet, desktop uses the shared popover, Light/Dark preserve the canonical Exit controls, no Access port identity leaks, and zero auto-Activate.');
 } finally {
   await browser.close();
 }

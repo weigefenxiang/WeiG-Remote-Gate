@@ -9,6 +9,7 @@ SERVER = ROOT / "server/remote-gate.py"
 BROWSER = ROOT / "tests/browser_gate_profile_binding.mjs"
 CORE_CI = ROOT / ".github/workflows/v030-ci.yml"
 RELEASE_CI = ROOT / ".github/workflows/browser-release.yml"
+BROWSER_MATRIX_CI = ROOT / ".github/workflows/browser-matrix.yml"
 
 
 class GateProfileBindingContractTests(unittest.TestCase):
@@ -101,12 +102,14 @@ class GateProfileBindingContractTests(unittest.TestCase):
         self.assertIn("failDashboard", source)
         self.assertIn("activatePosts() === 0", source)
 
-    def test_browser_execution_remains_release_only(self):
+    def test_browser_execution_uses_shared_matrix_while_release_stays_main_only(self):
         core = CORE_CI.read_text(encoding="utf-8")
         release = RELEASE_CI.read_text(encoding="utf-8")
+        matrix = BROWSER_MATRIX_CI.read_text(encoding="utf-8")
         self.assertIn("node --check tests/browser_gate_profile_binding.mjs", core)
         self.assertNotIn("node tests/browser_gate_profile_binding.mjs", core)
-        self.assertIn("node tests/browser_gate_profile_binding.mjs", release)
+        self.assertIn("node tests/browser_gate_profile_binding.mjs", matrix)
+        self.assertIn("uses: ./.github/workflows/browser-matrix.yml", release)
         self.assertIn("if: github.ref == 'refs/heads/main'", release)
 
 
