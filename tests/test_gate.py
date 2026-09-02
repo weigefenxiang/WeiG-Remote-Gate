@@ -3,6 +3,7 @@ import time
 import unittest
 from pathlib import Path
 
+from server.app.endpoints import build_endpoints
 from server.app.gate import GateError, ack_command, gate_view, pull_command, queue_activate, queue_close, valid_ttl
 from server.app.store import JsonStore
 
@@ -57,6 +58,41 @@ class GateTests(unittest.TestCase):
                 source_ip="198.51.100.7",
                 wan_name="WAN",
                 wg_name="WG_HOME",
+                ttl=300,
+            )
+
+    def test_private_endpoint_id_is_rejected_by_gate_authority(self):
+        self.store.write("inventory-v2.json", {
+            "schema": 2,
+            "generated_at": int(time.time()),
+            "wans": [{
+                "name": "WAN",
+                "device": "eth0",
+                "logical_interfaces": ["WAN"],
+                "up": True,
+                "default_route_v4": True,
+                "default_route_v6": False,
+                "ipv4": [{"address": "10.0.0.2"}],
+                "ipv6": [],
+            }],
+            "natmap": [],
+            "capabilities": {"gate_ipv4": True, "gate_ipv6": False},
+        })
+        self.store.write("agent-status.json", {
+            "schema": 2,
+            "wireguard": [{"name": "WG_HOME", "listen_port": 51820}],
+        })
+        private_endpoint = next(
+            endpoint for endpoint in build_endpoints(self.store)
+            if endpoint.get("reachability") == "private"
+        )
+
+        with self.assertRaisesRegex(GateError, "endpoint_not_reachable"):
+            queue_activate(
+                self.store,
+                source_ip="198.51.100.7",
+                endpoint_id=str(private_endpoint["id"]),
+                family="ipv4",
                 ttl=300,
             )
 
