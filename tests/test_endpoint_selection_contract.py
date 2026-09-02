@@ -24,20 +24,20 @@ class EndpointSelectionContractTests(unittest.TestCase):
         self.assertIn("selectedEndpointRecord", theme)
         self.assertIn("remote-gate-endpoint-selection", theme)
 
-    def test_ipv4_prefers_direct_before_mapped_or_private(self):
+    def test_ipv4_access_prefers_direct_before_mapped_or_observed_try(self):
         gate = GATE.read_text(encoding="utf-8")
         score = gate.split("function endpointScore(item) {", 1)[1].split("function endpointCompare", 1)[0]
         direct = score.index("item.family === 'ipv4' && item.reachability === 'direct'")
         mapped = score.index("item.family === 'ipv4' && item.reachability === 'mapped'")
         probe = score.index("item.family === 'ipv4' && item.reachability === 'egress_probe'")
-        private = score.index("item.reachability === 'private'")
         self.assertLess(direct, mapped)
         self.assertLess(mapped, probe)
-        self.assertLess(probe, private)
+        self.assertNotIn("item.reachability === 'private'", score)
+        self.assertIn("['direct','mapped','egress_probe'].includes(item.reachability)", gate)
 
     def test_ipv6_prefers_the_selected_ipv4_wan_when_available(self):
         gate = GATE.read_text(encoding="utf-8")
-        preferred = gate.split("function preferredIpv6Endpoint() {", 1)[1].split("function dualEndpointPairs", 1)[0]
+        preferred = gate.split("function preferredIpv6Endpoint() {", 1)[1].split("function accessRole", 1)[0]
         self.assertIn("preferredIpv4Endpoint()?.wan", preferred)
         self.assertIn("a?.wan === preferredV4Wan", preferred)
         self.assertIn("b?.wan === preferredV4Wan", preferred)
@@ -59,13 +59,15 @@ class EndpointSelectionContractTests(unittest.TestCase):
         self.assertNotIn("select.disabled || !select.value || !trigger", picker)
         self.assertIn("trigger.disabled = Boolean(select.disabled)", picker)
 
-    def test_ipv6_tab_is_selectable_even_before_it_is_ready(self):
+    def test_family_controls_are_visible_but_capability_aware(self):
         gate = GATE.read_text(encoding="utf-8")
-        self.assertIn("return ['ipv4','ipv6','dual'].includes(family);", gate)
-        self.assertIn("button.disabled = false", gate)
-        self.assertIn("function gateCapability", gate)
-        self.assertIn("gateCapability('ipv6')", gate)
-        self.assertIn("familyAvailable(state.family)", gate)
+        selectable = gate.split("function familySelectable(family) {", 1)[1].split("function singleReady", 1)[0]
+        self.assertIn("if (family === 'ipv4') return gateCapability('ipv4');", selectable)
+        self.assertIn("if (family === 'ipv6') return gateCapability('ipv6');", selectable)
+        self.assertIn("if (family === 'dual') return gateCapability('ipv4') && gateCapability('ipv6');", selectable)
+        self.assertIn("button.hidden = false", gate)
+        self.assertIn("button.disabled = !selectable", gate)
+        self.assertIn("button.setAttribute('aria-disabled', selectable ? 'false' : 'true')", gate)
 
     def test_automatic_family_keeps_ipv4_first_when_both_are_available(self):
         gate = GATE.read_text(encoding="utf-8")
