@@ -258,7 +258,23 @@
     window.RemoteGateFit?.observe?.(copy);
   }
 
+  function syncWireGuardSelectorVisibility() {
+    const select = $('wg-select');
+    if (!select) return;
+    const field = select.closest('.field');
+    if (!field) return;
+    const serviceCount = [...select.options].filter((option) => option.value).length;
+    const redundant = serviceCount <= 1;
+    field.hidden = redundant;
+    if (redundant) field.setAttribute('aria-hidden', 'true');
+    else field.removeAttribute('aria-hidden');
+    select.tabIndex = redundant ? -1 : 0;
+    if (redundant) select.setAttribute('aria-hidden', 'true');
+    else select.removeAttribute('aria-hidden');
+  }
+
   function sync(selectId = '') {
+    syncWireGuardSelectorVisibility();
     if (selectId) syncTrigger(selectId); else configs.forEach((_, id) => syncTrigger(id));
     if (layer && !layer.hidden) { renderOptions(); requestAnimationFrame(positionLayer); }
   }
@@ -288,14 +304,6 @@
     select.value = value; select.dispatchEvent(new Event('change', {bubbles:true})); window.RemoteGateFeedback?.detent?.(0.72); sync(activeSelectId); close();
   }
 
-  function hideWireGuardSelector() {
-    const select = $('wg-select');
-    if (!select) return;
-    const field = select.closest('.field');
-    if (field) { field.hidden = true; field.setAttribute('aria-hidden','true'); }
-    select.tabIndex = -1;
-  }
-
   function bindSelect(selectId, config = {}) {
     const select = $(selectId);
     if (!select) return null;
@@ -312,7 +320,7 @@
   }
 
   function bind() {
-    hideWireGuardSelector();
+    syncWireGuardSelectorVisibility();
     bindSelect('endpoint-select');
     if ($('egress-select')) bindSelect('egress-select');
     window.addEventListener('remote-gate-language', () => sync());
@@ -320,5 +328,5 @@
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind, {once:true}); else bind();
-  window.RemoteGateEndpointPicker = {open, close, sync, bindSelect};
+  window.RemoteGateEndpointPicker = {open, close, sync, bindSelect, syncWireGuardSelectorVisibility};
 })();
