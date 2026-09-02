@@ -14,6 +14,7 @@ PRESET_TTLS = {60, 300, 900, 1800}
 CUSTOM_TTL_MIN = 1800
 CUSTOM_TTL_MAX = 12 * 60 * 60
 CUSTOM_TTL_STEP = 1800
+CLOSE_COMMAND_TTL = CUSTOM_TTL_MAX
 ALLOWED_SCOPES = {"wg", "wg_ping"}
 ALLOWED_EGRESS_MODES = {"none", "ipv4", "ipv6", "dual"}
 QUEUE_LOCK = threading.RLock()
@@ -232,6 +233,56 @@ def _queue_for_write(store: JsonStore) -> dict[str, Any]:
     if rollback is not None:
         raise GateError("command_pending")
     return queue
+
+
+def _queue_for_close(store: JsonStore) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    queue = store.read("commands.json", _empty_queue())
+    if not isinstance(queue, dict):
+        queue = _empty_queue()
+    if not isinstance(queue.get("next"), list):
+        queue["next"] = []
+
+    command = queue.get("pending")
+    if not isinstance(command, dict) or command.get("state") != "pending":
+        queue["pending"] = None
+        return queue, None
+
+    now = int(time.time())
+    if int(command.get("expires_at", 0) or 0) <= now:
+        rollback = _archive_expired_pending(store, queue, command)
+        queue = store.read("commands.json", _empty_queue())
+        if rollback is None:
+            return queue if isinstance(queue, dict) else _empty_queue(), None
+        rollback["expires_at"] = now + CLOSE_COMMAND_TTL
+        if not isinstance(queue, dict):
+            queue = _empty_queue()
+        queue["pending"] = rollback
+        queue["next"] = []
+        store.write("commands.json", queue)
+        return queue, rollback
+
+    if command.get("action") == "close":
+        command["expires_at"] = max(int(command.get("expires_at", 0) or 0), now + CLOSE_COMMAND_TTL)
+        queue["pending"] = command
+        queue["next"] = []
+        store.write("commands.json", queue)
+        return queue, command
+
+    command["state"] = "cancelled"
+    command["acked_at"] = now
+    command["detail"] = "preempted_by_close"
+    queue["last"] = command
+    queue["pending"] = None
+    queue["next"] = []
+    store.write("commands.json", queue)
+    store.append_activity({
+        "type": "command_cancelled",
+        "command_id": command.get("id", ""),
+        "action": command.get("action", ""),
+        "batch_id": command.get("batch_id", ""),
+        "detail": "preempted_by_close",
+    })
+    return queue, None
 
 
 def _activation_command(
@@ -510,15 +561,18 @@ def queue_close(store: JsonStore, *, source_ip: str) -> dict[str, Any]:
         "id": secrets.token_hex(16),
         "action": "close",
         "created_at": now,
-        "expires_at": now + 60,
+        "expires_at": now + CLOSE_COMMAND_TTL,
         "source_ip": str(address),
         "family": "ipv4" if address.version == 4 else "ipv6",
         "state": "pending",
     }
     with QUEUE_LOCK:
-        _queue_for_write(store)
-        store.write("commands.json", {"pending": command, "next": [], "last": None})
-        store.append_activity({"type": "gate_close_requested", "source_ip": str(address)})
+        queue, existing = _queue_for_close(store)
+        if existing is not None:
+            store.append_activity({"type": "gate_close_requested", "source_ip": str(address), "command_id": existing.get("id", ""), "reused": True})
+            return existing
+        store.write("commands.json", {"pending": command, "next": [], "last": queue.get("last")})
+        store.append_activity({"type": "gate_close_requested", "source_ip": str(address), "command_id": command["id"], "reused": False})
     return command
 
 
