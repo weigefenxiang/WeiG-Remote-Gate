@@ -555,6 +555,7 @@
     return null;
   }
   function pendingCommand(currentData = data()) { return currentData?.gate?.queue?.pending || null; }
+  function closeCanPreempt(currentData = data()) { return pendingCommand(currentData)?.action === 'activate'; }
   function lockAction(currentData = data()) { return transaction?.action || pendingCommand(currentData)?.action || ''; }
   function lockMessage(currentData = data()) {
     if (lockAction(currentData) === 'close') return zh() ? '正在关闭远程访问，请等待操作完成。' : 'Closing remote access. Please wait for the operation to finish.';
@@ -686,11 +687,12 @@
     return sourceAuthorized(fw, family);
   }
 
-  function setLockedControls(locked, action, active, activatable) {
+  function setLockedControls(locked, action, active, activatable, currentData = data()) {
+    const preemptible = locked && action === 'activate' && closeCanPreempt(currentData);
     const form = document.querySelector('.gate-form');
     if (form) {
       form.classList.toggle('transaction-locked', locked);
-      form.inert = Boolean(locked);
+      form.inert = Boolean(locked && !preemptible);
       form.querySelectorAll('button, select, input').forEach((control) => {
         if (locked) {
           if (!Object.prototype.hasOwnProperty.call(control.dataset, 'transactionWasDisabled')) control.dataset.transactionWasDisabled = control.disabled ? '1' : '0';
@@ -712,9 +714,9 @@
       activateButton.setAttribute('aria-disabled', activateButton.disabled ? 'true' : 'false');
     }
     if (closeButton) {
-      const showClose = locked ? action === 'close' : active;
+      const showClose = locked ? (action === 'close' || preemptible) : active;
       closeButton.classList.toggle('hidden', !showClose);
-      closeButton.disabled = locked || Boolean(context?.state?.busy);
+      closeButton.disabled = (locked && !preemptible) || Boolean(context?.state?.busy);
       closeButton.classList.toggle('transaction-locked', locked && action === 'close');
       closeButton.setAttribute('aria-disabled', closeButton.disabled ? 'true' : 'false');
     }
@@ -780,13 +782,14 @@
         authorizationSource.textContent=values.length?values.join(' · '):(sourceFor('ipv4')||sourceFor('ipv6')||t('common.unavailable'));
       } else authorizationSource.textContent=sourceFor(state.family)||t('common.unavailable');
     }
-    setLockedControls(locked, action, active, activatable);
+    setLockedControls(locked, action, active, activatable, currentData);
     if (state.family === 'dual') queueMicrotask(syncDualEndpointSelect);
   }
 
   async function submit(path, body, action) {
     if (!context) return;
-    if (transactionLocked()) { notify(lockMessage(), 'info', {title:zh() ? '操作进行中' : 'Operation in progress'}); return; }
+    const preemptingClose = action === 'close' && closeCanPreempt();
+    if (transactionLocked() && !preemptingClose) { notify(lockMessage(), 'info', {title:zh() ? '操作进行中' : 'Operation in progress'}); return; }
     transaction={action,commandId:'',batchId:'',startedAt:Date.now(),serverOwned:false};
     startTransactionPoll(); context.state.busy=true; render(data());
     try {
@@ -823,7 +826,9 @@
   }
   function guardedTarget(target) { return target?.closest?.('.gate-form button, .gate-form select, .gate-form input, #gate-orb'); }
   function transactionGuard(event) {
-    if(!transactionLocked()||!guardedTarget(event.target))return;
+    const target=guardedTarget(event.target);
+    if(!transactionLocked()||!target)return;
+    if(closeCanPreempt()&&target.id==='close-button')return;
     event.preventDefault(); event.stopImmediatePropagation(); notify(lockMessage(),'info',{title:zh()?'操作进行中':'Operation in progress'});
   }
 
