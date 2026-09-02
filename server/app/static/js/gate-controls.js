@@ -8,6 +8,7 @@
   const zh = () => document.documentElement.dataset.lang === 'zh';
 
   function data() { return context?.getData?.() || {}; }
+  function inventoryWans() { return Array.isArray(data()?.inventory?.wans) ? data().inventory.wans : []; }
 
   function endpointsFor(family) {
     const selectedWg = $('wg-select')?.value || '';
@@ -23,9 +24,9 @@
   function endpointScore(item) {
     if (!item) return 999;
     if (item.family === 'ipv4' && item.reachability === 'direct') return 0;
+    if (item.family === 'ipv6' && item.reachability === 'direct') return 10;
     if (item.family === 'ipv4' && item.reachability === 'mapped') return 20;
     if (item.family === 'ipv4' && item.reachability === 'egress_probe') return 30;
-    if (item.family === 'ipv6' && item.reachability === 'direct') return 10;
     return Number(item.priority || 999);
   }
 
@@ -35,9 +36,7 @@
       || String(a?.id || '').localeCompare(String(b?.id || ''));
   }
 
-  function preferredIpv4Endpoint() {
-    return [...endpointsFor('ipv4')].sort(endpointCompare)[0] || null;
-  }
+  function preferredIpv4Endpoint() { return [...endpointsFor('ipv4')].sort(endpointCompare)[0] || null; }
 
   function preferredIpv6Endpoint() {
     const endpoints = [...endpointsFor('ipv6')];
@@ -48,6 +47,29 @@
       const bSame = preferredV4Wan && b?.wan === preferredV4Wan ? 0 : 1;
       return aSame - bSame || endpointCompare(a, b);
     })[0] || null;
+  }
+
+  function accessRole(item) {
+    if (item?.access_method === 'mapped' || item?.reachability === 'mapped') return 'Mapped';
+    if (item?.access_method === 'relay' || item?.reachability === 'relay') return 'Relay';
+    if (item?.provider === 'egress_probe' || item?.reachability === 'egress_probe') return 'NAT egress · Try';
+    return 'Direct';
+  }
+
+  function endpointAddress(item) {
+    const address = String(item?.external_address || '');
+    if (!address) return '—';
+    return item?.family === 'ipv6' ? `[${address}]:${item.external_port}` : `${address}:${item.external_port}`;
+  }
+
+  function pathRow(family, wan, role, value) {
+    return {family: family === 'ipv6' ? 'IPv6' : 'IPv4', wan: String(wan || '—'), role: String(role || ''), value: String(value || '—')};
+  }
+
+  function setPathRows(option, rows, primary = false) {
+    if (!option) return;
+    option.dataset.pathRows = JSON.stringify(rows || []);
+    option.dataset.pathPrimary = primary ? '1' : '0';
   }
 
   function dualTier(pair) {
@@ -89,7 +111,6 @@
       pair.tier = dualTier(pair);
       pairs.push(pair);
     };
-
     v4.forEach((ipv4) => v6.forEach((ipv6) => pushPair(ipv4, ipv6)));
     return pairs.sort((a, b) =>
       a.tier - b.tier
@@ -105,20 +126,6 @@
     if (family === 'ipv6') return preferredIpv6Endpoint()?.id || '';
     if (family === 'dual') return dualEndpointPairs()[0]?.id || '';
     return '';
-  }
-
-  function endpointAddress(item) {
-    const address = String(item?.external_address || '');
-    if (!address) return '—';
-    return item?.family === 'ipv6' ? `[${address}]:${item.external_port}` : `${address}:${item.external_port}`;
-  }
-
-  function dualProvider(pair) {
-    if (!pair?.sameWan) return 'Split WAN';
-    const item = pair?.ipv4;
-    if (item?.reachability === 'direct') return 'Direct';
-    if (item?.access_method === 'mapped' || item?.reachability === 'mapped' || item?.provider === 'natmap') return 'Mapped';
-    return 'NAT egress · Try';
   }
 
   function endpointWansForSelection(family, value) {
@@ -143,12 +150,6 @@
     return endpointWansForSelection(family, String(endpointSelect()?.value || ''));
   }
 
-  function selectedAccessWan() {
-    const family = context?.state?.family;
-    if (!['ipv4','ipv6','dual'].includes(family)) return '';
-    return endpointWanForSelection(family, String(endpointSelect()?.value || ''));
-  }
-
   function endpointSelectionIsManual(family = context?.state?.family) {
     return Boolean(context?.state?.endpointManualSelections?.[family]);
   }
@@ -164,9 +165,20 @@
       select.dataset.selectionConfirmed = confirmed ? '1' : '0';
       select.dataset.selectionSource = confirmed ? source : '';
     }
-    window.dispatchEvent(new CustomEvent('remote-gate-endpoint-selection', {
-      detail: {family, value, confirmed, source}
-    }));
+    window.dispatchEvent(new CustomEvent('remote-gate-endpoint-selection', {detail: {family, value, confirmed, source}}));
+  }
+
+  function decorateSingleEndpointOptions(family) {
+    if (!['ipv4','ipv6'].includes(family)) return;
+    const select = endpointSelect();
+    if (!select) return;
+    const byId = new Map(endpointsFor(family).map((item) => [item.id, item]));
+    const preferred = preferredSelection(family);
+    [...select.options].forEach((option) => {
+      const item = byId.get(option.value);
+      if (!item) return;
+      setPathRows(option, [pathRow(family, item.wan, accessRole(item), endpointAddress(item))], option.value === preferred);
+    });
   }
 
   function egressSelectionIsManual(family = context?.state?.family) {
@@ -177,18 +189,14 @@
     if (!last || !['failed','expired'].includes(String(last.state || ''))) return false;
     const terminalAt = Number(last.acked_at || last.expires_at || last.created_at || 0);
     if (!terminalAt) return false;
-    const age = Math.max(0, Math.floor(Date.now() / 1000) - terminalAt);
-    return age <= 120;
+    return Math.max(0, Math.floor(Date.now() / 1000) - terminalAt) <= 120;
   }
 
   function rememberEndpointSelection(family = context?.state?.family) {
     if (!context || !['ipv4','ipv6','dual'].includes(family) || !endpointSelectionIsManual(family)) return;
     const select = endpointSelect();
     const value = String(select?.value || '');
-    if (!value) {
-      publishEndpointSelection(family);
-      return;
-    }
+    if (!value) { publishEndpointSelection(family); return; }
     if (!context.state.endpointSelections || typeof context.state.endpointSelections !== 'object') context.state.endpointSelections = {};
     const wans = endpointWansForSelection(family, value);
     context.state.endpointSelections[family] = {
@@ -204,6 +212,7 @@
     if (!context || !['ipv4','ipv6'].includes(family)) return;
     const select = endpointSelect();
     if (!select) return;
+    decorateSingleEndpointOptions(family);
     select.disabled = false;
     const saved = context.state.endpointSelections?.[family];
     const options = [...select.options].filter((option) => option.value);
@@ -215,11 +224,10 @@
         window.RemoteGateEndpointPicker?.sync?.('endpoint-select');
         return;
       }
-      let fallback = null;
-      if (saved.wan) fallback = options.find((option) => endpointWanForSelection(family, option.value) === saved.wan) || null;
+      const fallback = saved.wan ? options.find((option) => endpointWanForSelection(family, option.value) === saved.wan) : null;
       if (fallback) {
         select.value = fallback.value;
-        context.state.endpointSelections[family] = {value: fallback.value, wan: saved.wan, wan4: family === 'ipv4' ? saved.wan : '', wan6: family === 'ipv6' ? saved.wan : ''};
+        context.state.endpointSelections[family] = {value:fallback.value, wan:saved.wan, wan4:family === 'ipv4' ? saved.wan : '', wan6:family === 'ipv6' ? saved.wan : ''};
         publishEndpointSelection(family);
         window.RemoteGateEndpointPicker?.sync?.('endpoint-select');
         return;
@@ -250,12 +258,11 @@
       option.value = '';
       option.textContent = context.t('common.unavailable');
       select.append(option);
-      select.value = '';
       publishEndpointSelection('dual');
       window.RemoteGateEndpointPicker?.sync?.('endpoint-select');
       return;
     }
-    pairs.forEach((pair) => {
+    pairs.forEach((pair, index) => {
       const option = document.createElement('option');
       option.value = pair.id;
       option.dataset.ipv4EndpointId = pair.ipv4.id;
@@ -263,9 +270,11 @@
       option.dataset.ipv4Wan = pair.wan4;
       option.dataset.ipv6Wan = pair.wan6;
       option.dataset.splitWan = pair.sameWan ? '0' : '1';
-      option.textContent = pair.sameWan
-        ? `${pair.wan} · Dual · ${dualProvider(pair)} · ${endpointAddress(pair.ipv4)} + ${endpointAddress(pair.ipv6)}`
-        : `Dual · Split WAN · IPv4 ${pair.wan4} ${endpointAddress(pair.ipv4)} + IPv6 ${pair.wan6} ${endpointAddress(pair.ipv6)}`;
+      setPathRows(option, [
+        pathRow('ipv4', pair.wan4, accessRole(pair.ipv4), endpointAddress(pair.ipv4)),
+        pathRow('ipv6', pair.wan6, accessRole(pair.ipv6), endpointAddress(pair.ipv6))
+      ], index === 0);
+      option.textContent = `${pair.wan4}/${pair.wan6} · IPv4 + IPv6 · ${accessRole(pair.ipv4)} + ${accessRole(pair.ipv6)} · ${endpointAddress(pair.ipv4)} + ${endpointAddress(pair.ipv6)}`;
       select.append(option);
     });
     const exact = [...select.options].find((option) => option.value === prior);
@@ -274,7 +283,7 @@
       const pair = pairs.find((item) => item.wan4 === priorWan4 && item.wan6 === priorWan6);
       if (pair) {
         select.value = pair.id;
-        context.state.endpointSelections.dual = {value: pair.id, wan: pair.sameWan ? pair.wan : '', wan4: pair.wan4, wan6: pair.wan6};
+        context.state.endpointSelections.dual = {value:pair.id, wan:pair.sameWan ? pair.wan : '', wan4:pair.wan4, wan6:pair.wan6};
       } else {
         context.state.endpointManualSelections.dual = false;
         delete context.state.endpointSelections.dual;
@@ -295,50 +304,73 @@
     return false;
   }
 
-  function egressCandidates() {
-    const mode = ['ipv4','ipv6','dual'].includes(context?.state?.family) ? context.state.family : 'ipv4';
-    const needs4 = mode === 'ipv4' || mode === 'dual';
-    const needs6 = mode === 'ipv6' || mode === 'dual';
-    const wans = Array.isArray(data()?.inventory?.wans) ? data().inventory.wans : [];
+  function egressAddress(wan, family) {
+    if (family === 'ipv6') {
+      const global6 = (Array.isArray(wan?.ipv6) ? wan.ipv6 : []).find((entry) => entry?.kind === 'global' && entry?.address);
+      return String(global6?.address || '—');
+    }
     const endpoints = Array.isArray(data()?.endpoints) ? data().endpoints : [];
-    return wans
-      .filter((wan) => (!needs4 || wanSupportsEgress(wan, 'ipv4')) && (!needs6 || wanSupportsEgress(wan, 'ipv6')))
-      .map((wan) => {
-        const direct4 = (Array.isArray(wan.ipv4) ? wan.ipv4 : []).find((entry) => entry?.kind === 'public');
-        const observed4 = endpoints.find((item) => item?.wan === wan.name && item?.family === 'ipv4' && item?.provider === 'egress_probe');
-        const local4 = (Array.isArray(wan.ipv4) ? wan.ipv4 : [])[0];
-        const global6 = (Array.isArray(wan.ipv6) ? wan.ipv6 : []).find((entry) => entry?.kind === 'global' && entry?.address);
-        const v4Address = String(direct4?.address || observed4?.external_address || local4?.address || '—');
-        const v6Address = String(global6?.address || '—');
-        const v4Kind = direct4 ? 'Public IPv4 · Direct' : observed4 ? 'NAT IPv4 · Observed exit' : 'Private/CGNAT · Outbound';
-        let familyLabel = 'IPv4 Exit';
-        let kind = v4Kind;
-        let address = v4Address;
-        let score = direct4 ? 0 : observed4 ? 10 : 20;
-        if (mode === 'ipv6') {
-          familyLabel = 'IPv6 Exit';
-          kind = 'Global IPv6 · NAT66 from WG ULA';
-          address = v6Address;
-          score = 0;
-        } else if (mode === 'dual') {
-          familyLabel = 'Dual Exit';
-          kind = `${v4Kind} + Global IPv6`;
-          address = `${v4Address} + ${v6Address}`;
-        }
-        return {wan, address, kind, familyLabel, score};
-      })
+    const direct4 = (Array.isArray(wan?.ipv4) ? wan.ipv4 : []).find((entry) => entry?.kind === 'public' && entry?.address);
+    const observed4 = endpoints.find((item) => item?.wan === wan?.name && item?.family === 'ipv4' && item?.provider === 'egress_probe');
+    const local4 = (Array.isArray(wan?.ipv4) ? wan.ipv4 : [])[0];
+    return String(direct4?.address || observed4?.external_address || local4?.address || '—');
+  }
+
+  function egressScore(wan, family) {
+    if (family === 'ipv6') return 0;
+    const endpoints = Array.isArray(data()?.endpoints) ? data().endpoints : [];
+    if ((Array.isArray(wan?.ipv4) ? wan.ipv4 : []).some((entry) => entry?.kind === 'public')) return 0;
+    if (endpoints.some((item) => item?.wan === wan?.name && item?.family === 'ipv4' && item?.provider === 'egress_probe')) return 10;
+    return 20;
+  }
+
+  function egressCandidates(mode = 'ipv4') {
+    if (!['ipv4','ipv6'].includes(mode)) return [];
+    return inventoryWans()
+      .filter((wan) => wanSupportsEgress(wan, mode))
+      .map((wan) => ({wan, family:mode, address:egressAddress(wan, mode), score:egressScore(wan, mode)}))
       .sort((a, b) => a.score - b.score || String(a.wan.name).localeCompare(String(b.wan.name)));
   }
 
-  function splitEgressValue(wans) {
-    return wans?.ipv4 && wans?.ipv6 && wans.ipv4 !== wans.ipv6 ? `split:${wans.ipv4}|${wans.ipv6}` : '';
+  function egressPlanValue(plan) {
+    if (!plan || plan.mode === 'none') return '__lan__';
+    if (plan.mode === 'ipv4') return `ipv4:${plan.ipv4}`;
+    if (plan.mode === 'ipv6') return `ipv6:${plan.ipv6}`;
+    return `dual:${plan.ipv4}|${plan.ipv6}`;
   }
 
-  function accessEgressValue() {
+  function egressPlans() {
+    const v4 = egressCandidates('ipv4');
+    const v6 = egressCandidates('ipv6');
+    const single4 = v4.map((item) => ({mode:'ipv4', ipv4:item.wan.name, ipv6:'', score:item.score, rows:[pathRow('ipv4', item.wan.name, '', item.address)]}));
+    const single6 = v6.map((item) => ({mode:'ipv6', ipv4:'', ipv6:item.wan.name, score:item.score, rows:[pathRow('ipv6', item.wan.name, '', item.address)]}));
+    const dual = [];
+    v4.forEach((item4) => v6.forEach((item6) => dual.push({
+      mode:'dual',
+      ipv4:item4.wan.name,
+      ipv6:item6.wan.name,
+      score:item4.score + item6.score + (item4.wan.name === item6.wan.name ? 0 : 5),
+      rows:[pathRow('ipv4', item4.wan.name, '', item4.address), pathRow('ipv6', item6.wan.name, '', item6.address)]
+    })));
+    dual.sort((a,b) => a.score - b.score || String(a.ipv4).localeCompare(String(b.ipv4)) || String(a.ipv6).localeCompare(String(b.ipv6)));
+    return [...single4, ...single6, ...dual.slice(0, 64)].map((plan) => ({...plan, value:egressPlanValue(plan)}));
+  }
+
+  function preferredEgressMode() {
     const family = context?.state?.family;
-    const wans = selectedAccessWans();
-    if (family === 'dual') return wans.ipv4 === wans.ipv6 ? wans.ipv4 : splitEgressValue(wans);
-    return family === 'ipv6' ? wans.ipv6 : wans.ipv4;
+    return family === 'ipv6' ? 'ipv6' : family === 'dual' ? 'dual' : 'ipv4';
+  }
+
+  function defaultEgressValue(plans = egressPlans()) {
+    const mode = preferredEgressMode();
+    const access = selectedAccessWans();
+    const exact = plans.find((plan) =>
+      plan.mode === mode &&
+      (mode !== 'ipv4' || plan.ipv4 === access.ipv4) &&
+      (mode !== 'ipv6' || plan.ipv6 === access.ipv6) &&
+      (mode !== 'dual' || (plan.ipv4 === access.ipv4 && plan.ipv6 === access.ipv6))
+    );
+    return exact?.value || plans.find((plan) => plan.mode === mode)?.value || '__lan__';
   }
 
   function ensureEgressControl() {
@@ -347,7 +379,6 @@
     const endpoint = endpointSelect();
     const endpointField = endpoint?.closest?.('.field');
     if (!endpoint || !endpointField) return null;
-
     const field = document.createElement('div');
     field.className = 'field compact-field full-row';
     const label = document.createElement('span');
@@ -358,11 +389,10 @@
     select.setAttribute('aria-label', label.textContent);
     field.append(label, select);
     endpointField.insertAdjacentElement('afterend', field);
-
     window.RemoteGateEndpointPicker?.bindSelect?.('egress-select', {
-      eyebrow: 'INTERNET EXIT',
-      title: () => zh() ? '选择上网出口' : 'Choose Internet exit',
-      empty: () => zh() ? '当前协议族没有可用出口。' : 'No Internet exit is available for this IP family.'
+      eyebrow:'INTERNET EXIT',
+      title:() => zh() ? '选择上网出口' : 'Choose Internet exit',
+      empty:() => zh() ? '当前没有可用 Internet 出口。' : 'No Internet exit is currently available.'
     });
     return select;
   }
@@ -377,71 +407,69 @@
     const label = document.querySelector('[data-egress-label]');
     if (label) label.textContent = zh() ? 'Internet 出口' : 'Internet Exit';
     const remembered = String(state.egressSelections?.[family] || '');
+    const plans = egressPlans();
+    const modeOrder = [preferredEgressMode(), 'ipv4', 'ipv6', 'dual'].filter((mode, index, values) => values.indexOf(mode) === index);
+    const ranked = [...plans].sort((a,b) => modeOrder.indexOf(a.mode) - modeOrder.indexOf(b.mode) || a.score - b.score || a.value.localeCompare(b.value));
     select.replaceChildren();
 
     const local = document.createElement('option');
     local.value = '__lan__';
-    local.textContent = zh()
-      ? 'LAN only · 仅访问家庭网络 · 不代理 Internet'
-      : 'LAN only · Private access · No Internet exit';
+    local.dataset.egressMode = 'none';
+    local.dataset.ipv4Wan = '';
+    local.dataset.ipv6Wan = '';
+    local.textContent = zh() ? 'LAN only · 仅访问家庭网络 · 不代理 Internet' : 'LAN only · Private access · No Internet exit';
     select.append(local);
 
-    egressCandidates().forEach((item) => {
+    ranked.forEach((plan) => {
       const option = document.createElement('option');
-      option.value = String(item.wan.name || '');
-      option.textContent = `${item.wan.name} · ${item.familyLabel} · ${item.kind} · ${item.address}`;
+      option.value = plan.value;
+      option.dataset.egressMode = plan.mode;
+      option.dataset.ipv4Wan = plan.ipv4;
+      option.dataset.ipv6Wan = plan.ipv6;
+      setPathRows(option, plan.rows, plan.value === defaultEgressValue(plans));
+      if (plan.mode === 'dual') {
+        option.textContent = `${plan.ipv4}/${plan.ipv6} · IPv4 + IPv6 · Internet Exit · ${plan.rows[0].value} + ${plan.rows[1].value}`;
+      } else {
+        const row = plan.rows[0];
+        option.textContent = `${row.wan} · ${row.family} Exit · Internet Exit · ${row.value}`;
+      }
       select.append(option);
     });
 
-    if (family === 'dual') {
-      const accessWans = selectedAccessWans();
-      const splitValue = splitEgressValue(accessWans);
-      const inventory = Array.isArray(data()?.inventory?.wans) ? data().inventory.wans : [];
-      const wan4 = inventory.find((wan) => wan?.name === accessWans.ipv4);
-      const wan6 = inventory.find((wan) => wan?.name === accessWans.ipv6);
-      if (splitValue && wanSupportsEgress(wan4, 'ipv4') && wanSupportsEgress(wan6, 'ipv6')) {
-        const option = document.createElement('option');
-        option.value = splitValue;
-        option.dataset.splitEgress = '1';
-        option.textContent = `Dual · Split Exit · IPv4 → ${accessWans.ipv4} · IPv6 → ${accessWans.ipv6}`;
-        select.append(option);
-      }
-    }
-
-    const defaultValue = accessEgressValue();
     const hasOption = (value) => Boolean(value && [...select.options].some((option) => option.value === value));
+    const defaultValue = defaultEgressValue(plans);
     if (egressSelectionIsManual(family) && hasOption(remembered)) select.value = remembered;
-    else if (!egressSelectionIsManual(family) && hasOption(defaultValue)) select.value = defaultValue;
-    else if (egressSelectionIsManual(family) && remembered === '__lan__') select.value = '__lan__';
-    else select.value = '__lan__';
+    else {
+      if (egressSelectionIsManual(family) && !hasOption(remembered)) state.egressManualSelections[family] = false;
+      select.value = hasOption(defaultValue) ? defaultValue : '__lan__';
+    }
     state.egressWan = select.value;
     select.disabled = false;
     window.RemoteGateEndpointPicker?.bindSelect?.('egress-select', {
-      eyebrow: 'INTERNET EXIT',
-      title: () => zh() ? '选择上网出口' : 'Choose Internet exit',
-      empty: () => zh() ? '当前协议族没有可用出口。' : 'No Internet exit is available for this IP family.'
+      eyebrow:'INTERNET EXIT',
+      title:() => zh() ? '选择上网出口' : 'Choose Internet exit',
+      empty:() => zh() ? '当前没有可用 Internet 出口。' : 'No Internet exit is currently available.'
     });
     window.RemoteGateEndpointPicker?.sync?.('egress-select');
   }
 
   function selectedEgressPlan() {
-    const family = context?.state?.family || 'ipv4';
-    const value = String(egressSelect()?.value || context?.state?.egressWan || '__lan__');
-    if (!value || value === '__lan__') return {ipv4:'', ipv6:''};
-    if (family === 'dual' && value.startsWith('split:')) {
-      const parts = value.slice(6).split('|');
-      return {ipv4:String(parts[0] || ''), ipv6:String(parts[1] || '')};
-    }
-    if (family === 'dual') return {ipv4:value, ipv6:value};
-    return family === 'ipv6' ? {ipv4:'', ipv6:value} : {ipv4:value, ipv6:''};
+    const option = egressSelect()?.selectedOptions?.[0];
+    const mode = String(option?.dataset?.egressMode || 'none');
+    if (mode === 'none') return {mode:'none', ipv4:'', ipv6:''};
+    return {
+      mode: ['ipv4','ipv6','dual'].includes(mode) ? mode : 'none',
+      ipv4:String(option?.dataset?.ipv4Wan || ''),
+      ipv6:String(option?.dataset?.ipv6Wan || '')
+    };
   }
 
   function selectedEgressWan() {
     const plan = selectedEgressPlan();
-    const family = context?.state?.family || 'ipv4';
-    if (family === 'ipv4') return plan.ipv4;
-    if (family === 'ipv6') return plan.ipv6;
-    return plan.ipv4 && plan.ipv4 === plan.ipv6 ? plan.ipv4 : '';
+    if (plan.mode === 'ipv4') return plan.ipv4;
+    if (plan.mode === 'ipv6') return plan.ipv6;
+    if (plan.mode === 'dual' && plan.ipv4 && plan.ipv4 === plan.ipv6) return plan.ipv4;
+    return '';
   }
 
   function reportedEgress(currentData = data()) {
@@ -449,26 +477,22 @@
     return value && typeof value === 'object' ? value : {active:false,state:'inactive',mode:'',wan:'',wan_v4:'',wan_v6:'',detail:'',expires_in:0};
   }
 
-  function egressMatchesSelection(egress, plan, family) {
-    if (!egress || !plan) return false;
-    if (family === 'ipv4') return Boolean(plan.ipv4 && String(egress.wan_v4 || egress.wan || '') === plan.ipv4 && String(egress.mode || '') === 'ipv4');
-    if (family === 'ipv6') return Boolean(plan.ipv6 && String(egress.wan_v6 || egress.wan || '') === plan.ipv6 && String(egress.mode || '') === 'ipv6');
-    if (family === 'dual') {
-      return Boolean(
-        plan.ipv4 && plan.ipv6 &&
-        String(egress.mode || '') === 'dual' &&
-        String(egress.wan_v4 || egress.wan || '') === plan.ipv4 &&
-        String(egress.wan_v6 || egress.wan || '') === plan.ipv6
-      );
-    }
-    return false;
+  function egressMatchesSelection(egress, plan) {
+    if (!egress || !plan || plan.mode === 'none') return false;
+    if (plan.mode === 'ipv4') return Boolean(plan.ipv4 && String(egress.wan_v4 || egress.wan || '') === plan.ipv4 && String(egress.mode || '') === 'ipv4');
+    if (plan.mode === 'ipv6') return Boolean(plan.ipv6 && String(egress.wan_v6 || egress.wan || '') === plan.ipv6 && String(egress.mode || '') === 'ipv6');
+    return Boolean(
+      plan.ipv4 && plan.ipv6 && String(egress.mode || '') === 'dual' &&
+      String(egress.wan_v4 || egress.wan || '') === plan.ipv4 &&
+      String(egress.wan_v6 || egress.wan || '') === plan.ipv6
+    );
   }
 
   function egressPlanLabel(plan) {
-    if (!plan?.ipv4 && !plan?.ipv6) return '';
-    if (plan.ipv4 && plan.ipv4 === plan.ipv6) return plan.ipv4;
-    if (plan.ipv4 && plan.ipv6) return `IPv4 ${plan.ipv4} · IPv6 ${plan.ipv6}`;
-    return plan.ipv4 || plan.ipv6 || '';
+    if (!plan || plan.mode === 'none') return '';
+    if (plan.mode === 'ipv4') return `IPv4 ${plan.ipv4}`;
+    if (plan.mode === 'ipv6') return `IPv6 ${plan.ipv6}`;
+    return `IPv4 ${plan.ipv4} · IPv6 ${plan.ipv6}`;
   }
 
   function sourceFor(family) { return data()?.client_sources?.[family]?.address || ''; }
@@ -478,29 +502,17 @@
     if (family === 'ipv4') return caps.gate_ipv4 !== false;
     return false;
   }
-  function singleSelectable(family) {
-    return ['ipv4','ipv6'].includes(family);
-  }
+  function singleSelectable(family) { return ['ipv4','ipv6'].includes(family); }
   function familySelectable(family) {
     if (family === 'ipv4') return gateCapability('ipv4');
     if (family === 'ipv6') return gateCapability('ipv6');
     if (family === 'dual') return gateCapability('ipv4') && gateCapability('ipv6');
     return false;
   }
-  function singleReady(family) {
-    return singleSelectable(family) && gateCapability(family) && endpointsFor(family).length > 0;
-  }
+  function singleReady(family) { return singleSelectable(family) && gateCapability(family) && endpointsFor(family).length > 0; }
   function singleAvailable(family) { return singleReady(family) && Boolean(sourceFor(family)); }
   function familyAvailable(family) {
-    if (family === 'dual') {
-      return Boolean(
-        gateCapability('ipv4') &&
-        gateCapability('ipv6') &&
-        sourceFor('ipv4') &&
-        sourceFor('ipv6') &&
-        dualEndpointPairs().length
-      );
-    }
+    if (family === 'dual') return Boolean(gateCapability('ipv4') && gateCapability('ipv6') && sourceFor('ipv4') && sourceFor('ipv6') && dualEndpointPairs().length);
     return singleAvailable(family);
   }
   function chooseFamily() {
@@ -525,18 +537,16 @@
       if (!sourceFor('ipv4') || !sourceFor('ipv6')) return zh() ? 'IPv4 与 IPv6 Source 都就绪后可同时授权。' : 'Both IPv4 and IPv6 sources are required for dual-stack authorization.';
       const selected = selectedDualPair() || dualEndpointPairs()[0];
       const label = selected?.sameWan ? selected.wan : `IPv4 ${selected?.wan4 || '—'} + IPv6 ${selected?.wan6 || '—'}`;
-      return zh()
-        ? `双栈就绪 · IPv4 + IPv6 已识别 · ${label}`
-        : `Dual stack ready · IPv4 + IPv6 detected · ${label}`;
+      return zh() ? `双栈就绪 · IPv4 + IPv6 已识别 · ${label}` : `Dual stack ready · IPv4 + IPv6 detected · ${label}`;
     }
     if (family === 'ipv4' && !gateCapability('ipv4')) return zh() ? '此 OpenWrt 的 IPv4 Gate 已禁用。' : 'IPv4 Gate is disabled on this OpenWrt device.';
     if (family === 'ipv6' && !gateCapability('ipv6')) return t('gate.ipv6Unavailable');
     const endpoints = endpointsFor(family);
-    if (!endpoints.length) return t('gate.familyEndpointMissing', {family: family.toUpperCase()});
+    if (!endpoints.length) return t('gate.familyEndpointMissing', {family:family.toUpperCase()});
     const source = sourceFor(family);
-    if (!source) return t('gate.familySourceMissing', {family: family.toUpperCase()});
+    if (!source) return t('gate.familySourceMissing', {family:family.toUpperCase()});
     const request = context.state.requestFamily === 'ipv6' ? 'IPv6' : context.state.requestFamily === 'ipv4' ? 'IPv4' : '—';
-    return t('gate.familyReady', {family: family.toUpperCase(), source, count: endpoints.length, request});
+    return t('gate.familyReady', {family:family.toUpperCase(), source, count:endpoints.length, request});
   }
 
   function notify(message, kind = 'info', options = {}) {
@@ -547,23 +557,12 @@
   function pendingCommand(currentData = data()) { return currentData?.gate?.queue?.pending || null; }
   function lockAction(currentData = data()) { return transaction?.action || pendingCommand(currentData)?.action || ''; }
   function lockMessage(currentData = data()) {
-    const action = lockAction(currentData);
-    if (action === 'close') return zh() ? '正在关闭远程访问，请等待操作完成。' : 'Closing remote access. Please wait for the operation to finish.';
+    if (lockAction(currentData) === 'close') return zh() ? '正在关闭远程访问，请等待操作完成。' : 'Closing remote access. Please wait for the operation to finish.';
     return zh() ? '正在激活远程访问，请等待 OpenWrt 应用授权。' : 'Activating remote access. Waiting for OpenWrt to apply the authorization.';
   }
-  function startTransactionPoll() {
-    if (transactionPoll) return;
-    transactionPoll = window.setInterval(() => window.RemoteGateApp?.refresh?.(), 1000);
-  }
-  function stopTransactionPoll() {
-    if (!transactionPoll) return;
-    window.clearInterval(transactionPoll);
-    transactionPoll = 0;
-  }
-  function clearTransaction() {
-    transaction = null;
-    stopTransactionPoll();
-  }
+  function startTransactionPoll() { if (!transactionPoll) transactionPoll = window.setInterval(() => window.RemoteGateApp?.refresh?.(), 1000); }
+  function stopTransactionPoll() { if (transactionPoll) window.clearInterval(transactionPoll); transactionPoll = 0; }
+  function clearTransaction() { transaction = null; stopTransactionPoll(); }
   function transactionMatches(last) {
     if (!transaction || !last) return false;
     if (transaction.batchId && last.batch_id === transaction.batchId) return true;
@@ -577,33 +576,20 @@
     const pending = queue.pending;
     const last = queue.last;
     if (pending && !transaction) {
-      transaction = {
-        action: String(pending.action || 'activate'),
-        commandId: String(pending.id || ''),
-        batchId: String(pending.batch_id || ''),
-        startedAt: Number(pending.created_at || 0) * 1000 || Date.now(),
-        serverOwned: true
-      };
+      transaction = {action:String(pending.action || 'activate'), commandId:String(pending.id || ''), batchId:String(pending.batch_id || ''), startedAt:Number(pending.created_at || 0) * 1000 || Date.now(), serverOwned:true};
       startTransactionPoll();
     }
     if (!transaction) return false;
     startTransactionPoll();
     if (pending) return true;
-
-    if (transactionMatches(last) && ['done', 'failed', 'expired'].includes(String(last.state || ''))) {
+    if (transactionMatches(last) && ['done','failed','expired'].includes(String(last.state || ''))) {
       const terminal = String(last.state || '');
       if (terminal === 'failed' || terminal === 'expired') {
-        const fallback = terminal === 'expired'
-          ? (zh() ? '激活请求已过期。' : 'The remote access request expired.')
-          : (zh() ? '远程访问操作失败。' : 'The remote access operation failed.');
-        notify(String(last.detail || fallback), 'error', {title: zh() ? '操作失败' : 'Action failed', duration: 5200});
+        const fallback = terminal === 'expired' ? (zh() ? '激活请求已过期。' : 'The remote access request expired.') : (zh() ? '远程访问操作失败。' : 'The remote access operation failed.');
+        notify(String(last.detail || fallback), 'error', {title:zh() ? '操作失败' : 'Action failed', duration:5200});
       } else {
         const closing = transaction.action === 'close';
-        notify(
-          closing ? (zh() ? '远程访问已关闭。' : 'Remote access is closed.') : (zh() ? '远程访问已开启。' : 'Remote access is active.'),
-          'success',
-          {title: closing ? (zh() ? '已关闭' : 'Closed') : (zh() ? '激活成功' : 'Activated')}
-        );
+        notify(closing ? (zh() ? '远程访问已关闭。' : 'Remote access is closed.') : (zh() ? '远程访问已开启。' : 'Remote access is active.'), 'success', {title:closing ? (zh() ? '已关闭' : 'Closed') : (zh() ? '激活成功' : 'Activated')});
       }
       clearTransaction();
       return false;
@@ -614,21 +600,16 @@
 
   function selectedDualPair() {
     if (context?.state?.family !== 'dual') return null;
-    const value = String(endpointSelect()?.value || '');
-    return dualEndpointPairs().find((pair) => pair.id === value) || null;
+    return dualEndpointPairs().find((pair) => pair.id === String(endpointSelect()?.value || '')) || null;
   }
 
   function canActivate() {
     if (!context || transactionLocked()) return false;
     const state = context.state;
     const endpointReady = state.family === 'dual' ? Boolean(selectedDualPair()) : Boolean(endpointSelect()?.value);
-    return Boolean(
-      !state.busy &&
-      familyAvailable(state.family) &&
-      endpointReady &&
-      $('wg-select')?.value
-    );
+    return Boolean(!state.busy && familyAvailable(state.family) && endpointReady && $('wg-select')?.value);
   }
+
   function ensureDualButton() {
     const root = $('family-segment');
     if (!root || root.querySelector('[data-family="dual"]')) return;
@@ -639,6 +620,7 @@
     button.textContent = 'Dual';
     root.append(button);
   }
+
   function syncFamily() {
     if (!context) return;
     ensureDualButton();
@@ -649,7 +631,7 @@
     const next = chooseFamily();
     if (previous !== next) rememberEndpointSelection(previous);
     state.family = next;
-    const compactLabel = {ipv4: 'IPv4', ipv6: 'IPv6', dual: 'Dual'};
+    const compactLabel = {ipv4:'IPv4', ipv6:'IPv6', dual:'Dual'};
     familyRoot.querySelectorAll('[data-family]').forEach((button) => {
       const family = button.dataset.family;
       if (!['ipv4','ipv6','dual'].includes(family)) return;
@@ -665,19 +647,21 @@
     const note = $('family-note'); if (note) note.textContent = familyReason(state.family);
     if (previous !== state.family) {
       context.onFamilyChange?.(state.family);
-      if (state.family === 'dual') syncDualEndpointSelect();
-      else restoreEndpointSelection(state.family);
+      if (state.family === 'dual') syncDualEndpointSelect(); else restoreEndpointSelection(state.family);
     }
   }
+
   function syncScope() {
     if (!context) return;
     const root = $('scope-segment'); if (!root) return;
     if (!['wg','wg_ping'].includes(context.state.scope)) context.state.scope = 'wg';
     root.querySelectorAll('[data-scope]').forEach((button) => {
       const active = button.dataset.scope === context.state.scope;
-      button.classList.toggle('active', active); button.setAttribute('aria-pressed', active ? 'true' : 'false');
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', active ? 'true' : 'false');
     });
   }
+
   function authorizationForSource(fw, family) {
     const item = fw?.families?.[family] || {};
     const source = sourceFor(family);
@@ -695,13 +679,13 @@
   }
   function sourceExpiresIn(fw, family) {
     const entry = authorizationForSource(fw, family);
-    if (entry) return Number(entry.expires_in || 0);
-    return Number(fw?.families?.[family]?.expires_in || 0);
+    return Number(entry?.expires_in || fw?.families?.[family]?.expires_in || 0);
   }
   function activeFamilyState(fw, family) {
     if (family === 'dual') return sourceAuthorized(fw, 'ipv4') && sourceAuthorized(fw, 'ipv6');
     return sourceAuthorized(fw, family);
   }
+
   function setLockedControls(locked, action, active, activatable) {
     const form = document.querySelector('.gate-form');
     if (form) {
@@ -709,9 +693,7 @@
       form.inert = Boolean(locked);
       form.querySelectorAll('button, select, input').forEach((control) => {
         if (locked) {
-          if (!Object.prototype.hasOwnProperty.call(control.dataset, 'transactionWasDisabled')) {
-            control.dataset.transactionWasDisabled = control.disabled ? '1' : '0';
-          }
+          if (!Object.prototype.hasOwnProperty.call(control.dataset, 'transactionWasDisabled')) control.dataset.transactionWasDisabled = control.disabled ? '1' : '0';
           control.disabled = true;
         } else if (Object.prototype.hasOwnProperty.call(control.dataset, 'transactionWasDisabled')) {
           control.disabled = control.dataset.transactionWasDisabled === '1';
@@ -719,9 +701,7 @@
         }
       });
     }
-    const orb = $('gate-orb');
-    if (orb && locked) orb.disabled = true;
-
+    const orb = $('gate-orb'); if (orb && locked) orb.disabled = true;
     const activateButton = $('activate-button');
     const closeButton = $('close-button');
     if (activateButton) {
@@ -744,65 +724,44 @@
     if (!context) return;
     const state = context.state, t = context.t, remaining = context.remaining;
     syncFamily(); syncScope();
-    if (state.family === 'dual') syncDualEndpointSelect();
-    else restoreEndpointSelection(state.family);
+    if (state.family === 'dual') syncDualEndpointSelect(); else restoreEndpointSelection(state.family);
     syncEgressSelect();
     const locked = syncTransaction(currentData);
     const pending = currentData?.gate?.queue?.pending, next = currentData?.gate?.queue?.next, last = currentData?.gate?.queue?.last;
     const fw = currentData?.agent?.firewall || {}, active = activeFamilyState(fw, state.family), pendingAction = pending?.action, orb = $('gate-orb');
-    const egress = reportedEgress(currentData), selectedExitPlan = selectedEgressPlan(), selectedExit = egressPlanLabel(selectedExitPlan), selectedExitMatches = egressMatchesSelection(egress, selectedExitPlan, state.family);
+    const egress = reportedEgress(currentData), selectedExitPlan = selectedEgressPlan(), selectedExit = egressPlanLabel(selectedExitPlan), selectedExitMatches = egressMatchesSelection(egress, selectedExitPlan);
     let mode='closed', title=t('gate.closed'), subtitle=t('gate.closedSub'), badge=t('gate.closedBadge');
     if (pendingAction === 'activate' || (locked && lockAction(currentData) === 'activate')) {
       mode='authorizing'; title=t('gate.authorizing');
       const queued = Array.isArray(next) ? next.length : 0;
-      subtitle = queued > 0
-        ? (zh() ? `正在授权 ${String(pending?.family||'').toUpperCase()}，随后继续下一协议族…` : `Authorizing ${String(pending?.family||'').toUpperCase()}, then continuing with the next family…`)
-        : (zh() ? '正在等待 OpenWrt 应用临时授权…' : 'Waiting for OpenWrt to apply the temporary authorization…');
+      subtitle = queued > 0 ? (zh() ? `正在授权 ${String(pending?.family||'').toUpperCase()}，随后继续下一协议族…` : `Authorizing ${String(pending?.family||'').toUpperCase()}, then continuing with the next family…`) : (zh() ? '正在等待 OpenWrt 应用临时授权…' : 'Waiting for OpenWrt to apply the temporary authorization…');
       badge=t('gate.pendingBadge');
     } else if (pendingAction === 'close' || (locked && lockAction(currentData) === 'close')) {
-      mode='authorizing'; title=t('gate.closing');
-      subtitle=zh() ? '正在等待 OpenWrt 清除临时授权…' : 'Waiting for OpenWrt to clear temporary authorizations…';
-      badge=t('gate.pendingBadge');
+      mode='authorizing'; title=t('gate.closing'); subtitle=zh() ? '正在等待 OpenWrt 清除临时授权…' : 'Waiting for OpenWrt to clear temporary authorizations…'; badge=t('gate.pendingBadge');
     } else if (active) {
       mode='open'; title=t('gate.open');
-      const selected = state.family === 'dual'
-        ? [sourceExpiresIn(fw, 'ipv4'), sourceExpiresIn(fw, 'ipv6')]
-        : [sourceExpiresIn(fw, state.family)];
+      const selected = state.family === 'dual' ? [sourceExpiresIn(fw,'ipv4'), sourceExpiresIn(fw,'ipv6')] : [sourceExpiresIn(fw,state.family)];
       const values=selected.map(Number).filter((x)=>x>0), ttl=values.length?Math.min(...values):Number(fw.expires_in||0);
       subtitle=t('gate.expiresIn',{value:remaining(ttl)}); badge=t('gate.authorizedBadge');
-
       if (selectedExit) {
         if (selectedExitMatches && egress.state === 'failed') {
-          mode='error';
-          title=zh() ? 'OPEN · 出口失败' : 'OPEN · EXIT FAILED';
-          subtitle=String(egress.detail || (zh() ? 'Internet 出口启用失败。' : 'Internet egress failed to activate.'));
-          badge='EXIT FAILED';
+          mode='error'; title=zh() ? 'OPEN · 出口失败' : 'OPEN · EXIT FAILED'; subtitle=String(egress.detail || (zh() ? 'Internet 出口启用失败。' : 'Internet egress failed to activate.')); badge='EXIT FAILED';
         } else if (selectedExitMatches && egress.active && egress.state === 'active') {
-          mode='open';
-          title=t('gate.open');
           const egressTtl=Number(egress.expires_in||0);
-          subtitle=zh()
-            ? `Internet 出口 ${selectedExit} · ${String(egress.mode||'').toUpperCase()} · 剩余 ${remaining(egressTtl)}`
-            : `Internet Exit ${selectedExit} · ${String(egress.mode||'').toUpperCase()} · ${remaining(egressTtl)} remaining`;
+          subtitle=zh() ? `Internet 出口 ${selectedExit} · ${String(egress.mode||'').toUpperCase()} · 剩余 ${remaining(egressTtl)}` : `Internet Exit ${selectedExit} · ${String(egress.mode||'').toUpperCase()} · ${remaining(egressTtl)} remaining`;
           badge='EXIT ACTIVE';
         } else {
-          title=zh() ? 'OPEN · 出口未生效' : 'OPEN · EXIT OFF';
-          subtitle=zh() ? 'Gate 已授权，但所选 Internet 出口当前未处于 Active。' : 'Gate access is open, but the selected Internet exit is not active.';
-          badge='EXIT OFF';
+          title=zh() ? 'OPEN · 出口未生效' : 'OPEN · EXIT OFF'; subtitle=zh() ? 'Gate 已授权，但所选 Internet 出口当前未处于 Active。' : 'Gate access is open, but the selected Internet exit is not active.'; badge='EXIT OFF';
         }
       }
     } else if (recentTerminalFailure(last)) {
-      mode='error'; title=t('gate.error');
-      subtitle=last.detail || (last.state === 'expired' ? (zh() ? '请求已过期。' : 'The request expired.') : t('gate.agentFailed'));
-      badge=t('gate.errorBadge');
+      mode='error'; title=t('gate.error'); subtitle=last.detail || (last.state === 'expired' ? (zh() ? '请求已过期。' : 'The request expired.') : t('gate.agentFailed')); badge=t('gate.errorBadge');
     }
-    const activatable=canActivate();
-    const action=lockAction(currentData);
+    const activatable=canActivate(), action=lockAction(currentData);
     if (orb) {
       const orbLabel = active ? t('gate.close') : t('gate.activate');
       const orbEnabled = !locked && (active ? !state.busy : (mode === 'closed' && activatable));
-      orb.dataset.state=mode; orb.dataset.hint=orbLabel;
-      orb.disabled = !orbEnabled;
+      orb.dataset.state=mode; orb.dataset.hint=orbLabel; orb.disabled=!orbEnabled;
       orb.classList.toggle('transaction-locked', locked);
       orb.setAttribute('aria-disabled', orb.disabled ? 'true':'false');
       orb.setAttribute('aria-label', locked ? lockMessage(currentData) : (orbEnabled ? orbLabel : familyReason(state.family)));
@@ -813,17 +772,13 @@
     if ($('gate-state-badge')) $('gate-state-badge').textContent=badge;
     if ($('gate-lock')) $('gate-lock').textContent=active?'◇':'◆';
     const trustNote=document.querySelector('.trust-note');
-    if (trustNote) trustNote.textContent=zh()
-      ? 'Cloudflare HTTP 观察和运营商 Candidate 是当前登录 Session 的来源依据；点击 Activate 后由 VPS 解析所选协议族，OpenWrt 直接应用临时授权，不要求 WireGuard 预先握手。'
-      : 'Cloudflare HTTP observations and carrier candidates are source evidence for the signed-in session. Activate resolves the selected family server-side and OpenWrt applies the temporary authorization without requiring a pre-existing WireGuard handshake.';
+    if (trustNote) trustNote.textContent=zh() ? 'Cloudflare HTTP 观察和运营商 Candidate 是当前登录 Session 的来源依据；点击 Activate 后由 VPS 解析所选协议族，OpenWrt 直接应用临时授权，不要求 WireGuard 预先握手。' : 'Cloudflare HTTP observations and carrier candidates are source evidence for the signed-in session. Activate resolves the selected family server-side and OpenWrt applies the temporary authorization without requiring a pre-existing WireGuard handshake.';
     const authorizationSource=$('authorization-source');
     if (authorizationSource) {
       if (state.family === 'dual') {
         const values=['ipv4','ipv6'].filter((family)=>sourceAuthorized(fw,family)).map((family)=>sourceFor(family)).filter(Boolean);
         authorizationSource.textContent=values.length?values.join(' · '):(sourceFor('ipv4')||sourceFor('ipv6')||t('common.unavailable'));
-      } else {
-        authorizationSource.textContent=sourceFor(state.family)||t('common.unavailable');
-      }
+      } else authorizationSource.textContent=sourceFor(state.family)||t('common.unavailable');
     }
     setLockedControls(locked, action, active, activatable);
     if (state.family === 'dual') queueMicrotask(syncDualEndpointSelect);
@@ -831,130 +786,72 @@
 
   async function submit(path, body, action) {
     if (!context) return;
-    if (transactionLocked()) { notify(lockMessage(), 'info', {title: zh() ? '操作进行中' : 'Operation in progress'}); return; }
-    transaction = {action, commandId: '', batchId: '', startedAt: Date.now(), serverOwned: false};
-    startTransactionPoll();
-    context.state.busy = true;
-    render(data());
+    if (transactionLocked()) { notify(lockMessage(), 'info', {title:zh() ? '操作进行中' : 'Operation in progress'}); return; }
+    transaction={action,commandId:'',batchId:'',startedAt:Date.now(),serverOwned:false};
+    startTransactionPoll(); context.state.busy=true; render(data());
     try {
-      const response = await fetch(path, {
-        method: 'POST',
-        credentials: 'same-origin',
-        cache: 'no-store',
-        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': context.state.csrf},
-        body: JSON.stringify(body || {})
-      });
-      const payload = response.status === 204 ? {} : await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(String(payload?.error || `HTTP ${response.status}`));
-      transaction.commandId = String(payload?.command_id || '');
-      transaction.batchId = String(payload?.batch_id || '');
-      notify(
-        action === 'close'
-          ? (zh() ? '关闭请求已提交，正在等待 OpenWrt 确认。' : 'Close request submitted; waiting for OpenWrt confirmation.')
-          : (zh() ? '激活请求已提交，正在等待 OpenWrt 应用授权。' : 'Activation submitted; waiting for OpenWrt to apply the authorization.'),
-        'info',
-        {title: zh() ? '处理中' : 'In progress'}
-      );
+      const response=await fetch(path,{method:'POST',credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-CSRF-Token':context.state.csrf},body:JSON.stringify(body||{})});
+      const payload=response.status===204?{}:await response.json().catch(()=>({}));
+      if(!response.ok) throw new Error(String(payload?.error||`HTTP ${response.status}`));
+      transaction.commandId=String(payload?.command_id||''); transaction.batchId=String(payload?.batch_id||'');
+      notify(action==='close'?(zh()?'关闭请求已提交，正在等待 OpenWrt 确认。':'Close request submitted; waiting for OpenWrt confirmation.'):(zh()?'激活请求已提交，正在等待 OpenWrt 应用授权。':'Activation submitted; waiting for OpenWrt to apply the authorization.'),'info',{title:zh()?'处理中':'In progress'});
       window.RemoteGateApp?.refresh?.();
-    } catch (error) {
-      notify(String(error?.message || error || 'request failed'), 'error', {title: zh() ? '请求失败' : 'Request failed', duration: 5200});
-      clearTransaction();
-    } finally {
-      context.state.busy = false;
-      render(data());
-    }
+    } catch(error) {
+      notify(String(error?.message||error||'request failed'),'error',{title:zh()?'请求失败':'Request failed',duration:5200}); clearTransaction();
+    } finally { context.state.busy=false; render(data()); }
   }
 
   function activate() {
-    if (!context) return;
-    if (transactionLocked()) { notify(lockMessage(), 'info', {title: zh() ? '操作进行中' : 'Operation in progress'}); return; }
-    if (!canActivate()) return;
+    if (!context || transactionLocked() || !canActivate()) return;
     rememberEndpointSelection(context.state.family);
     const state=context.state;
     const egressPlan=selectedEgressPlan();
     const egress_wan=selectedEgressWan();
+    const egressBody={egress_mode:egressPlan.mode,egress_wan,egress_wans:{ipv4:egressPlan.ipv4,ipv6:egressPlan.ipv6}};
     if (state.family === 'dual') {
-      const pair = selectedDualPair();
-      if (!pair) return;
-      submit('/api/v1/gate/activate',{
-        families:['ipv4','ipv6'],
-        endpoint_ids:{ipv4:pair.ipv4.id,ipv6:pair.ipv6.id},
-        egress_wan,
-        egress_wans:{ipv4:egressPlan.ipv4,ipv6:egressPlan.ipv6},
-        scope:state.scope||'wg',
-        ttl:state.ttl
-      },'activate');
+      const pair=selectedDualPair(); if(!pair)return;
+      submit('/api/v1/gate/activate',{families:['ipv4','ipv6'],endpoint_ids:{ipv4:pair.ipv4.id,ipv6:pair.ipv6.id},...egressBody,scope:state.scope||'wg',ttl:state.ttl},'activate');
       return;
     }
-    submit('/api/v1/gate/activate',{endpoint_id:endpointSelect().value,family:state.family,egress_wan,scope:state.scope||'wg',ttl:state.ttl},'activate');
+    submit('/api/v1/gate/activate',{endpoint_id:endpointSelect().value,family:state.family,...egressBody,scope:state.scope||'wg',ttl:state.ttl},'activate');
   }
   function closeAccess() { submit('/api/v1/gate/close',{},'close'); }
   function toggleAccess() {
     if (!context || transactionLocked()) return;
-    const fw = data()?.agent?.firewall || {};
-    if (activeFamilyState(fw, context.state.family)) closeAccess();
-    else activate();
+    const fw=data()?.agent?.firewall||{};
+    if(activeFamilyState(fw,context.state.family)) closeAccess(); else activate();
   }
-
-  function guardedTarget(target) {
-    return target?.closest?.('.gate-form button, .gate-form select, .gate-form input, #gate-orb');
-  }
+  function guardedTarget(target) { return target?.closest?.('.gate-form button, .gate-form select, .gate-form input, #gate-orb'); }
   function transactionGuard(event) {
-    if (!transactionLocked() || !guardedTarget(event.target)) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    notify(lockMessage(), 'info', {title: zh() ? '操作进行中' : 'Operation in progress'});
+    if(!transactionLocked()||!guardedTarget(event.target))return;
+    event.preventDefault(); event.stopImmediatePropagation(); notify(lockMessage(),'info',{title:zh()?'操作进行中':'Operation in progress'});
   }
 
   function bind(nextContext) {
     context=nextContext;
     const state=context.state;
-    if (!state.scope) state.scope='wg';
-    if (!state.egressWan) state.egressWan='__lan__';
-    if (!state.endpointSelections || typeof state.endpointSelections !== 'object') state.endpointSelections={};
-    if (!state.endpointManualSelections || typeof state.endpointManualSelections !== 'object') state.endpointManualSelections={};
-    if (!state.egressManualSelections || typeof state.egressManualSelections !== 'object') state.egressManualSelections={};
-    if (typeof state.familyManual!=='boolean') state.familyManual=false;
-    ensureDualButton();
-    ensureEgressControl();
-    syncEgressSelect();
+    if(!state.scope)state.scope='wg';
+    if(!state.egressWan)state.egressWan='__lan__';
+    if(!state.endpointSelections||typeof state.endpointSelections!=='object')state.endpointSelections={};
+    if(!state.endpointManualSelections||typeof state.endpointManualSelections!=='object')state.endpointManualSelections={};
+    if(!state.egressManualSelections||typeof state.egressManualSelections!=='object')state.egressManualSelections={};
+    if(typeof state.familyManual!=='boolean')state.familyManual=false;
+    ensureDualButton(); ensureEgressControl(); syncEgressSelect();
     const gateCard=document.querySelector('.gate-card');
-    gateCard?.addEventListener('pointerdown',transactionGuard,true);
-    gateCard?.addEventListener('click',transactionGuard,true);
-    gateCard?.addEventListener('change',transactionGuard,true);
-    $('ttl-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-ttl]'); if(!button||transactionLocked())return; state.ttl=Number(button.dataset.ttl); $('ttl-segment').querySelectorAll('button').forEach((item)=>{item.classList.toggle('active',item===button);item.setAttribute('aria-pressed',item===button?'true':'false');});});
-    $('family-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-family]'); if(!button||button.disabled||transactionLocked()||!familySelectable(button.dataset.family))return;rememberEndpointSelection(state.family);state.familyManual=true;state.family=button.dataset.family;context.onFamilyChange?.(state.family);if(state.family==='dual')syncDualEndpointSelect();else restoreEndpointSelection(state.family);syncEgressSelect();render();});
+    gateCard?.addEventListener('pointerdown',transactionGuard,true); gateCard?.addEventListener('click',transactionGuard,true); gateCard?.addEventListener('change',transactionGuard,true);
+    $('ttl-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-ttl]');if(!button||transactionLocked())return;state.ttl=Number(button.dataset.ttl);$('ttl-segment').querySelectorAll('button').forEach((item)=>{item.classList.toggle('active',item===button);item.setAttribute('aria-pressed',item===button?'true':'false');});});
+    $('family-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-family]');if(!button||button.disabled||transactionLocked()||!familySelectable(button.dataset.family))return;rememberEndpointSelection(state.family);state.familyManual=true;state.family=button.dataset.family;context.onFamilyChange?.(state.family);if(state.family==='dual')syncDualEndpointSelect();else restoreEndpointSelection(state.family);syncEgressSelect();render();});
     $('scope-segment')?.addEventListener('click',(event)=>{const button=event.target.closest('[data-scope]');if(!button||transactionLocked()||!['wg','wg_ping'].includes(button.dataset.scope))return;state.scope=button.dataset.scope;syncScope();});
     endpointSelect()?.addEventListener('change',()=>{if(transactionLocked())return;const select=endpointSelect();state.endpointManualSelections[state.family]=Boolean(select?.value);if(!select?.value)delete state.endpointSelections[state.family];rememberEndpointSelection(state.family);publishEndpointSelection(state.family);syncEgressSelect();render();});
     egressSelect()?.addEventListener('change',()=>{if(transactionLocked())return;state.egressWan=egressSelect().value||'__lan__';state.egressManualSelections[state.family]=true;render();});
     $('wg-select')?.addEventListener('change',()=>{if(transactionLocked())return;context.onWireGuardChange?.();syncFamily();render();});
-    $('activate-button')?.addEventListener('click',activate);
-    $('gate-orb')?.addEventListener('click',toggleAccess);
-    $('close-button')?.addEventListener('click',closeAccess);
+    $('activate-button')?.addEventListener('click',activate); $('gate-orb')?.addEventListener('click',toggleAccess); $('close-button')?.addEventListener('click',closeAccess);
     window.addEventListener('remote-gate-language',()=>{syncEgressSelect();render();});
   }
 
   window.RemoteGateGateControls={
-    bind,
-    render,
-    canActivate,
-    activate,
-    toggleAccess,
-    familyAvailable,
-    familySelectable,
-    transactionLocked,
-    dualEndpointPairs,
-    egressCandidates,
-    selectedEgressWan,
-    selectedEgressPlan,
-    reportedEgress,
-    egressMatchesSelection,
-    endpointSelectionIsManual,
-    rememberEndpointSelection,
-    restoreEndpointSelection,
-    preferredIpv4Endpoint,
-    preferredIpv6Endpoint,
-    preferredSelection,
-    selectedAccessWans
+    bind,render,canActivate,activate,toggleAccess,familyAvailable,familySelectable,transactionLocked,dualEndpointPairs,
+    egressCandidates,egressPlans,selectedEgressWan,selectedEgressPlan,reportedEgress,egressMatchesSelection,
+    endpointSelectionIsManual,rememberEndpointSelection,restoreEndpointSelection,preferredIpv4Endpoint,preferredIpv6Endpoint,preferredSelection,selectedAccessWans
   };
 })();
