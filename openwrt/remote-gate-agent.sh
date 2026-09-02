@@ -541,24 +541,37 @@ clear_activation_result() {
     rm -f "$COMMAND_RESULT_FILE"
 }
 
-remember_activation_result() {
-    result_id="$1"; result_ok="$2"; result_detail="$(sanitize_detail "$3")"
-    case "$result_ok" in true|false) ;; *) return 1 ;; esac
+write_activation_result() {
+    result_id="$1"; result_state="$2"; result_detail="$(sanitize_detail "$3")"
+    case "$result_state" in pending|true|false) ;; *) return 1 ;; esac
     mkdir -p "$RUNTIME_DIR" || return 1
     chmod 700 "$RUNTIME_DIR" 2>/dev/null || true
     result_tmp="${COMMAND_RESULT_FILE}.tmp.$$"
     {
         printf '%s\n' "$result_id"
-        printf '%s\n' "$result_ok"
+        printf '%s\n' "$result_state"
         printf '%s\n' "$result_detail"
     } > "$result_tmp" || { rm -f "$result_tmp"; return 1; }
     chmod 600 "$result_tmp" 2>/dev/null || true
     mv -f "$result_tmp" "$COMMAND_RESULT_FILE"
 }
 
+prepare_activation_command() {
+    write_activation_result "$1" pending "activation-in-progress"
+}
+
 finish_activation_command() {
     result_id="$1"; result_ok="$2"; result_detail="$(sanitize_detail "$3")"
-    remember_activation_result "$result_id" "$result_ok" "$result_detail" || logger -t "$TAG" "cannot persist activation result for ACK replay" 2>/dev/null || true
+    if ! write_activation_result "$result_id" "$result_ok" "$result_detail"; then
+        logger -t "$TAG" "cannot persist activation result for ACK replay; rolling back runtime" 2>/dev/null || true
+        rollback_active_access
+        if write_activation_result "$result_id" false "activation-result-journal-failed"; then
+            if send_ack "$result_id" false "activation-result-journal-failed"; then
+                clear_activation_result "$result_id"
+            fi
+        fi
+        return 1
+    fi
     if send_ack "$result_id" "$result_ok" "$result_detail"; then
         clear_activation_result "$result_id"
     fi
@@ -569,19 +582,28 @@ replay_activation_result() {
     expected="$1"
     [ -r "$COMMAND_RESULT_FILE" ] || return 1
     saved_id="$(sed -n '1p' "$COMMAND_RESULT_FILE" 2>/dev/null)"
-    saved_ok="$(sed -n '2p' "$COMMAND_RESULT_FILE" 2>/dev/null)"
+    saved_state="$(sed -n '2p' "$COMMAND_RESULT_FILE" 2>/dev/null)"
     saved_detail="$(sed -n '3p' "$COMMAND_RESULT_FILE" 2>/dev/null)"
     if [ "$saved_id" != "$expected" ]; then
         rm -f "$COMMAND_RESULT_FILE"
         return 1
     fi
-    case "$saved_ok" in
-        true|false) ;;
-        *) rm -f "$COMMAND_RESULT_FILE"; return 1 ;;
+    case "$saved_state" in
+        true|false)
+            if send_ack "$saved_id" "$saved_state" "$saved_detail"; then
+                clear_activation_result "$saved_id"
+            fi
+            ;;
+        *)
+            logger -t "$TAG" "activation command $saved_id had uncertain local result; rolling back before ACK" 2>/dev/null || true
+            rollback_active_access
+            if write_activation_result "$saved_id" false "activation-result-uncertain"; then
+                if send_ack "$saved_id" false "activation-result-uncertain"; then
+                    clear_activation_result "$saved_id"
+                fi
+            fi
+            ;;
     esac
-    if send_ack "$saved_id" "$saved_ok" "$saved_detail"; then
-        clear_activation_result "$saved_id"
-    fi
     return 0
 }
 
@@ -728,6 +750,13 @@ pull_once() {
                 ingress_port="$6"
                 is_public_ipv4 "$external_address" && valid_port "$external_port" && valid_port "$ingress_port" || { rollback_batch_access "$batch_count"; ack "$id" false "mapped-endpoint-invalid"; return 1; }
                 mapped_detail=" mapped-endpoint:${external_address}:${external_port}"
+            fi
+
+            if ! prepare_activation_command "$id"; then
+                logger -t "$TAG" "activation result journal unavailable before side effects" 2>/dev/null || true
+                rollback_batch_access "$batch_count"
+                ack "$id" false "activation-result-journal-unavailable"
+                return 1
             fi
 
             error_file="${TMP_BASE}.firewall-error"
