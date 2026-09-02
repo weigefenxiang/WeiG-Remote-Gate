@@ -171,12 +171,11 @@ def _empty_queue() -> dict[str, Any]:
 def _rollback_command_for_expired_batch(command: dict[str, Any], now: int) -> dict[str, Any] | None:
     try:
         batch_count = int(command.get("batch_count", 1) or 1)
-        batch_index = int(command.get("batch_index", 0) or 0)
         ttl = int(command.get("ttl", 60) or 60)
     except (TypeError, ValueError):
         return None
     batch_id = str(command.get("batch_id") or "").strip()
-    if batch_count <= 1 or batch_index <= 0 or not batch_id:
+    if batch_count <= 1 or not batch_id:
         return None
     rollback_window = max(60, min(max(0, ttl), CUSTOM_TTL_MAX))
     return {
