@@ -74,8 +74,14 @@ try {
   await page.waitForSelector('#endpoint-picker-trigger');
 
   await page.locator('[data-family="ipv6"]').click();
+  await waitForSelection(page, 'endpoint-select', 'ep-wan2-v6', 'auto');
+  await page.evaluate(() => {
+    window.__remoteGateSelectionEvents = 0;
+    window.addEventListener('remote-gate-endpoint-selection', () => { window.__remoteGateSelectionEvents += 1; });
+  });
   await chooseEndpoint(page, 'endpoint-select', 'ep-wan-v6');
   await waitForSelection(page, 'endpoint-select', 'ep-wan-v6', 'manual');
+  assert(await page.evaluate(() => window.__remoteGateSelectionEvents) === 1, 'manual endpoint selection published duplicate preference events');
 
   const saved = await page.evaluate((key) => JSON.parse(localStorage.getItem(key) || '{}'), PREF_KEY);
   assert(saved.schema === 1, 'manual endpoint preference schema was not persisted');

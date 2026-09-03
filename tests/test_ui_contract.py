@@ -19,6 +19,8 @@ SERVER = ROOT / "server/remote-gate.py"
 OPENWRT_UPDATE = ROOT / "openwrt/update.sh"
 OPENWRT_AGENT = ROOT / "openwrt/remote-gate-agent.sh"
 OPENWRT_EGRESS = ROOT / "openwrt/remote-gate-wireguard-egress.sh"
+BROWSER_LAYOUT = ROOT / "tests/browser_layout.mjs"
+BROWSER_PLAN_PREFERENCES = ROOT / "tests/browser_plan_preferences.mjs"
 
 
 class UIContractTests(unittest.TestCase):
@@ -141,10 +143,6 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("egress_wans:{ipv4:egressPlan.ipv4,ipv6:egressPlan.ipv6}", gate)
         self.assertIn("access-ipv6-select", gate)
         self.assertIn("family-selectors access-family-selectors", gate)
-        self.assertIn("function preferredIpv4Endpoint()", gate)
-        self.assertIn("function preferredIpv6Endpoint()", gate)
-        self.assertIn("const preferredV4Wan = preferredIpv4Endpoint()?.wan || ''", gate)
-        self.assertIn("restoreEndpointSelection('ipv6', secondaryEndpointSelect())", gate)
         self.assertIn("setPathRows(option, [pathRow(family, item.wan", gate)
         self.assertIn("rows.length !== 1", picker)
         self.assertNotIn("dualEndpointPairs", gate)
@@ -156,9 +154,6 @@ class UIContractTests(unittest.TestCase):
         self.assertNotIn("`dual:${", gate)
         self.assertNotIn("endpointSelections.dual", gate)
         self.assertNotIn("endpointManualSelections.dual", gate)
-        self.assertIn("function syncEndpointSelect", gate)
-        self.assertIn("const primaryFamily = mode === 'dual' ? 'ipv4' : mode", gate)
-        self.assertIn("note.hidden = !reason", gate)
         self.assertNotIn("gate.familyReady", gate)
         self.assertIn('data-family="ipv4"', template)
         self.assertIn('data-family="ipv6"', template)
@@ -166,6 +161,21 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("grid-template-columns: repeat(3, minmax(0, 1fr)) !important", css)
         self.assertIn("white-space: nowrap", css)
         self.assertIn(".family-segment button", css)
+
+    def test_access_selection_event_is_single_and_profile_identity_keeps_ports_distinct(self):
+        gate = GATE.read_text(encoding="utf-8")
+        preference_browser = BROWSER_PLAN_PREFERENCES.read_text(encoding="utf-8")
+        layout_browser = BROWSER_LAYOUT.read_text(encoding="utf-8")
+
+        self.assertIn("servicePort:normalizedPort(endpoint.service_port)", gate)
+        self.assertIn("servicePort:normalizedPort(item.wg_port || legacy.wg_port)", gate)
+        self.assertNotIn("item.ingress_port || item.wg_port", gate)
+        self.assertIn("runtime.servicePort > 0 && runtime.servicePort === selected.servicePort", gate)
+        self.assertIn("window.__remoteGateSelectionEvents", preference_browser)
+        self.assertIn("=== 1", preference_browser)
+        self.assertIn("endpoint.service_port = 53127", layout_browser)
+        self.assertIn("profileRuntimeServicePort = 53128", layout_browser)
+        self.assertIn("OTHER ACCESS PATH", layout_browser)
 
     def test_mobile_endpoint_picker_uses_shared_fit_profiles_without_chevron(self):
         source = ENDPOINT_PICKER.read_text(encoding="utf-8")

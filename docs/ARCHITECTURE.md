@@ -229,6 +229,8 @@ Internet client
 
 Never infer the WireGuard service port from the Mapping external port.
 
+The browser's selected Access profile and the reported firewall runtime keep both local port identities explicit. Selected `OPEN` state requires the current source plus exact `device + ingress_port + service_port + scope`. Firewall `ingress_port` is compared only with the selected ingress identity; runtime `wg_port` is compared only with the selected registered `service_port`. A mismatch is Close-before-switch, never an implicit migration.
+
 Internet Exit does not consume this port model for WAN selection. It chooses an outbound family/WAN path; presenting an Access/service port in an Internet Exit option is a layering violation.
 
 ## Mapping Engine

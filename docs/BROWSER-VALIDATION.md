@@ -32,7 +32,9 @@ Executable regression set:
 
 Browser regressions must prove that IP Family `Dual` exposes exactly one family-pure IPv4 Access selector and one family-pure IPv6 Access selector. Each selector uses the shared EndpointPicker/PathCard/FamilyPathBlock implementation and each selected option contains one FamilyPathBlock. Tests must reject any `dual:<ipv4>:<ipv6>` option identity or other IPv4×IPv6 precomputed option list.
 
-The same tests verify the Activate request carries `endpoint_ids.ipv4` and `endpoint_ids.ipv6` directly from those scalar selections and that selection/fallback/family switching never posts Activate.
+The same tests verify the Activate request carries `endpoint_ids.ipv4` and `endpoint_ids.ipv6` directly from those scalar selections and that selection/fallback/family switching never posts Activate. A manual scalar selection must emit one preference-selection event, not duplicate notifications caused by render/reconcile.
+
+Gate profile regressions also keep `ingress_port` and dynamic WireGuard `service_port` distinct. A fixture with mapped ingress `57470` and service port `53127` must remain the selected OPEN profile only while runtime `wg_port` is `53127`; changing only runtime service identity to `53128` must produce `OTHER ACCESS PATH`, hide replacement Activate, keep Close available and post no Activate.
 
 Internet Exit remains independently scalar. Mobile/Desktop regressions verify LAN=0 selectors, single-family=1 matching selector, Dual=2 scalar selectors, no redundant visible `IPv4 WAN`/`IPv6 WAN` headings, no Access port identity, adaptive stacked/side-by-side layout and Light/Dark stability.
 

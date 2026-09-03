@@ -338,6 +338,8 @@ ERROR:
 
 The orb and main Activate button share exactly the same `canActivate()` conditions: selected family has a current session source, selected family has an eligible endpoint, selected WireGuard exists, the required Gate capability is ready, no command is pending and UI is not busy.
 
+An `OPEN` presentation is stricter than source equality. The reported active Access profile must still match the selected family `device + ingress_port + service_port + scope`. `ingress_port` and the dynamically discovered WireGuard `service_port` are separate identities even when they currently have the same numeric value. A mismatch is shown as another active Access path: replacement Activate stays unavailable and Close remains the only safe transition.
+
 # 10. Access Scope
 
 Two scopes exist:
