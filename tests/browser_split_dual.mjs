@@ -24,13 +24,12 @@ try {
   await page.waitForSelector('[data-family="dual"]');
   await page.locator('[data-family="dual"]').click();
 
-  const splitEndpoint = 'dual:ep-wan2-v4:ep-wan-v6';
-  await page.waitForFunction((expected) => {
-    const select = document.querySelector('#endpoint-select');
-    return select?.value === expected
-      && select.dataset.selectionConfirmed === '1'
-      && select.dataset.selectionSource === 'auto';
-  }, splitEndpoint);
+  await page.waitForFunction(() => {
+    const v4 = document.querySelector('#endpoint-select');
+    const v6 = document.querySelector('#access-ipv6-select');
+    return v4?.value === 'ep-wan2-v4' && v4.dataset.selectionConfirmed === '1' && v4.dataset.selectionSource === 'auto'
+      && v6?.value === 'ep-wan-v6' && v6.dataset.selectionConfirmed === '1' && v6.dataset.selectionSource === 'auto';
+  });
   await page.waitForFunction(() => document.querySelector('#egress-mode-segment .active')?.dataset.egressMode === 'dual');
   await page.waitForFunction(() => document.querySelector('#egress-ipv4-select')?.value === 'WAN2');
   await page.waitForFunction(() => document.querySelector('#egress-ipv6-select')?.value === 'WAN2');
@@ -38,15 +37,19 @@ try {
 
   const state = await page.evaluate(() => ({
     family: document.querySelector('#family-segment .active')?.dataset.family,
-    endpoint: document.querySelector('#endpoint-select')?.value,
-    endpointSource: document.querySelector('#endpoint-select')?.dataset.selectionSource,
+    endpoint4: document.querySelector('#endpoint-select')?.value,
+    source4: document.querySelector('#endpoint-select')?.dataset.selectionSource,
+    endpoint6: document.querySelector('#access-ipv6-select')?.value,
+    source6: document.querySelector('#access-ipv6-select')?.dataset.selectionSource,
+    pairIds: [...document.querySelectorAll('#endpoint-select option, #access-ipv6-select option')].map((option) => option.value).filter((value) => String(value).startsWith('dual:')),
     egressMode: document.querySelector('#egress-mode-segment .active')?.dataset.egressMode,
     egress4: document.querySelector('#egress-ipv4-select')?.value,
     egress6: document.querySelector('#egress-ipv6-select')?.value,
   }));
   assert(state.family === 'dual', `split-WAN Dual family changed unexpectedly (${state.family})`);
-  assert(state.endpoint === splitEndpoint, `wrong split-WAN Dual endpoint (${state.endpoint})`);
-  assert(state.endpointSource === 'auto', `split-WAN Dual endpoint was not automatic (${state.endpointSource})`);
+  assert(state.endpoint4 === 'ep-wan2-v4' && state.endpoint6 === 'ep-wan-v6', `wrong split-WAN scalar endpoints (${state.endpoint4}/${state.endpoint6})`);
+  assert(state.source4 === 'auto' && state.source6 === 'auto', `split-WAN Dual selectors were not automatic (${state.source4}/${state.source6})`);
+  assert(state.pairIds.length === 0, `split-WAN Dual still generated pair ids (${state.pairIds.join(',')})`);
   assert(state.egressMode === 'dual', `Internet Exit mode did not remain Dual (${state.egressMode})`);
   assert(state.egress4 === 'WAN2' && state.egress6 === 'WAN2', `Internet Exit must prefer the best shared dual-capable WAN independently of split Access (${state.egress4}/${state.egress6})`);
 
@@ -68,7 +71,7 @@ try {
 
   await page.unrouteAll({behavior: 'ignoreErrors'});
   await page.close();
-  console.log('Split-WAN Dual Access browser regression passed with independent shared-WAN Dual Internet Exit default.');
+  console.log('Split-WAN Dual Access browser regression passed with two independent Access selectors and independent shared-WAN Dual Internet Exit default.');
 } finally {
   await browser.close();
 }

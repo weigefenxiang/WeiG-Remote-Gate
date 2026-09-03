@@ -21,17 +21,22 @@ class PlanPreferenceContractTests(unittest.TestCase):
         self.assertLess(gate, preferences)
         self.assertLess(preferences, app)
 
-    def test_adapter_persists_only_non_authoritative_endpoint_intent(self):
+    def test_adapter_persists_only_non_authoritative_scalar_endpoint_intent(self):
         source = PREFERENCES.read_text(encoding="utf-8")
         self.assertIn("remote-gate:plan-preferences:v1", source)
+        self.assertIn("const MODES = ['ipv4', 'ipv6', 'dual']", source)
+        self.assertIn("const FAMILIES = ['ipv4', 'ipv6']", source)
         self.assertIn("endpointSelections", source)
         self.assertIn("endpointManualSelections", source)
         self.assertIn("method: safeText(value.method, 32)", source)
-        self.assertIn("method4: safeText(value.method4, 32)", source)
-        self.assertIn("method6: safeText(value.method6, 32)", source)
         self.assertIn("remote-gate-endpoint-selection", source)
         self.assertIn("onWireGuardChange", source)
         self.assertIn("Browser storage is a convenience only; runtime authority never depends on it.", source)
+        self.assertNotIn("method4", source)
+        self.assertNotIn("method6", source)
+        self.assertNotIn("wan4", source)
+        self.assertNotIn("wan6", source)
+        self.assertNotIn("endpoints.dual", source)
         for forbidden in ("source_ip", "client_sources", "csrf", "expires_in", "/api/v1/gate/activate", "fetch("):
             self.assertNotIn(forbidden, source)
 
@@ -48,11 +53,17 @@ class PlanPreferenceContractTests(unittest.TestCase):
         self.assertIn("function endpointSelectionRecord", gate)
         self.assertIn("function restoreEndpointSelection", gate)
         self.assertIn("if (!saved.method) return true", gate)
-        self.assertIn("endpointMethodsForSelection(family, option.value).method === saved.method", gate)
-        self.assertIn("const priorMethod4", gate)
-        self.assertIn("const priorMethod6", gate)
-        self.assertIn("endpointMethod(item.ipv4) === priorMethod4", gate)
-        self.assertIn("endpointMethod(item.ipv6) === priorMethod6", gate)
+        self.assertIn("endpointMethodForSelection(family, option.value) === saved.method", gate)
+        self.assertIn("const preferredV4Wan = preferredIpv4Endpoint()?.wan || ''", gate)
+        self.assertNotIn("dualEndpointPairs", gate)
+
+    def test_dual_mode_persistence_is_composed_from_two_scalar_family_hints(self):
+        source = PREFERENCES.read_text(encoding="utf-8")
+        self.assertIn("if (mode === 'dual') return FAMILIES.every", source)
+        self.assertIn("saved.endpoints[family] = {wireguard, selection}", source)
+        self.assertIn("mode === 'dual' && !FAMILIES.every", source)
+        self.assertNotIn("saved.endpoints.dual", source)
+        self.assertNotIn("state.endpointSelections.dual", source)
 
     def test_runtime_manual_hint_is_bound_to_its_wireguard_service(self):
         source = PREFERENCES.read_text(encoding="utf-8")
@@ -73,7 +84,7 @@ class PlanPreferenceContractTests(unittest.TestCase):
         render_wrapper = source.split("controls.render = (currentData) =>", 1)[1].split("window.addEventListener", 1)[0]
         self.assertLess(render_wrapper.index("reconcileRuntimeWireguard()"), render_wrapper.index("originalRender(currentData)"))
 
-    def test_browser_regression_covers_reload_method_churn_invalidation_and_zero_auto_activate(self):
+    def test_browser_regression_covers_scalar_reload_method_churn_invalidation_and_zero_auto_activate(self):
         source = BROWSER_TEST.read_text(encoding="utf-8")
         self.assertIn("page.reload", source)
         self.assertIn("topology = 'changed'", source)
@@ -86,9 +97,11 @@ class PlanPreferenceContractTests(unittest.TestCase):
         self.assertIn("ep-wan2-v4-mapped-new", source)
         self.assertIn("ep-wan2-v4-mapped-next", source)
         self.assertIn("selection?.method === 'mapped'", source)
-        self.assertIn("selection?.method4 === 'mapped'", source)
-        self.assertIn("selection?.method6 === 'direct'", source)
+        self.assertIn("access-ipv6-select", source)
+        self.assertIn("!dualSaved.endpoints?.dual", source)
         self.assertIn("activatePosts === 0", source)
+        self.assertNotIn("method4", source)
+        self.assertNotIn("method6", source)
 
     def test_browser_regression_covers_visible_multi_wireguard_choice_and_in_session_churn(self):
         source = BROWSER_SERVICE_TEST.read_text(encoding="utf-8")

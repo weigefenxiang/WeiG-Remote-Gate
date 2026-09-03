@@ -94,23 +94,25 @@ IPv6 is currently Direct only and requires Global IPv6 plus IPv6 Gate capability
 
 ### Dual AccessPlan
 
-A Dual plan contains one IPv4 endpoint and one IPv6 endpoint for the same registered WireGuard service.
+A Dual plan contains one independently selected IPv4 endpoint and one independently selected IPv6 endpoint for the same registered WireGuard service. They may use the same or different WANs.
 
-They may use the same or different WANs.
-
-Preference:
+The browser representation is scalar and linear:
 
 ```text
-same-WAN Public IPv4 Direct + Global IPv6
--> same-WAN Mapped IPv4 + Global IPv6
--> best valid IPv4 + best valid IPv6 across different WANs
+IPv4 -> one IPv4 Access Endpoint selector
+IPv6 -> one IPv6 Access Endpoint selector
+Dual -> one IPv4 selector + one IPv6 selector
 ```
 
-Split-WAN is normal plan data, not a different subsystem.
+There is no canonical browser pair object, `dual:<ipv4>:<ipv6>` identity, two-family option card or IPv4×IPv6 Cartesian option list. Same-WAN and split-WAN are simply properties of the two scalar selections.
+
+Automatic recommendation remains coordinated without pair enumeration: IPv4 uses the canonical endpoint ordering; IPv6 may prefer an eligible endpoint on the WAN of the canonical IPv4 recommendation, then falls back to its own best current endpoint. Manual IPv4 and IPv6 selections remain independent.
+
+At explicit Dual Activate the browser submits `endpoint_ids.ipv4` and `endpoint_ids.ipv6`. The VPS resolves and validates each endpoint and requires the resulting commands to target the same registered `(service_id, service_port)` listener before creating the atomic batch. OpenWrt therefore needs no new pair runtime or product model.
 
 Automatic selection is recommendation only. Manual intent is preserved while valid. No plan change creates authorization until explicit Activate.
 
-Browser-only plan preference persistence may remember non-authoritative UI hints such as selected family, WireGuard name, Endpoint ID and WAN fallback identity. `plan-preferences.js` stores only those hints in browser `localStorage`; it must never persist session/CSRF data, client-source authority, Gate authorization or runtime TTL state. Every restore is revalidated through the current `gate-controls.js` option set. Missing or stale identities are discarded, and preference restore must never call Activate.
+Browser-only plan preference persistence may remember non-authoritative UI hints such as selected family, WireGuard name and, independently for each family, Endpoint ID plus stable WAN/Access-Method fallback identity. `plan-preferences.js` stores only those hints in browser `localStorage`; there is no `endpointSelections.dual` shadow owner. It must never persist session/CSRF data, client-source authority, Gate authorization or runtime TTL state. Every restore is revalidated through the current `gate-controls.js` option set. Missing or stale identities are discarded, and preference restore must never call Activate.
 
 WireGuard service identity follows the same recommendation-versus-authority boundary. When exactly one registered WireGuard service is available, its selector may remain hidden as redundant while the internal selected service is preserved. When multiple registered WireGuard services are available, the existing selector must be visible so service choice is explicit; registry/list ordering must not silently become user intent. Manual Endpoint preference is bound to the selected WireGuard service and is discarded rather than migrated across an explicit service switch or service disappearance. None of these selection changes may auto-Activate.
 
@@ -148,7 +150,9 @@ Each visible family selector is deliberately pure: IPv4 mode renders only an IPv
 
 There is no canonical `IPv4 WAN × IPv6 WAN` combination object or selectable pair list. With three, four or more WANs the UI grows only by adding eligible WAN rows to the relevant family selector. It must never generate a Cartesian product or cap an exploding pair list.
 
-The family-field DOM is also canonical: the IPv4 field precedes the IPv6 field. Single-family modes hide the opposite field and the visible scalar occupies the full selector width. Dual exposes both fields; the same generic responsive grid may place them side by side when both fit at readable width or stack them otherwise. Layout never creates a second mobile/desktop plan owner or duplicate state/DOM.
+The family-field DOM is also canonical: the IPv4 field precedes the IPv6 field. Single-family modes hide the opposite field and the visible scalar occupies the full selector width. Dual exposes both fields; the same generic responsive grid used by Access may place them side by side when both fit at readable width or stack them otherwise. Layout never creates a second mobile/desktop plan owner or duplicate state/DOM.
+
+The Internet Exit section keeps one visible heading only. Redundant visible `IPv4 WAN` / `IPv6 WAN` child labels are omitted because each trigger already carries WAN + family identity; semantic `aria-label`s remain explicit.
 
 `egress_wan` is allowed only as a rolling protocol compatibility projection, not as canonical plan authority: a single-family plan projects its selected WAN, same-WAN Dual may project the shared WAN, and split-WAN Dual projects an empty legacy value. Canonical authority remains `mode + wan4 + wan6`, and browser recommendation/selection must never derive from the legacy projection.
 
@@ -290,7 +294,7 @@ The VPS resolves the current session source and validates the endpoint. OpenWrt 
 - family capability;
 - optional InternetExitPlan.
 
-Dual Gate authorization is a batch. Both endpoint records must target the same registered WireGuard service. Partial failure rolls back the batch.
+Dual Gate authorization is a batch. Both independently selected endpoint records must target the same registered WireGuard service/listener. Partial failure rolls back the batch.
 
 ## Source model
 
@@ -348,26 +352,19 @@ Any mismatch clears the temporary egress state. No automatic migration to anothe
 The browser has one generic path presentation language.
 
 ```text
-PathCard
-  -> FamilyPathBlock[]
+family selector
+  -> EndpointPicker
+  -> PathCard
+  -> FamilyPathBlock[1]
 ```
 
-Single-family Access path: one block.
+Every Access/Exit option is family-pure and contains one block. A single-family Access mode exposes one selector. Dual Access composes one IPv4 selector and one IPv6 selector; it does not create one two-family PathCard or precompute pair options. Same-WAN, split-WAN, Direct and Mapped remain data differences rather than component families.
 
-Dual Access path: two blocks, rendered as four information lines:
+Internet Exit reuses the same `EndpointPicker` and single-family `FamilyPathBlock` renderer for WAN choice, but its state remains the independent `InternetExitPlan`. IPv4 and IPv6 modes each expose one matching-family picker and hide the opposite family; Dual exposes both independent family pickers. Each Exit PathCard carries WAN address identity only. A generated two-family Exit combination card is not part of the architecture.
 
-```text
-IPv4   WAN2   Direct
-223.73.44.6:7179
-IPv6   WAN    Direct
-[240e:....]:51820
-```
+Phone and desktop consume the same semantic select/trigger/PathCard structure. Responsive behavior changes only placement and the existing `EndpointPicker` surface: the shared scalar family-field grid expands one visible field to full width, may place Dual fields side by side when width permits, stacks them otherwise, uses the mobile bottom sheet and desktop popover, and never creates a separate plan owner or mobile-only component tree.
 
-Same-WAN, split-WAN, Direct and Mapped Access use the same component tree. Differences are data, not component families.
-
-Internet Exit reuses the same `EndpointPicker` and single-family `FamilyPathBlock` renderer for WAN choice, but its interaction is mode-first. IPv4 and IPv6 modes each expose one matching-family picker and hide the opposite family; Dual exposes both independent family pickers. Each Exit PathCard carries WAN address identity only. A generated two-family Exit combination card is not part of the architecture.
-
-Phone and desktop consume the same semantic select/trigger/PathCard structure. Responsive behavior changes only placement and the existing `EndpointPicker` surface: the scalar family-field grid expands one visible field to full width, may place Dual fields side by side when width permits, stacks them otherwise, uses the mobile bottom sheet and desktop popover, and never creates a separate plan owner or mobile-only Exit component tree.
+Access Endpoint and Internet Exit each keep one visible section heading. Family-pure trigger content already exposes WAN + family, so redundant visible per-family child headings are omitted while `aria-label` remains explicit.
 
 Do not repeat `Dual`, `Split WAN` or `Split Exit` labels when the family controls already communicate the topology.
 
@@ -377,13 +374,13 @@ The current WireGuard public Endpoint display is a read-only projection of the c
 
 ### Browser module ownership
 
-- `gate-controls.js`: **sole Current Owner** of endpoint eligibility, endpoint ordering, capability, AccessPlan, InternetExitPlan (`mode + wan4 + wan6`), auto/manual selection and structured view model;
-- `plan-preferences.js`: browser-only persistence adapter for non-authoritative manual Access plan hints; it never decides endpoint eligibility and never creates authorization;
-- `endpoint-picker.js`: visible picker trigger, desktop popover/mobile sheet, PathCard rendering and selected/focus state only;
+- `gate-controls.js`: **sole Current Owner** of endpoint eligibility, endpoint ordering, capability, per-family AccessPlan selection, InternetExitPlan (`mode + wan4 + wan6`), auto/manual selection and structured view model;
+- `plan-preferences.js`: browser-only persistence adapter for non-authoritative manual per-family Access plan hints; it never decides endpoint eligibility, stores a Dual pair or creates authorization;
+- `endpoint-picker.js`: visible picker trigger, desktop popover/mobile sheet, scalar PathCard rendering and selected/focus state only;
 - `fit-text.js`: the only NetworkIdentityText fitting engine;
 - `app.js`: API refresh and general dashboard presentation; it may project the current public Endpoint from `gate-controls.js` structured `data-path-rows`, but it does not own Internet Exit selections, endpoint eligibility/ranking or Access policy;
 - `theme-bootstrap.js`: pre-paint theme/favicon setup and early presentation-module asset loading only; it must not mutate Gate structure, wrap dashboard fetch, observe Gate state or independently resolve Access/Exit policy;
-- `interaction.css`: generic EndpointPicker/PathCard interaction styling and responsive Internet Exit family-field placement;
+- `interaction.css`: generic EndpointPicker/PathCard interaction styling and shared responsive Access/Internet Exit family-field placement;
 - root `DESIGN.md`: visual tokens/component/responsive rules.
 
 GateStatusHero and current-public-endpoint semantic markup live in `dashboard.html`. They are not reconstructed by bootstrap scripts. `gate-controls.js` remains the decision owner; presentation orchestration may consume its structured selected option but must not recreate the selection algorithm.

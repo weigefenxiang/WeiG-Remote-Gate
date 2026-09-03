@@ -1,6 +1,7 @@
 (() => {
   const KEY = 'remote-gate:plan-preferences:v1';
-  const FAMILIES = ['ipv4', 'ipv6', 'dual'];
+  const MODES = ['ipv4', 'ipv6', 'dual'];
+  const FAMILIES = ['ipv4', 'ipv6'];
   const controls = window.RemoteGateGateControls;
   if (!controls?.bind || !controls?.render) return;
 
@@ -20,11 +21,7 @@
     const selection = {
       value: safeText(value.value, 256),
       wan: safeText(value.wan, 64),
-      wan4: safeText(value.wan4, 64),
-      wan6: safeText(value.wan6, 64),
       method: safeText(value.method, 32),
-      method4: safeText(value.method4, 32),
-      method6: safeText(value.method6, 32),
     };
     return selection.value ? selection : null;
   }
@@ -42,7 +39,7 @@
     }
     if (!raw || typeof raw !== 'object' || Number(raw.schema || 0) !== 1) return emptyPreferences();
     const result = emptyPreferences();
-    result.lastFamily = FAMILIES.includes(raw.lastFamily) ? raw.lastFamily : '';
+    result.lastFamily = MODES.includes(raw.lastFamily) ? raw.lastFamily : '';
     result.lastWireguard = safeText(raw.lastWireguard, 64);
     const endpoints = raw.endpoints && typeof raw.endpoints === 'object' ? raw.endpoints : {};
     FAMILIES.forEach((family) => {
@@ -60,6 +57,18 @@
     } catch (_) {
       // Browser storage is a convenience only; runtime authority never depends on it.
     }
+  }
+
+  function modeHasSavedIntent(saved, mode) {
+    if (mode === 'dual') return FAMILIES.every((family) => saved.endpoints[family]?.wireguard === saved.lastWireguard);
+    return FAMILIES.includes(mode) && saved.endpoints[mode]?.wireguard === saved.lastWireguard;
+  }
+
+  function normalizeSavedMode(saved) {
+    if (saved.lastFamily && modeHasSavedIntent(saved, saved.lastFamily)) return;
+    const fallback = FAMILIES.find((family) => saved.endpoints[family]);
+    saved.lastFamily = fallback || '';
+    saved.lastWireguard = fallback ? saved.endpoints[fallback].wireguard : '';
   }
 
   function hydrateState(nextContext) {
@@ -80,7 +89,7 @@
       runtimeWireguards[family] = item.wireguard;
       hydrated = true;
     });
-    if (hydrated && saved.lastFamily && saved.endpoints[saved.lastFamily]?.wireguard === saved.lastWireguard) {
+    if (hydrated && saved.lastFamily && modeHasSavedIntent(saved, saved.lastFamily)) {
       state.family = saved.lastFamily;
       state.familyManual = true;
     }
@@ -156,18 +165,15 @@
     if (!manual || !selection || !wireguard) {
       delete runtimeWireguards[family];
       delete saved.endpoints[family];
-      if (saved.lastFamily === family) {
-        const fallback = FAMILIES.find((name) => saved.endpoints[name]);
-        saved.lastFamily = fallback || '';
-        saved.lastWireguard = fallback ? saved.endpoints[fallback].wireguard : '';
-      }
+      normalizeSavedMode(saved);
       savePreferences(saved);
       return;
     }
 
     runtimeWireguards[family] = wireguard;
     saved.endpoints[family] = {wireguard, selection};
-    saved.lastFamily = family;
+    const mode = MODES.includes(state.family) ? state.family : family;
+    saved.lastFamily = mode === 'dual' && !FAMILIES.every((item) => saved.endpoints[item]?.wireguard === wireguard) ? family : mode;
     saved.lastWireguard = wireguard;
     savePreferences(saved);
   }

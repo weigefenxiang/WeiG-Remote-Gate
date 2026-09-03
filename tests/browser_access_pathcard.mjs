@@ -4,8 +4,36 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-async function waitForEndpoint(page, value) {
-  await page.waitForFunction((expected) => document.querySelector('#endpoint-select')?.value === expected, value);
+async function waitForEndpoint(page, selectId, value) {
+  await page.waitForFunction(({selectId, value}) => document.querySelector(`#${selectId}`)?.value === value, {selectId, value});
+}
+
+async function assertScalarPathCard(page, triggerSelector, expectedFamily, context) {
+  const trigger = await page.locator(triggerSelector).evaluate((root) => {
+    const block = root?.querySelector('.path-family-block');
+    const head = block?.querySelector('.path-family-head');
+    const value = block?.querySelector('.path-family-value');
+    return {
+      blocks: root?.querySelectorAll('.path-family-block').length || 0,
+      head: head?.textContent.replace(/\s+/g, ' ').trim() || '',
+      value: value?.textContent.trim() || '',
+    };
+  });
+  assert(trigger.blocks === 1, `${context}: trigger must render exactly one FamilyPathBlock (${trigger.blocks})`);
+  assert(trigger.head.includes(expectedFamily), `${context}: trigger rendered the wrong family (${trigger.head})`);
+  assert(trigger.value, `${context}: trigger endpoint identity is empty`);
+}
+
+async function assertScalarPicker(page, triggerSelector, expectedFamily, context) {
+  await page.locator(triggerSelector).click();
+  await page.waitForSelector('#endpoint-picker-layer.open .endpoint-option-card.selected');
+  const snapshot = await page.locator('#endpoint-picker-layer .endpoint-option-card.selected').evaluate((root) => ({
+    blocks: root.querySelectorAll('.path-family-block').length,
+    family: root.querySelector('.path-family-label')?.textContent?.trim() || '',
+  }));
+  assert(snapshot.blocks === 1, `${context}: selected picker card must render exactly one FamilyPathBlock (${snapshot.blocks})`);
+  assert(snapshot.family === expectedFamily, `${context}: selected picker card rendered ${snapshot.family}`);
+  await page.keyboard.press('Escape');
 }
 
 const browser = await chromium.launch({headless: true});
@@ -20,7 +48,7 @@ try {
 
     await page.goto('http://127.0.0.1:8765/', {waitUntil: 'networkidle'});
     await page.waitForSelector('#endpoint-picker-trigger');
-    await waitForEndpoint(page, 'ep-wan2-v4');
+    await waitForEndpoint(page, 'endpoint-select', 'ep-wan2-v4');
 
     const trigger = await page.evaluate(() => {
       const root = document.querySelector('#endpoint-picker-trigger');
@@ -71,13 +99,25 @@ try {
 
     await page.locator('[data-family="dual"]').click();
     await page.waitForFunction(() => document.querySelector('#family-segment .active')?.dataset.family === 'dual');
-    await page.waitForFunction(() => document.querySelector('#endpoint-select')?.value.startsWith('dual:'));
-    const dualTriggerBlocks = await page.locator('#endpoint-picker-trigger .path-family-block').count();
-    assert(dualTriggerBlocks === 2, `${width}: Dual trigger must keep two FamilyPathBlocks (${dualTriggerBlocks})`);
-    await page.locator('#endpoint-picker-trigger').click();
-    await page.waitForSelector('#endpoint-picker-layer.open .endpoint-option-card.selected');
-    const dualPickerBlocks = await page.locator('#endpoint-picker-layer .endpoint-option-card.selected .path-family-block').count();
-    assert(dualPickerBlocks === 2, `${width}: Dual picker must keep two FamilyPathBlocks (${dualPickerBlocks})`);
+    await waitForEndpoint(page, 'endpoint-select', 'ep-wan2-v4');
+    await waitForEndpoint(page, 'access-ipv6-select', 'ep-wan2-v6');
+
+    const dualState = await page.evaluate(() => ({
+      v4: document.querySelector('#endpoint-select')?.value || '',
+      v6: document.querySelector('#access-ipv6-select')?.value || '',
+      v4Options: [...(document.querySelector('#endpoint-select')?.options || [])].map((option) => option.value),
+      v6Options: [...(document.querySelector('#access-ipv6-select')?.options || [])].map((option) => option.value),
+      visibleHeadings: [...document.querySelectorAll('.access-endpoint-control > span')].filter((node) => !node.hidden).map((node) => node.textContent.trim()),
+    }));
+    assert(dualState.v4 === 'ep-wan2-v4' && dualState.v6 === 'ep-wan2-v6', `${width}: Dual scalar recommendation changed (${dualState.v4}/${dualState.v6})`);
+    assert(!dualState.v4Options.some((value) => String(value).startsWith('dual:')), `${width}: IPv4 selector still contains a Dual pair id`);
+    assert(!dualState.v6Options.some((value) => String(value).startsWith('dual:')), `${width}: IPv6 selector still contains a Dual pair id`);
+    assert(dualState.visibleHeadings.length === 1, `${width}: Dual Access added redundant visible per-family headings`);
+
+    await assertScalarPathCard(page, '#endpoint-picker-trigger', 'IPv4', `${width}: Dual IPv4`);
+    await assertScalarPathCard(page, '#access-ipv6-select-picker-trigger', 'IPv6', `${width}: Dual IPv6`);
+    await assertScalarPicker(page, '#endpoint-picker-trigger', 'IPv4', `${width}: Dual IPv4`);
+    await assertScalarPicker(page, '#access-ipv6-select-picker-trigger', 'IPv6', `${width}: Dual IPv6`);
 
     assert(consoleErrors.length === 0, `${width}: browser console errors: ${consoleErrors.join(' | ')}`);
     await page.close();

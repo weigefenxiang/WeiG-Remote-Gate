@@ -22,7 +22,7 @@
     if (!raw) return [];
     try {
       const rows = JSON.parse(raw);
-      if (!Array.isArray(rows) || !rows.length || rows.length > 2) return [];
+      if (!Array.isArray(rows) || rows.length !== 1) return [];
       return rows.map((row) => ({
         family: String(row?.family || ''),
         wan: String(row?.wan || '—'),
@@ -41,6 +41,7 @@
   }
 
   function isEgressSelect(selectId) { return String(selectId || '').startsWith('egress-'); }
+  function isAccessSelect(selectId) { return selectId === 'endpoint-select' || selectId === 'access-ipv6-select'; }
 
   function defaultConfig(selectId) {
     if (isEgressSelect(selectId)) {
@@ -159,7 +160,7 @@
   }
 
   function triggerRole(row, selectId) {
-    if (selectId !== 'endpoint-select') return '';
+    if (!isAccessSelect(selectId)) return '';
     return row?.role === 'Public Direct' ? 'Public' : '';
   }
 

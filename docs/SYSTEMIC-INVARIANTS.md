@@ -74,6 +74,18 @@ An IPv4 WAN behind CGNAT may still be a valid Internet Exit when it is up and ha
 
 They may share current network facts, but neither derives runtime authority or selected topology from the other.
 
+Canonical Access family interaction is scalar:
+
+```text
+ipv4 -> exactly one IPv4 Access Endpoint selector
+ipv6 -> exactly one IPv6 Access Endpoint selector
+dual -> exactly one IPv4 Access Endpoint selector + exactly one IPv6 Access Endpoint selector
+```
+
+Each visible Access selector is family-pure and every option contains one `FamilyPathBlock`. Dual Access is composition of the two scalar selections, not a precomputed pair object. Never generate an IPv4-endpoint × IPv6-endpoint Cartesian product, a `dual:<ipv4>:<ipv6>` option id, a two-family option card or `endpointSelections.dual` shadow state.
+
+At explicit Dual Activate the browser submits the two current scalar endpoint IDs. Server validation resolves both and requires the resulting activation commands to target the same registered WireGuard `(service_id, service_port)` listener before one atomic batch is created. Recommendation is therefore not the combination authority.
+
 Canonical Internet Exit modes are:
 
 ```text
@@ -162,6 +174,7 @@ Hard examples:
 
 - `endpointScore()` remains the shared endpoint ordering primitive;
 - Access eligibility must have one canonical decision path, not one filter in `app.js` and another contradictory filter in `gate-controls.js`;
+- Dual Access selection is owned as independent IPv4/IPv6 scalars by `gate-controls.js`; do not preserve a live pair generator, pair selector or `endpointSelections.dual` shadow owner;
 - Internet Exit planning is owned by `gate-controls.js` as `mode + wan4 + wan6`; `app.js` must not keep a second `egressSelections`/`egressWan` state owner;
 - `fit-text.js` remains the only NetworkIdentityText fitting engine;
 - EndpointPicker remains the visible picker infrastructure; do not create separate Dual, IPv6, Mapped or Exit picker frameworks.
@@ -172,34 +185,28 @@ When a new canonical owner replaces an old implementation, the old runtime imple
 
 A helper inside the owning module is preferred over a new single-purpose module when the responsibility already belongs to that module.
 
-## 7. UI architecture: PathCard, not mode-specific cards
+## 7. UI architecture: scalar PathCard, not mode-specific cards
 
 Visual changes must be reviewed against the root `DESIGN.md` and the methodology referenced by:
 
 `https://github.com/voltagent/awesome-design-md`
 
-The approved presentation primitive is:
+The approved selectable-path primitive is:
 
 ```text
-PathCard
-  -> FamilyPathBlock[1] for IPv4 or IPv6
-  -> FamilyPathBlock[2] for Dual Access
+family selector
+  -> EndpointPicker
+  -> PathCard
+  -> FamilyPathBlock[1]
 ```
 
-A Dual Access card uses four information lines:
+Every Access/Exit option is family-pure and has one block. Single-family Access exposes one selector. Dual Access exposes one IPv4 selector plus one IPv6 selector using the same primitive. Same-WAN and split-WAN are properties of those two scalar values, not different DOM trees and not one two-family PathCard.
 
-```text
-IPv4   WAN2   Direct
-223.73.44.6:7179
-IPv6   WAN    Direct
-[240e:....]:51820
-```
+Internet Exit reuses the same scalar PathCard renderer: each family WAN selector renders one FamilyPathBlock. Dual Exit displays two independent family pickers rather than one generated two-family combination card.
 
-The same structure applies to same-WAN and split-WAN Access plans. Do not create different DOM/component trees for them.
+Access and Internet Exit use the same generic family-selector responsive grid. Phone and desktop use the same semantic controls and the same `EndpointPicker` instance contract. Below 768px the picker is the existing bottom sheet; at desktop width it is the existing popover. Responsive layout may change placement, never plan state, option schema or component ownership. IPv4 precedes IPv6; a single visible family spans full width; Dual may sit side-by-side only when both fields remain readable, otherwise it stacks IPv4 above IPv6.
 
-Internet Exit is different in interaction shape even though it reuses the same PathCard renderer: each family WAN selector is a scalar picker and therefore renders one FamilyPathBlock. Dual Exit displays two independent family pickers rather than one generated two-family combination card.
-
-Phone and desktop use the same semantic controls and the same `EndpointPicker` instance contract. Below 768px the picker is the existing bottom sheet; at desktop width it is the existing popover. Responsive layout may change placement, never plan state, option schema or component ownership.
+Each section has one useful visible heading. When a trigger already contains WAN + family, redundant child headings such as `IPv4 Endpoint`, `IPv6 Endpoint`, `IPv4 WAN` and `IPv6 WAN` are omitted while semantic `aria-label` remains.
 
 Do not repeat low-value labels such as `Dual`, `Split WAN` or `Split Exit` when the family selectors/rows already express the fact.
 
@@ -207,12 +214,13 @@ Access rows may show `Direct`, `Mapped` or another real Access Method. Internet 
 
 Module ownership:
 
-- `gate-controls.js`: capability, eligibility, AccessPlan, InternetExitPlan, automatic/manual selection and structured view-model data;
-- `endpoint-picker.js`: trigger/sheet/popover/card rendering and interaction only;
+- `gate-controls.js`: capability, eligibility, per-family AccessPlan, InternetExitPlan, automatic/manual selection and structured view-model data;
+- `plan-preferences.js`: browser-only persistence adapter for non-authoritative per-family manual Access hints, never a Dual pair owner;
+- `endpoint-picker.js`: trigger/sheet/popover/scalar-card rendering and interaction only;
 - `fit-text.js`: the only responsive fitting engine for complete network identities;
 - `app.js`: dashboard refresh/general presentation; it may consume Gate structured rows to display the current public Endpoint but may not re-filter/re-rank or create a second plan;
 - `theme-bootstrap.js`: pre-paint theme/favicon and early presentation asset loading only;
-- `interaction.css`: generic picker/PathCard interaction styling;
+- `interaction.css`: generic picker/PathCard/shared family-selector interaction styling;
 - `DESIGN.md`: visual/component/responsive contract.
 
 Avoid classes/modules such as `dual-card`, `split-wan-card`, `ipv6-fit`, `mapped-picker` or other mode-specific wheels when the generic primitive can express the state.
@@ -225,14 +233,15 @@ The system may recommend:
 
 ```text
 IPv4 Access: Public Direct -> Mapped -> observed NAT egress Try
-IPv6 Access: preferred IPv4 WAN when it also has usable Global IPv6 -> best Global IPv6 Direct
-Dual Access: same-WAN Public+IPv6 -> same-WAN Mapped+IPv6 -> split best pair
+IPv6 Access: prefer an eligible endpoint on the canonical recommended IPv4 WAN -> otherwise best Global IPv6 Direct
 Internet Exit: best shared dual-capable WAN when available -> otherwise best WAN independently per family
 ```
 
+The Access recommendation above never materializes an IPv4×IPv6 pair list. Dual simply uses the current recommended scalar for each family until the user makes an independent manual choice.
+
 There is no user-facing `Private/CGNAT Try` Access Endpoint.
 
-A manual selection is remembered while it remains valid. When a dynamic Endpoint id changes, a browser-local fallback may preserve the same user intent only if the stable logical WAN **and Access Method** still match; for Dual Access, both family WANs and both family Access Methods must match. WAN identity alone is insufficient when Direct, Mapped or future Relay candidates coexist on the same WAN. Older preferences that do not yet contain a method hint may use the historical WAN-only compatibility fallback, but the current eligible selection must enrich the stored hint for subsequent churn. These hints remain non-authoritative UI state: refresh, PPPoE churn, mapping changes or a new recommendation must not create or migrate authorization automatically.
+A manual Access selection is remembered independently per family while it remains valid. When a dynamic Endpoint id changes, a browser-local fallback may preserve the same family intent only if the stable logical WAN **and Access Method** still match. WAN identity alone is insufficient when Direct, Mapped or future Relay candidates coexist on the same WAN. Older preferences that do not yet contain a method hint may use the historical WAN-only compatibility fallback, but the current eligible scalar selection must enrich the stored hint for subsequent churn. There is no Dual pair preference to migrate or restore. These hints remain non-authoritative UI state: refresh, PPPoE churn, mapping changes or a new recommendation must not create or migrate authorization automatically.
 
 Internet Exit manual state is simpler: each family has at most one selected logical WAN. If that WAN becomes ineligible, clear that manual family choice and fall back to the current canonical recommendation; a later topology recovery must not resurrect the invalidated choice automatically.
 
@@ -403,3 +412,5 @@ Before implementing any network/UI change, answer all of these:
 20. Does each visible Internet Exit picker contain exactly one matching family block and WAN address, with no opposite-family row or Access/service port identity?
 21. Do mobile and desktop consume the same semantic DOM/plan state, with only the existing EndpointPicker sheet/popover presentation changing by viewport?
 22. Is `theme-bootstrap.js` still bootstrap-only rather than a hidden Gate DOM/data owner?
+23. Does Dual Access remain two independent scalar family selectors with one FamilyPathBlock each, no Cartesian pair list, no `dual:<...>` option id and no `endpointSelections.dual` shadow state?
+24. If visible per-family Access/Exit headings were removed as redundant, are the semantic `aria-label`s still explicit?

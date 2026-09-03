@@ -62,9 +62,7 @@
 .path-card-option { min-height:auto; align-items:stretch; }
 .path-card-stack { gap:0; }
 .path-family-block { min-width:0; display:grid; gap:5px; padding:3px 0; }
-.path-family-block + .path-family-block { margin-top:8px; padding-top:10px; border-top:1px solid color-mix(in srgb,var(--hairline) 82%,transparent); }
 .path-family-block-trigger { padding:0; }
-.path-family-block-trigger + .path-family-block-trigger { margin-top:7px; padding-top:8px; }
 .path-family-head { min-width:0; display:grid; grid-template-columns:auto auto minmax(0,1fr) auto auto; align-items:center; gap:8px; }
 .path-family-spacer { min-width:0; }
 .path-family-label { color:var(--ink-muted); font-size:12px; font-weight:760; letter-spacing:.01em; white-space:nowrap; }
@@ -78,10 +76,11 @@
 .path-family-block-trigger .path-family-value { font-size:13px; }
 .path-card-local .path-family-head { grid-template-columns:minmax(0,1fr); }
 
-/* Internet Exit keeps one scalar field per family and lets available width,
- * not a second mobile/desktop implementation, decide whether Dual can sit side by side. */
-.egress-family-selectors { min-width:0; display:grid; grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr)); gap:10px; align-items:start; }
-.egress-family-selectors > .field { min-width:0; }
+/* Access and Internet Exit share one scalar family-field layout primitive.
+ * Available component width, not a second mobile/desktop implementation,
+ * decides whether Dual can sit side by side. */
+.family-selectors { min-width:0; display:grid; grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr)); gap:10px; align-items:start; }
+.family-selectors > .field { min-width:0; }
 
 #ttl-segment { grid-template-columns:repeat(5,minmax(0,1fr)); }
 #ttl-segment button { min-width:0; padding-inline:7px; }
@@ -122,7 +121,7 @@
   .path-family-wan { font-size:14px; }
   .path-family-value { font-size:12.5px; }
   .endpoint-picker-trigger { min-height:64px; }
-  .egress-family-selectors { gap:7px; }
+  .family-selectors { gap:7px; }
   #ttl-segment { grid-template-columns:repeat(5,minmax(0,1fr)); }
   #ttl-segment button { padding-inline:4px; font-size:11.5px; }
   .duration-custom-panel { padding:12px; }
