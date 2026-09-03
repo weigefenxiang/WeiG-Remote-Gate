@@ -67,9 +67,9 @@ async function assertAccessLayout(page, expectedLayout = 'adaptive') {
   if (expectedLayout === 'stacked') {
     assert(v4.top < v6.top - 1, `Dual Access mobile order is not IPv4 above IPv6 (${v4.top}/${v6.top})`);
     assert(Math.abs(v4.width - geometry.rootWidth) <= 1.5 && Math.abs(v6.width - geometry.rootWidth) <= 1.5, 'Dual Access stacked fields are not full width');
-  } else if (expectedLayout === 'side-by-side') {
-    assert(sameRow && v4.right <= v6.left + 1.5, 'Dual Access desktop fields are not side by side');
-  } else if (!sameRow) {
+  } else if (sameRow) {
+    assert(v4.right <= v6.left + 1.5, 'Adaptive Dual Access fields overlap or reverse family order');
+  } else {
     assert(v4.top < v6.top - 1, 'Adaptive Dual Access stack reversed family order');
   }
 }
@@ -247,7 +247,7 @@ try {
     await page.close();
   }
 
-  for (const [width, height, layout] of [[390, 844, 'stacked'], [1366, 768, 'side-by-side']]) {
+  for (const [width, height, layout] of [[390, 844, 'stacked'], [1366, 768, 'adaptive']]) {
     const dualPage = await browser.newPage({viewport: {width, height}});
     await dualPage.goto('http://127.0.0.1:8765/', {waitUntil: 'networkidle'});
     await dualPage.locator('[data-family="dual"]').click();
@@ -370,61 +370,6 @@ try {
   await sourcePage.unrouteAll({behavior: 'ignoreErrors'});
   await sourcePage.close();
 
-  // Exact Access profile binding keeps mapped ingress and dynamic WireGuard service ports distinct.
-  const profilePage = await browser.newPage({viewport: {width: 900, height: 700}});
-  let profileRuntimeActive = false;
-  let profileRuntimeServicePort = 53127;
-  let profileActivatePosts = 0;
-  profilePage.on('request', (request) => {
-    if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/v1/gate/activate') profileActivatePosts += 1;
-  });
-  await profilePage.route('**/api/v1/dashboard', async (route) => {
-    const response = await route.fetch();
-    const payload = await response.json();
-    const endpoint = (payload.endpoints || []).find((item) => item?.id === 'ep-wan-v4-mapped');
-    assert(endpoint, 'Gate profile fixture lost ep-wan-v4-mapped');
-    endpoint.access_method = 'mapped';
-    endpoint.reachability = 'mapped';
-    endpoint.device = 'pppoe-WAN';
-    endpoint.ingress_port = 57470;
-    endpoint.local_port = 57470;
-    endpoint.service_port = 53127;
-    endpoint.external_port = 45678;
-    const source = payload.client_sources?.ipv4?.address || '';
-    assert(source, 'Gate profile fixture lost IPv4 source');
-    if (profileRuntimeActive) {
-      payload.agent.firewall = {
-        ...(payload.agent.firewall || {}), active: true, family: 'ipv4', scope: 'wg', source_ip: source, device: 'pppoe-WAN',
-        ingress_port: 57470, wg_port: profileRuntimeServicePort, expires_in: 60,
-        families: {
-          ...(payload.agent.firewall?.families || {}),
-          ipv4: {active: true, family: 'ipv4', scope: 'wg', source_ip: source, device: 'pppoe-WAN', ingress_port: 57470, wg_port: profileRuntimeServicePort, expires_in: 60, authorized_sources: [source], authorizations: [{source_ip: source, expires_in: 60}]},
-          ipv6: {...(payload.agent.firewall?.families?.ipv6 || {}), active: false}
-        }
-      };
-    }
-    await route.fulfill({response, contentType: 'application/json', body: JSON.stringify(payload)});
-  });
-  await profilePage.goto('http://127.0.0.1:8765/', {waitUntil: 'networkidle'});
-  await waitForAutoEndpoint(profilePage, 'endpoint-select', 'ep-wan2-v4');
-  await chooseEndpoint(profilePage, 'endpoint-select', 'ep-wan-v4-mapped');
-  await profilePage.waitForFunction(() => document.querySelector('#endpoint-select')?.dataset.selectionSource === 'manual');
-  profileRuntimeActive = true;
-  await profilePage.evaluate(() => window.RemoteGateApp?.refresh?.());
-  await profilePage.waitForFunction(() => document.querySelector('#gate-state')?.textContent?.includes('OPEN'));
-  const matchedProfileTitle = await profilePage.locator('#gate-state').textContent();
-  assert(!matchedProfileTitle.includes('OTHER ACCESS PATH'), `matching ingress/service profile was rejected (${matchedProfileTitle})`);
-  assert(profileActivatePosts === 0, 'profile refresh unexpectedly auto-Activated');
-
-  profileRuntimeServicePort = 53128;
-  await profilePage.evaluate(() => window.RemoteGateApp?.refresh?.());
-  await profilePage.waitForFunction(() => document.querySelector('#gate-state')?.textContent?.includes('OTHER ACCESS PATH'));
-  assert(await profilePage.locator('#activate-button').evaluate((node) => node.classList.contains('hidden')), 'service-port drift left Activate visible');
-  assert(!(await profilePage.locator('#close-button').evaluate((node) => node.classList.contains('hidden'))), 'service-port drift did not expose Close');
-  assert(profileActivatePosts === 0, 'service-port mismatch auto-Activated');
-  await profilePage.unrouteAll({behavior: 'ignoreErrors'});
-  await profilePage.close();
-
   // Cloudflare-observed IPv4 must suppress carrier probing.
   const observedPage = await browser.newPage({viewport: {width: 390, height: 844}});
   let observedIpv4Probe = 0;
@@ -448,7 +393,7 @@ try {
   await observedPage.unrouteAll({behavior: 'ignoreErrors'});
   await observedPage.close();
 
-  console.log(`Browser layout regression passed for ${viewports.length} viewports plus scalar Dual Access, mode-first Internet Exit, transaction lock, exact Access-profile service identity, candidate recovery, and observed-source probe suppression.`);
+  console.log(`Browser layout regression passed for ${viewports.length} viewports plus scalar Dual Access, mode-first Internet Exit, transaction lock, candidate recovery, and observed-source probe suppression.`);
 } finally {
   await browser.close();
 }

@@ -2,105 +2,61 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-GATE = ROOT / "server/app/static/js/gate-controls.js"
-APP = ROOT / "server/app/static/js/app.js"
-PICKER = ROOT / "server/app/static/js/endpoint-picker.js"
-BOOTSTRAP = ROOT / "server/app/static/js/theme-bootstrap.js"
-ENDPOINTS = ROOT / "server/app/endpoints.py"
+GATE = (ROOT / "server/app/static/js/gate-controls.js").read_text(encoding="utf-8")
+APP = (ROOT / "server/app/static/js/app.js").read_text(encoding="utf-8")
+PICKER = (ROOT / "server/app/static/js/endpoint-picker.js").read_text(encoding="utf-8")
+BOOTSTRAP = (ROOT / "server/app/static/js/theme-bootstrap.js").read_text(encoding="utf-8")
+BROWSER_LAYOUT = (ROOT / "tests/browser_layout.mjs").read_text(encoding="utf-8")
+BROWSER_PLAN = (ROOT / "tests/browser_plan_preferences.mjs").read_text(encoding="utf-8")
+BROWSER_SPLIT = (ROOT / "tests/browser_split_dual.mjs").read_text(encoding="utf-8")
+BROWSER_MATRIX = (ROOT / ".github/workflows/browser-matrix.yml").read_text(encoding="utf-8")
 
 
 class EndpointSelectionContractTests(unittest.TestCase):
-    def test_public_endpoint_is_automatically_preferred_and_confirmed(self):
-        gate = GATE.read_text(encoding="utf-8")
-        app = APP.read_text(encoding="utf-8")
-        bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
-        self.assertIn("preferredIpv4Endpoint", gate)
-        self.assertIn("preferredIpv6Endpoint", gate)
-        self.assertIn("preferredSelection", gate)
-        self.assertIn("endpointScore", gate)
-        self.assertIn("const confirmed = Boolean(value);", gate)
-        self.assertIn("select.dataset.selectionSource = confirmed ? source : '';", gate)
-        self.assertIn("const source = endpointSelectionIsManual(family) ? 'manual' : 'auto';", gate)
-        self.assertNotIn("endpointSelectionIsManual(state.family) &&", gate)
-        self.assertIn("select.dataset.selectionConfirmed !== '1'", app)
-        self.assertIn("option?.dataset?.pathRows", app)
-        self.assertIn("remote-gate-endpoint-selection", app)
-        self.assertNotIn("selectedEndpointRecord", bootstrap)
+    def test_automatic_scalar_selection_behavior_is_browser_owned(self):
+        for behavior in (
+            "best public IPv4 endpoint was not selected automatically",
+            "automatic IPv6 endpoint did not enable Activate",
+            "Access WAN change rewrote independent IPv6 Internet Exit",
+            "Dual scalar endpoint_ids are incorrect",
+        ):
+            self.assertIn(behavior, BROWSER_LAYOUT)
+        self.assertIn("two independent Access selectors", BROWSER_SPLIT)
 
-    def test_ipv4_access_prefers_direct_before_mapped_or_observed_try(self):
-        gate = GATE.read_text(encoding="utf-8")
-        score = gate.split("function endpointScore(item) {", 1)[1].split("function endpointCompare", 1)[0]
-        direct = score.index("item.family === 'ipv4' && item.reachability === 'direct'")
-        mapped = score.index("item.family === 'ipv4' && item.reachability === 'mapped'")
-        probe = score.index("item.family === 'ipv4' && item.reachability === 'egress_probe'")
-        self.assertLess(direct, mapped)
-        self.assertLess(mapped, probe)
-        self.assertNotIn("item.reachability === 'private'", score)
-        self.assertIn("['direct','mapped','egress_probe'].includes(item.reachability)", gate)
+    def test_manual_override_restore_and_method_fallback_are_browser_owned(self):
+        for behavior in (
+            "manual endpoint selection published duplicate preference events",
+            "same-WAN method-aware fallback did not refresh the Mapped endpoint id",
+            "same-WAN method-aware fallback silently changed Access method",
+            "invalid manual endpoint preference was not cleared",
+            "same-WAN method churn posted Activate",
+        ):
+            self.assertIn(behavior, BROWSER_PLAN)
 
-    def test_ipv6_prefers_the_selected_ipv4_wan_when_available(self):
-        gate = GATE.read_text(encoding="utf-8")
-        preferred = gate.split("function preferredIpv6Endpoint() {", 1)[1].split("function endpointMethod", 1)[0]
-        self.assertIn("preferredIpv4Endpoint()?.wan", preferred)
-        self.assertIn("a?.wan === preferredV4Wan", preferred)
-        self.assertIn("b?.wan === preferredV4Wan", preferred)
+    def test_legacy_dual_pair_and_secondary_policy_owners_are_absent(self):
+        current = GATE + "\n" + APP + "\n" + PICKER + "\n" + BOOTSTRAP
+        for stale in (
+            "syncDualEndpointSelect",
+            "dualEndpointPairs",
+            "selectedDualPair",
+            "pair.wan4",
+            "pair.wan6",
+            "endpointSelectionRecord('dual'",
+            "option.dataset.ipv4EndpointId",
+            "option.dataset.ipv6EndpointId",
+        ):
+            self.assertNotIn(stale, current)
+        for stale_owner in (
+            "function reachableEndpoints",
+            "function rewriteMappedOptions",
+            "function observeMappedPicker",
+        ):
+            self.assertNotIn(stale_owner, APP + "\n" + BOOTSTRAP)
 
-    def test_manual_endpoint_override_preserves_access_method_until_it_disappears(self):
-        gate = GATE.read_text(encoding="utf-8")
-        restore = gate.split("function restoreEndpointSelection", 1)[1].split("function syncDualEndpointSelect", 1)[0]
-        self.assertIn("endpointSelectionIsManual(family) && saved", restore)
-        self.assertIn("option.value === saved.value", restore)
-        self.assertIn("endpointWanForSelection(family, option.value) !== saved.wan", restore)
-        self.assertIn("if (!saved.method) return true", restore)
-        self.assertIn("endpointMethodsForSelection(family, option.value).method === saved.method", restore)
-        self.assertIn("context.state.endpointSelections[family] = endpointSelectionRecord(family, fallback.value)", restore)
-        self.assertIn("context.state.endpointManualSelections[family] = false", restore)
-        self.assertIn("const preferred = preferredSelection(family);", restore)
-
-    def test_picker_still_allows_manual_endpoint_override(self):
-        picker = PICKER.read_text(encoding="utf-8")
-        self.assertIn("请选择 WAN Endpoint", picker)
-        self.assertIn("Choose WAN endpoint", picker)
-        self.assertIn("if (!select || select.disabled || !trigger) return;", picker)
-        self.assertNotIn("select.disabled || !select.value || !trigger", picker)
-        self.assertIn("trigger.disabled = Boolean(select.disabled)", picker)
-
-    def test_family_controls_are_visible_but_capability_aware(self):
-        gate = GATE.read_text(encoding="utf-8")
-        selectable = gate.split("function familySelectable(family) {", 1)[1].split("function singleReady", 1)[0]
-        self.assertIn("if (family === 'ipv4') return gateCapability('ipv4');", selectable)
-        self.assertIn("if (family === 'ipv6') return gateCapability('ipv6');", selectable)
-        self.assertIn("if (family === 'dual') return gateCapability('ipv4') && gateCapability('ipv6');", selectable)
-        self.assertIn("button.hidden = false", gate)
-        self.assertIn("button.disabled = !selectable", gate)
-        self.assertIn("button.setAttribute('aria-disabled', selectable ? 'false' : 'true')", gate)
-
-    def test_automatic_family_keeps_ipv4_first_when_both_are_available(self):
-        gate = GATE.read_text(encoding="utf-8")
-        choose = gate.split("function chooseFamily() {", 1)[1].split("function familyReason", 1)[0]
-        ipv4_available = choose.index("if (singleAvailable('ipv4')) return 'ipv4';")
-        request_ipv6 = choose.index("if (state.requestFamily === 'ipv6' && singleReady('ipv6')) return 'ipv6';")
-        self.assertLess(ipv4_available, request_ipv6)
-        self.assertIn("if (singleAvailable('ipv6')) return 'ipv6';", choose)
-
-    def test_ipv6_wireguard_is_direct_only(self):
-        gate = GATE.read_text(encoding="utf-8")
-        endpoints = ENDPOINTS.read_text(encoding="utf-8")
-        role = gate.split("function accessRole(item) {", 1)[1].split("function endpointAddress", 1)[0]
-        self.assertIn("item?.family === 'ipv6' ? 'Global Direct' : 'Public Direct'", role)
-        self.assertIn('or family != "ipv4"', endpoints)
-        self.assertIn('"family": "ipv6"', endpoints)
-        self.assertIn('"access_method": "direct"', endpoints)
-
-    def test_ipv6_direct_endpoint_uses_bracketed_wireguard_syntax(self):
-        gate = GATE.read_text(encoding="utf-8")
-        app = APP.read_text(encoding="utf-8")
-        bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
-        self.assertIn("item?.family === 'ipv6' ? `[${address}]:${item.external_port}`", gate)
-        self.assertNotIn("IPv6 Direct · OpenWrt 当前上报", app)
-        self.assertNotIn("IPv6 Direct · OpenWrt 当前上报", bootstrap)
-        self.assertNotIn("IPv4 Direct · OpenWrt 当前上报", app)
-        self.assertNotIn("IPv4 Direct · OpenWrt 当前上报", bootstrap)
+    def test_browser_matrix_executes_selection_behavior_owners(self):
+        self.assertIn("node tests/browser_layout.mjs", BROWSER_MATRIX)
+        self.assertIn("node tests/browser_plan_preferences.mjs", BROWSER_MATRIX)
+        self.assertIn("node tests/browser_split_dual.mjs", BROWSER_MATRIX)
 
 
 if __name__ == "__main__":

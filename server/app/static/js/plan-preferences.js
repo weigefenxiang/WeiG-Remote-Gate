@@ -141,6 +141,7 @@
     const state = context?.state;
     const wireguard = safeText(document.getElementById('wg-select')?.value, 64);
     if (!state || !wireguard) return;
+    const staleWireguards = new Set();
     FAMILIES.forEach((family) => {
       if (!state.endpointManualSelections?.[family]) {
         delete runtimeWireguards[family];
@@ -148,10 +149,11 @@
       }
       const boundWireguard = safeText(runtimeWireguards[family], 64);
       if (!boundWireguard || boundWireguard === wireguard) return;
-      delete state.endpointSelections[family];
-      state.endpointManualSelections[family] = false;
-      delete runtimeWireguards[family];
+      staleWireguards.add(boundWireguard);
     });
+    if (!staleWireguards.size) return;
+    const saved = loadPreferences();
+    staleWireguards.forEach((boundWireguard) => discardWireguard(saved, boundWireguard));
   }
 
   function persistFamily(family) {

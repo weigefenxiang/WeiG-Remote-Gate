@@ -8,47 +8,34 @@ PICKER = (ROOT / "server/app/static/js/endpoint-picker.js").read_text(encoding="
 BOOTSTRAP = (ROOT / "server/app/static/js/theme-bootstrap.js").read_text(encoding="utf-8")
 CSS = (ROOT / "server/app/static/css/interaction.css").read_text(encoding="utf-8")
 DESIGN = (ROOT / "DESIGN.md").read_text(encoding="utf-8")
+BROWSER_LAYOUT = (ROOT / "tests/browser_layout.mjs").read_text(encoding="utf-8")
 
 
 class PathCardContractTests(unittest.TestCase):
-    def test_gate_serializes_shared_path_rows(self):
-        self.assertIn("option.dataset.pathRows = JSON.stringify(rows || [])", GATE)
-        self.assertIn("pathRow('ipv4', pair.wan4", GATE)
-        self.assertIn("pathRow('ipv6', pair.wan6", GATE)
-        self.assertNotIn("Dual · Split WAN", GATE)
-        self.assertNotIn("Dual · Split Exit", GATE)
+    def test_scalar_access_path_rows_are_behavior_owned(self):
+        for stale in (
+            "pair.wan4", "pair.wan6", "dualEndpointPairs", "selectedDualPair",
+            "syncDualEndpointSelect", "Dual · Split WAN", "Dual · Split Exit",
+        ):
+            self.assertNotIn(stale, GATE)
+        self.assertIn("selectedBlocks === 1", BROWSER_LAYOUT)
+        self.assertIn("scalar.blocks === 1", BROWSER_LAYOUT)
+        self.assertIn("pairIds.length === 0", BROWSER_LAYOUT)
 
-    def test_access_endpoint_planning_has_one_browser_owner(self):
-        self.assertIn("function endpointsFor(family)", GATE)
-        self.assertIn("function populateSingleEndpointOptions(family)", GATE)
-        self.assertIn("'Public Direct'", GATE)
-        self.assertIn("'Global Direct'", GATE)
-        self.assertIn("'Mapped'", GATE)
-        self.assertIn("'Try'", GATE)
-        self.assertIn("'Relay'", GATE)
-        self.assertNotIn("function reachableEndpoints", APP)
-        self.assertNotIn("function endpointLabel", APP)
-        self.assertNotIn("function syncEndpointSelect", APP)
-        self.assertNotIn("NAT egress · Try", APP)
-        self.assertNotIn("function rewriteMappedOptions", BOOTSTRAP)
-        self.assertNotIn("function observeMappedPicker", BOOTSTRAP)
-        self.assertNotIn("parts.indexOf('Mapped')", BOOTSTRAP)
+    def test_access_endpoint_policy_has_one_current_owner(self):
+        for role in ("'Public Direct'", "'Global Direct'", "'Mapped'", "'Try'", "'Relay'"):
+            self.assertIn(role, GATE)
+        for stale in ("function reachableEndpoints", "function endpointLabel", "function syncEndpointSelect", "NAT egress · Try"):
+            self.assertNotIn(stale, APP)
+        for stale in ("function rewriteMappedOptions", "function observeMappedPicker", "parts.indexOf('Mapped')"):
+            self.assertNotIn(stale, BOOTSTRAP)
 
-    def test_picker_consumes_structured_rows_without_semantic_guessing(self):
-        self.assertIn("function pathRows(option)", PICKER)
+    def test_picker_consumes_structured_rows_without_policy_ownership(self):
         self.assertIn("dataset?.pathRows", PICKER)
         self.assertIn("dataset?.pathPrimary", PICKER)
-        self.assertIn("row?.role === 'Public Direct' ? 'Public'", PICKER)
-        self.assertIn("zh() ? '推荐' : 'Recommended'", PICKER)
-        self.assertNotIn("MutationObserver", PICKER)
-        self.assertNotIn("splitLabel", PICKER)
-        self.assertNotIn("NAT egress · Try", PICKER)
-
-    def test_picker_renders_one_or_two_family_blocks(self):
-        self.assertIn("rows.length > 2", PICKER)
-        self.assertIn("class=\"path-family-block", PICKER)
-        self.assertIn("data-fit-profile=\"identity\"", PICKER)
-        self.assertIn("data-fit-profile=\"compact\"", PICKER)
+        for stale in ("MutationObserver", "splitLabel", "NAT egress · Try"):
+            self.assertNotIn(stale, PICKER)
+        self.assertIn("scalar.blocks === 1", BROWSER_LAYOUT)
 
     def test_path_card_css_is_generic_not_dual_specific(self):
         self.assertIn(".path-family-block", CSS)

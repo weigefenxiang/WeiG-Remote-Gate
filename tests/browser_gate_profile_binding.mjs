@@ -183,6 +183,82 @@ try {
   }
 
   {
+    let runtimeServicePort = 53127;
+    const scenario = await openScenario(browser, (payload) => {
+      const baseEndpoint = payload.endpoints?.find((item) => item?.id === 'ep-wan2-v4');
+      if (!baseEndpoint) throw new Error('fixture is missing ep-wan2-v4');
+      const baseService = payload.agent?.wireguard?.find((item) => item?.name === 'WG_HOME');
+      if (!baseService) throw new Error('fixture is missing WG_HOME');
+      payload.agent.wireguard.push({...baseService, name: 'WG_MAPPED', listen_port: 53127});
+      const endpoint = {
+        ...baseEndpoint,
+        id: 'ep-wan-v4-mapped',
+        wan: 'WAN',
+        wireguard: 'WG_MAPPED',
+        service_id: 'wg.WG_MAPPED',
+      };
+      payload.endpoints.push(endpoint);
+      endpoint.access_method = 'mapped';
+      endpoint.reachability = 'mapped';
+      endpoint.device = 'pppoe-WAN';
+      endpoint.ingress_port = 57470;
+      endpoint.local_port = 57470;
+      endpoint.service_port = 53127;
+      endpoint.external_port = 45678;
+
+      const source = payload.client_sources?.ipv4?.address;
+      if (!source) throw new Error('fixture is missing IPv4 client source');
+      payload.agent.firewall = {
+        ...payload.agent.firewall,
+        active: true,
+        family: 'ipv4',
+        scope: 'wg',
+        source_ip: source,
+        device: 'pppoe-WAN',
+        ingress_port: 57470,
+        wg_port: runtimeServicePort,
+        expires_in: 300,
+        families: {
+          ...(payload.agent.firewall?.families || {}),
+          ipv4: {
+            active: true,
+            family: 'ipv4',
+            scope: 'wg',
+            source_ip: source,
+            source_kind: 'web_candidate',
+            device: 'pppoe-WAN',
+            ingress_port: 57470,
+            wg_port: runtimeServicePort,
+            expires_in: 300,
+            source_count: 1,
+            authorized_sources: [source],
+            authorizations: [{source_ip: source, source_kind: 'web_candidate', expires_in: 300}],
+          },
+          ipv6: {
+            ...(payload.agent.firewall?.families?.ipv6 || {}),
+            active: false,
+          },
+        },
+      };
+    });
+    const {page} = scenario;
+    await page.locator('[data-family="ipv4"]').click();
+    await page.waitForFunction(() => document.querySelector('#wg-select')?.value === 'WG_HOME');
+    await chooseLanOnly(page);
+    await page.locator('#wg-select').selectOption('WG_MAPPED');
+    await page.waitForFunction(() => document.querySelector('#endpoint-select')?.value === 'ep-wan-v4-mapped');
+    await page.waitForFunction(() => document.querySelector('#gate-state-badge')?.textContent === 'AUTHORIZED');
+    await assertCloseOnly(page, 'AUTHORIZED', 'matching mapped ingress/service profile');
+
+    runtimeServicePort = 53128;
+    await page.evaluate(() => window.RemoteGateApp.refresh());
+    await page.waitForFunction(() => document.querySelector('#gate-state')?.textContent === 'OPEN · OTHER ACCESS PATH');
+    await assertCloseOnly(page, 'OPEN ELSEWHERE', 'service-port drift');
+    assert(scenario.activatePosts() === 0, `service-port drift posted Activate (${scenario.activatePosts()})`);
+    await page.close();
+  }
+
+  {
     const scenario = await openScenario(browser);
     const {page} = scenario;
     await selectIpv4(page);

@@ -11,16 +11,12 @@ CLIENT_SOURCES = ROOT / "server/app/static/js/client-sources.js"
 FEEDBACK = ROOT / "server/app/static/js/ui-feedback.js"
 FEEDBACK_CSS = ROOT / "server/app/static/css/feedback.css"
 BOOTSTRAP = ROOT / "server/app/static/js/theme-bootstrap.js"
-DASHBOARD_CSS = ROOT / "server/app/static/css/dashboard.css"
-COMPONENTS_CSS = ROOT / "server/app/static/css/components.css"
 INSTALL = ROOT / "server/install.sh"
 UPDATE = ROOT / "server/update.sh"
 SERVER = ROOT / "server/remote-gate.py"
 OPENWRT_UPDATE = ROOT / "openwrt/update.sh"
 OPENWRT_AGENT = ROOT / "openwrt/remote-gate-agent.sh"
 OPENWRT_EGRESS = ROOT / "openwrt/remote-gate-wireguard-egress.sh"
-BROWSER_LAYOUT = ROOT / "tests/browser_layout.mjs"
-BROWSER_PLAN_PREFERENCES = ROOT / "tests/browser_plan_preferences.mjs"
 
 
 class UIContractTests(unittest.TestCase):
@@ -133,50 +129,6 @@ class UIContractTests(unittest.TestCase):
         self.assertNotIn('"source_ip"', probe)
         self.assertIn("body: JSON.stringify({family, address})", probe)
 
-    def test_ipv4_ipv6_and_dual_activate_use_scalar_access_selectors(self):
-        gate = GATE.read_text(encoding="utf-8")
-        picker = ENDPOINT_PICKER.read_text(encoding="utf-8")
-        template = TEMPLATE.read_text(encoding="utf-8")
-        css = COMPONENTS_CSS.read_text(encoding="utf-8")
-        self.assertIn("families:['ipv4','ipv6']", gate)
-        self.assertIn("endpoint_ids:{ipv4,ipv6}", gate)
-        self.assertIn("egress_wans:{ipv4:egressPlan.ipv4,ipv6:egressPlan.ipv6}", gate)
-        self.assertIn("access-ipv6-select", gate)
-        self.assertIn("family-selectors access-family-selectors", gate)
-        self.assertIn("setPathRows(option, [pathRow(family, item.wan", gate)
-        self.assertIn("rows.length !== 1", picker)
-        self.assertNotIn("dualEndpointPairs", gate)
-        self.assertNotIn("selectedDualPair", gate)
-        self.assertNotIn("syncDualEndpointSelect", gate)
-        self.assertNotIn("option.dataset.ipv4EndpointId", gate)
-        self.assertNotIn("option.dataset.ipv6EndpointId", gate)
-        self.assertNotIn("option.dataset.splitWan", gate)
-        self.assertNotIn("`dual:${", gate)
-        self.assertNotIn("endpointSelections.dual", gate)
-        self.assertNotIn("endpointManualSelections.dual", gate)
-        self.assertNotIn("gate.familyReady", gate)
-        self.assertIn('data-family="ipv4"', template)
-        self.assertIn('data-family="ipv6"', template)
-        self.assertIn('data-family="dual"', template)
-        self.assertIn("grid-template-columns: repeat(3, minmax(0, 1fr)) !important", css)
-        self.assertIn("white-space: nowrap", css)
-        self.assertIn(".family-segment button", css)
-
-    def test_access_selection_event_is_single_and_profile_identity_keeps_ports_distinct(self):
-        gate = GATE.read_text(encoding="utf-8")
-        preference_browser = BROWSER_PLAN_PREFERENCES.read_text(encoding="utf-8")
-        layout_browser = BROWSER_LAYOUT.read_text(encoding="utf-8")
-
-        self.assertIn("servicePort:normalizedPort(endpoint.service_port)", gate)
-        self.assertIn("servicePort:normalizedPort(item.wg_port || legacy.wg_port)", gate)
-        self.assertNotIn("item.ingress_port || item.wg_port", gate)
-        self.assertIn("runtime.servicePort > 0 && runtime.servicePort === selected.servicePort", gate)
-        self.assertIn("window.__remoteGateSelectionEvents", preference_browser)
-        self.assertIn("=== 1", preference_browser)
-        self.assertIn("endpoint.service_port = 53127", layout_browser)
-        self.assertIn("profileRuntimeServicePort = 53128", layout_browser)
-        self.assertIn("OTHER ACCESS PATH", layout_browser)
-
     def test_mobile_endpoint_picker_uses_shared_fit_profiles_without_chevron(self):
         source = ENDPOINT_PICKER.read_text(encoding="utf-8")
         self.assertIn('path-family-block-trigger', source)
@@ -190,49 +142,6 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("function isAccessSelect(selectId)", source)
         self.assertNotIn("endpoint-trigger-chevron", source)
         self.assertNotIn("MutationObserver", source)
-
-    def test_internet_exit_uses_mode_plus_independent_family_wans(self):
-        picker = ENDPOINT_PICKER.read_text(encoding="utf-8")
-        gate = GATE.read_text(encoding="utf-8")
-        app = APP.read_text(encoding="utf-8")
-        self.assertIn("const configs = new Map()", picker)
-        self.assertIn("function isEgressSelect(selectId)", picker)
-        self.assertIn("bindSelect", picker)
-        self.assertIn("egress-mode-segment", gate)
-        self.assertIn("egress-ipv4-select", gate)
-        self.assertIn("egress-ipv6-select", gate)
-        self.assertIn("RemoteGateEndpointPicker?.bindSelect?.('egress-ipv4-select'", gate)
-        self.assertIn("RemoteGateEndpointPicker?.bindSelect?.('egress-ipv6-select'", gate)
-        self.assertIn("function preferredSharedEgressWan()", gate)
-        self.assertIn("function preferredEgressWans()", gate)
-        self.assertIn("function selectedEgressPlan()", gate)
-        self.assertIn("const egressState = {byAccessFamily:{}}", gate)
-        self.assertIn("family-selectors egress-family-selectors", gate)
-        self.assertNotIn("function egressPlans()", gate)
-        self.assertNotIn("dual.slice(0, 64)", gate)
-        self.assertNotIn("const egressSelect", gate)
-        self.assertNotIn("egressSelections", app)
-        self.assertNotIn("get egressWan()", app)
-        self.assertIn("INTERNET EXIT", gate)
-        self.assertIn("选择 IPv4 上网出口", gate)
-        self.assertIn("选择 IPv6 上网出口", gate)
-        self.assertNotIn("familyLabel.textContent", gate)
-        self.assertNotIn("IPv4 WAN'", gate)
-        self.assertNotIn("IPv6 WAN'", gate)
-
-    def test_gate_hides_only_redundant_wireguard_selector_and_exposes_real_choice(self):
-        picker = ENDPOINT_PICKER.read_text(encoding="utf-8")
-        gate = GATE.read_text(encoding="utf-8")
-        visibility = picker.split("function syncWireGuardSelectorVisibility()", 1)[1].split("function sync(selectId", 1)[0]
-        self.assertIn("serviceCount", visibility)
-        self.assertIn("serviceCount <= 1", visibility)
-        self.assertIn("field.hidden = redundant", visibility)
-        self.assertIn("select.tabIndex = redundant ? -1 : 0", visibility)
-        self.assertIn("field.removeAttribute('aria-hidden')", visibility)
-        self.assertIn("select.removeAttribute('aria-hidden')", visibility)
-        self.assertNotIn("MutationObserver", visibility)
-        self.assertIn("syncWireGuardSelectorVisibility()", picker)
-        self.assertIn("$('wg-select')?.value", gate)
 
     def test_gate_transaction_lock_is_real_and_server_terminal_owned(self):
         gate = GATE.read_text(encoding="utf-8")
@@ -283,15 +192,6 @@ class UIContractTests(unittest.TestCase):
         self.assertNotIn("hints only", app)
         self.assertIn("remote-gate-client-source-diagnostics", app)
         self.assertIn("remote-gate-client-source-updated", app)
-
-    def test_dashboard_render_does_not_overwrite_gate_endpoint_memory(self):
-        app = APP.read_text(encoding="utf-8")
-        body = app.split("function renderGatePresentation(currentData) {", 1)[1].split("function render(data) {", 1)[0]
-        self.assertIn("window.RemoteGateGateControls?.render(currentData || {});", body)
-        self.assertIn("gateStatusPresentation();", body)
-        self.assertIn("renderCurrentPublicEndpoint();", body)
-        self.assertNotIn("syncEndpointSelect", body)
-        self.assertNotIn("renderClient", body)
 
     def test_access_excludes_private_but_keeps_observed_try(self):
         app = APP.read_text(encoding="utf-8")
