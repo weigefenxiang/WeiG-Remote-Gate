@@ -24,7 +24,7 @@ warn() { printf 'WARN: %s\n' "$*" >&2; }
 info() { printf '==> %s\n' "$*"; }
 
 [ "${EUID:-$(id -u)}" -eq 0 ] || fail "Run this updater as root."
-for cmd in systemctl python3 curl install; do
+for cmd in systemctl python3 curl install find chown chmod; do
     command -v "$cmd" >/dev/null 2>&1 || fail "Missing dependency: $cmd"
 done
 [ -r "$ETC_DIR/config.json" ] || fail "WeiG Remote Gate is not installed."
@@ -65,12 +65,78 @@ BUILD_SHA="${BUILD_SHA,,}"
 BUILD_SHORT="${BUILD_SHA:0:12}"
 RAW_BASE="${RAW_PREFIX}${BUILD_SHA}"
 
+# Always execute the updater that belongs to the immutable target build before
+# interpreting that build's file manifest. This prevents an installed older
+# updater from installing a new service unit while omitting newly introduced
+# runtime files such as profile-entry.py.
+if [ "${REMOTE_GATE_UPDATER_BOOTSTRAPPED:-0}" != "1" ]; then
+    bootstrap="$(mktemp)"
+    if ! curl -fsSL -H 'Cache-Control: no-cache' "${RAW_BASE}/server/update.sh" -o "$bootstrap"; then
+        if ! curl -fsSL \
+          -H 'Accept: application/vnd.github.raw+json' \
+          -H 'X-GitHub-Api-Version: 2022-11-28' \
+          -H 'User-Agent: WeiG-Remote-Gate-Updater' \
+          "${GITHUB_CONTENTS}/server/update.sh?ref=${BUILD_SHA}" -o "$bootstrap"; then
+            rm -f "$bootstrap"
+            fail "Could not fetch target updater for build $BUILD_SHORT"
+        fi
+    fi
+    bash -n "$bootstrap" || { rm -f "$bootstrap"; fail "Target updater failed syntax validation"; }
+    chmod 0700 "$bootstrap"
+    if REMOTE_GATE_UPDATER_BOOTSTRAPPED=1 \
+       REMOTE_GATE_BUILD_SHA="$BUILD_SHA" \
+       REMOTE_GATE_RAW_BASE="$RAW_BASE" \
+       bash "$bootstrap"; then
+        rc=0
+    else
+        rc=$?
+    fi
+    rm -f "$bootstrap"
+    exit "$rc"
+fi
+
 TMP_DIR="$(mktemp -d)"
 BACKUP=""
 SUCCESS=0
 
+normalize_runtime_permissions() {
+    [ -d "$LIB_DIR" ] || return 0
+    chown -R root:root "$LIB_DIR"
+    find "$LIB_DIR" -type d -exec chmod 0755 {} +
+    find "$LIB_DIR" -type f -exec chmod 0644 {} +
+    for file in \
+      "$LIB_DIR/remote-gate.py" \
+      "$LIB_DIR/profile-entry.py" \
+      "$LIB_DIR/update.sh" \
+      "$LIB_DIR/uninstall.sh"; do
+        [ ! -f "$file" ] || chmod 0755 "$file"
+    done
+    [ ! -f "$SERVICE_FILE" ] || chmod 0644 "$SERVICE_FILE"
+}
+
+service_hostname() {
+    python3 - "$ETC_DIR/config.json" <<'PY'
+import json, sys
+print(str(json.load(open(sys.argv[1], encoding='utf-8'))['public_hostname']).strip().lower().rstrip('.'))
+PY
+}
+
+rollback_health_check() {
+    local host code
+    host="$(service_hostname 2>/dev/null)" || return 1
+    for _ in $(seq 1 15); do
+        if systemctl is-active --quiet "$SERVICE_NAME"; then
+            code="$(curl -sS --connect-timeout 1 -o /dev/null -w '%{http_code}' -H "Host: $host" http://127.0.0.1:29444/healthz 2>/dev/null || true)"
+            [ "$code" = "200" ] && return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
 rollback() {
     rc=$?
+    trap - EXIT INT TERM
     if [ "$SUCCESS" -ne 1 ] && [ -n "$BACKUP" ] && [ -d "$BACKUP" ]; then
         printf '\nUpdate failed; restoring previous Remote Gate files...\n' >&2
         systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
@@ -81,8 +147,15 @@ rollback() {
         else
             rm -f "$SERVICE_FILE"
         fi
+        normalize_runtime_permissions || true
         systemctl daemon-reload || true
-        systemctl start "$SERVICE_NAME" || true
+        systemctl reset-failed "$SERVICE_NAME" >/dev/null 2>&1 || true
+        systemctl restart "$SERVICE_NAME" >/dev/null 2>&1 || true
+        if rollback_health_check; then
+            printf 'Rollback restored previous files and health check passed.\n' >&2
+        else
+            printf 'ERROR: rollback restored files but service health check failed; inspect systemctl status and journalctl.\n' >&2
+        fi
         printf 'Backup retained at: %s\n' "$BACKUP" >&2
     fi
     rm -rf "$TMP_DIR"
@@ -202,7 +275,10 @@ BACKUP="$BACKUP_ROOT/$stamp"
 install -d -o root -g root -m 0700 "$BACKUP_ROOT" "$BACKUP"
 [ -d "$LIB_DIR" ] && cp -a "$LIB_DIR" "$BACKUP/lib"
 [ -f "$SERVICE_FILE" ] && cp -a "$SERVICE_FILE" "$BACKUP/remote-gate.service"
-chmod -R go-rwx "$BACKUP"
+# The private backup directory already protects every descendant. Preserve the
+# archived file modes so a rollback can restore the service user's read/execute
+# access exactly instead of turning the restored runtime into root-only files.
+chmod 0700 "$BACKUP"
 
 systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
 rm -rf "$LIB_DIR"
@@ -217,15 +293,17 @@ find "$LIB_DIR/app" -type d -exec chmod 0755 {} +
 find "$LIB_DIR/app" -type f -exec chmod 0644 {} +
 install -o root -g root -m 0644 "$TMP_DIR/VERSION" "$LIB_DIR/VERSION"
 install -o root -g root -m 0644 "$TMP_DIR/BUILD" "$LIB_DIR/BUILD"
+normalize_runtime_permissions
+
+test -x "$LIB_DIR/profile-entry.py" || fail "Installed runtime is missing executable profile-entry.py"
+test -r "$LIB_DIR/app/client_profiles.py" || fail "Installed runtime is missing client_profiles.py"
+test -r "$LIB_DIR/app/control_queue.py" || fail "Installed runtime is missing control_queue.py"
 
 systemctl daemon-reload
+systemctl reset-failed "$SERVICE_NAME" >/dev/null 2>&1 || true
 systemctl restart "$SERVICE_NAME"
 
-HOSTNAME="$(python3 - "$ETC_DIR/config.json" <<'PY'
-import json, sys
-print(str(json.load(open(sys.argv[1], encoding='utf-8'))['public_hostname']).strip().lower().rstrip('.'))
-PY
-)"
+HOSTNAME="$(service_hostname)"
 WRITE_TOKEN="$(python3 - "$ETC_DIR/secrets.json" <<'PY'
 import json, sys
 print(str(json.load(open(sys.argv[1], encoding='utf-8'))['write_token']))
