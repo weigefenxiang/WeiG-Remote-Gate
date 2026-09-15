@@ -62,10 +62,12 @@ class GatePresentationOwnerContractTests(unittest.TestCase):
 
     def test_internet_exit_rows_are_single_family_wan_addresses_not_access_ports(self):
         block = GATE.split("function populateEgressWanSelect", 1)[1].split("function ensureEgressControl", 1)[0]
-        self.assertIn("setPathRows(option, [pathRow(family, item.wan.name, '', item.address)]", block)
+        self.assertIn("setPathRows(option, [pathRow(family, item.wan.name, item.role, item.address)]", block)
         self.assertIn("option.dataset.egressFamily = family", block)
+        self.assertIn("item.role", block)
         self.assertNotIn("endpointAddress(item)", block)
         self.assertNotIn("external_port", block)
+        self.assertNotIn("ingress_port", block)
         self.assertNotIn("service_port", block)
 
 

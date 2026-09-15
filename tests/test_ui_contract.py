@@ -139,7 +139,8 @@ class UIContractTests(unittest.TestCase):
         self.assertIn("RemoteGateFit?.observe?.(copy)", source)
         self.assertIn("trigger.addEventListener('click', () => open(selectId))", source)
         self.assertIn("bindSelect('endpoint-select')", source)
-        self.assertIn("function isAccessSelect(selectId)", source)
+        self.assertIn("function triggerRole(row)", source)
+        self.assertIn("['Public','Mapped','Global Direct','Relay'].includes(role)", source)
         self.assertNotIn("endpoint-trigger-chevron", source)
         self.assertNotIn("MutationObserver", source)
 
