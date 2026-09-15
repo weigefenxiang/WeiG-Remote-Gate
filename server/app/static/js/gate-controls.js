@@ -69,6 +69,16 @@
     return item?.family === 'ipv6' ? 'Global Direct' : 'Public Direct';
   }
 
+  function visibleAccessEndpoints(family) {
+    const items = [...endpointsFor(family)].sort(endpointCompare);
+    if (family !== 'ipv4') return items;
+    const strongerWans = new Set(items
+      .filter((item) => accessRole(item) !== 'Try')
+      .map((item) => String(item?.wan || ''))
+      .filter(Boolean));
+    return items.filter((item) => accessRole(item) !== 'Try' || !strongerWans.has(String(item?.wan || '')));
+  }
+
   function endpointAddress(item) {
     const address = String(item?.external_address || '');
     if (!address) return '—';
@@ -163,7 +173,7 @@
 
   function populateEndpointOptions(family, select) {
     if (!['ipv4','ipv6'].includes(family) || !select) return;
-    const items = [...endpointsFor(family)].sort(endpointCompare);
+    const items = visibleAccessEndpoints(family);
     const preferred = preferredSelection(family);
     select.replaceChildren();
     if (!items.length) {
@@ -329,6 +339,25 @@
     return false;
   }
 
+  function mappedAccessAvailableOnWan(wan) {
+    const selectedWg = $('wg-select')?.value || '';
+    const endpoints = Array.isArray(data()?.endpoints) ? data().endpoints : [];
+    return endpoints.some((item) =>
+      item && item.family === 'ipv4' && item.wan === wan?.name &&
+      (item.access_method === 'mapped' || item.reachability === 'mapped') &&
+      (!selectedWg || item.wireguard === selectedWg)
+    );
+  }
+
+  function egressRole(wan, family) {
+    if (family === 'ipv6') {
+      return (Array.isArray(wan?.ipv6) ? wan.ipv6 : []).some((entry) => entry?.kind === 'global' && entry?.address) ? 'Global Direct' : '';
+    }
+    if ((Array.isArray(wan?.ipv4) ? wan.ipv4 : []).some((entry) => entry?.kind === 'public' && entry?.address)) return 'Public';
+    if (mappedAccessAvailableOnWan(wan)) return 'Mapped';
+    return '';
+  }
+
   function egressAddress(wan, family) {
     if (family === 'ipv6') {
       const global6 = (Array.isArray(wan?.ipv6) ? wan.ipv6 : []).find((entry) => entry?.kind === 'global' && entry?.address);
@@ -353,7 +382,7 @@
     if (!['ipv4','ipv6'].includes(family)) return [];
     return inventoryWans()
       .filter((wan) => wanSupportsEgress(wan, family))
-      .map((wan) => ({wan, family, address:egressAddress(wan, family), score:egressScore(wan, family)}))
+      .map((wan) => ({wan, family, address:egressAddress(wan, family), role:egressRole(wan, family), score:egressScore(wan, family)}))
       .sort((a, b) => a.score - b.score || String(a.wan.name).localeCompare(String(b.wan.name)));
   }
 
@@ -453,8 +482,8 @@
       const option = document.createElement('option');
       option.value = item.wan.name;
       option.dataset.egressFamily = family;
-      setPathRows(option, [pathRow(family, item.wan.name, '', item.address)], item.wan.name === recommendedWan);
-      option.textContent = `${item.wan.name} · ${family === 'ipv6' ? 'IPv6' : 'IPv4'} Internet Exit · ${item.address}`;
+      setPathRows(option, [pathRow(family, item.wan.name, item.role, item.address)], item.wan.name === recommendedWan);
+      option.textContent = `${item.wan.name} · ${family === 'ipv6' ? 'IPv6' : 'IPv4'} Internet Exit${item.role ? ` · ${item.role}` : ''} · ${item.address}`;
       select.append(option);
     });
     select.disabled = false;

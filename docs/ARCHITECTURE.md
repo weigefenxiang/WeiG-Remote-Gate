@@ -90,6 +90,8 @@ Public Direct
 
 `Private/CGNAT` is not a user-facing Access Endpoint. It remains an internal network fact used where required for discovery and mapping eligibility.
 
+An observed-NAT `Try` remains a fallback Access candidate. When the same logical WAN already has a stronger visible Direct, Mapped or Relay endpoint for the selected service, the redundant same-WAN `Try` row is suppressed from the picker instead of showing two versions of that WAN path.
+
 IPv6 is currently Direct only and requires Global IPv6 plus IPv6 Gate capability.
 
 ### Dual AccessPlan
@@ -146,7 +148,7 @@ dual
   -> one IPv6 WAN choice
 ```
 
-Each visible family selector is deliberately pure: IPv4 mode renders only an IPv4 WAN trigger/options, IPv6 mode renders only IPv6, and Dual renders those same two scalar selectors independently. Every Internet Exit option is one `FamilyPathBlock` containing the selected family, logical WAN and WAN address. It is not an Access Endpoint identity, so no WireGuard/Mapping `external_port`, `ingress_port` or `service_port` belongs in an Exit row.
+Each visible family selector is deliberately pure: IPv4 mode renders only an IPv4 WAN trigger/options, IPv6 mode renders only IPv6, and Dual renders those same two scalar selectors independently. Every Internet Exit option is one `FamilyPathBlock` containing the selected family, logical WAN and WAN address. It may additionally carry a concise presentation-only reachability badge: `Public`, `Mapped` or `Global Direct`. `Mapped` means that the same logical WAN currently has a validated Mapped Access path for the selected service; the badge does not become InternetExitPlan authority and does not affect egress eligibility, scoring or recommendation. No WireGuard/Mapping `external_port`, `ingress_port` or `service_port` belongs in an Exit row.
 
 There is no canonical `IPv4 WAN × IPv6 WAN` combination object or selectable pair list. With three, four or more WANs the UI grows only by adding eligible WAN rows to the relevant family selector. It must never generate a Cartesian product or cap an exploding pair list.
 
@@ -183,7 +185,7 @@ Egress eligibility is route-based, not public-address-based:
 - IPv6: WAN up + current IPv6 default route + usable Global IPv6;
 - Dual: both family scalar selections validate; same WAN or split WAN.
 
-A CGNAT/RFC1918 local IPv4 WAN can therefore be a valid IPv4 Internet Exit even though it is not a public Access Endpoint.
+A CGNAT/RFC1918 local IPv4 WAN can therefore be a valid IPv4 Internet Exit even though it is not a public Access Endpoint. The optional right-side presentation badge must never change this eligibility rule.
 
 Dual egress is transactional and atomic. Same-WAN calls the same logical plan as split-WAN; split execution may use `enable-split`, but there is no second product model.
 
@@ -362,7 +364,7 @@ family selector
 
 Every Access/Exit option is family-pure and contains one block. A single-family Access mode exposes one selector. Dual Access composes one IPv4 selector and one IPv6 selector; it does not create one two-family PathCard or precompute pair options. Same-WAN, split-WAN, Direct and Mapped remain data differences rather than component families.
 
-Internet Exit reuses the same `EndpointPicker` and single-family `FamilyPathBlock` renderer for WAN choice, but its state remains the independent `InternetExitPlan`. IPv4 and IPv6 modes each expose one matching-family picker and hide the opposite family; Dual exposes both independent family pickers. Each Exit PathCard carries WAN address identity only. A generated two-family Exit combination card is not part of the architecture.
+Internet Exit reuses the same `EndpointPicker` and single-family `FamilyPathBlock` renderer for WAN choice, but its state remains the independent `InternetExitPlan`. IPv4 and IPv6 modes each expose one matching-family picker and hide the opposite family; Dual exposes both independent family pickers. Each Exit PathCard carries WAN address identity plus an optional presentation-only `Public`, `Mapped` or `Global Direct` badge. A generated two-family Exit combination card is not part of the architecture, and Exit badges never become plan/routing authority.
 
 Phone and desktop consume the same semantic select/trigger/PathCard structure. Responsive behavior changes only placement and the existing `EndpointPicker` surface: the shared scalar family-field grid expands one visible field to full width, may place Dual fields side by side when width permits, stacks them otherwise, uses the mobile bottom sheet and desktop popover, and never creates a separate plan owner or mobile-only component tree.
 
@@ -370,13 +372,13 @@ Access Endpoint and Internet Exit each keep one visible section heading. Family-
 
 Do not repeat `Dual`, `Split WAN` or `Split Exit` labels when the family controls already communicate the topology.
 
-Internet Exit rows do not expose internal `Private/CGNAT` classification as a user-facing role.
+Internet Exit rows do not expose internal `Private/CGNAT` or `Try` classification as a user-facing role.
 
 The current WireGuard public Endpoint display is a read-only projection of the currently selected structured Access PathCard row. Healthy state shows the endpoint identity itself without an extra `IPv4/IPv6 Direct · OpenWrt currently reports` line. Actionable errors belong to the existing Gate/family status surfaces rather than a permanent healthy-state note.
 
 ### Browser module ownership
 
-- `gate-controls.js`: **sole Current Owner** of endpoint eligibility, endpoint ordering, capability, per-family AccessPlan selection, InternetExitPlan (`mode + wan4 + wan6`), auto/manual selection and structured view model;
+- `gate-controls.js`: **sole Current Owner** of endpoint eligibility, endpoint ordering, capability, per-family AccessPlan selection, InternetExitPlan (`mode + wan4 + wan6`), auto/manual selection and structured view model, including non-authoritative PathCard role metadata;
 - `plan-preferences.js`: browser-only persistence adapter for non-authoritative manual per-family Access plan hints; it never decides endpoint eligibility, stores a Dual pair or creates authorization;
 - `endpoint-picker.js`: visible picker trigger, desktop popover/mobile sheet, scalar PathCard rendering and selected/focus state only;
 - `fit-text.js`: the only NetworkIdentityText fitting engine;

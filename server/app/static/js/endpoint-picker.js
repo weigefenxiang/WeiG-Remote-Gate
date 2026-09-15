@@ -41,7 +41,6 @@
   }
 
   function isEgressSelect(selectId) { return String(selectId || '').startsWith('egress-'); }
-  function isAccessSelect(selectId) { return selectId === 'endpoint-select' || selectId === 'access-ipv6-select'; }
 
   function defaultConfig(selectId) {
     if (isEgressSelect(selectId)) {
@@ -159,13 +158,15 @@
     backdrop.style.background = 'transparent'; backdrop.style.backdropFilter = 'none'; layer.dataset.mode = 'popover';
   }
 
-  function triggerRole(row, selectId) {
-    if (!isAccessSelect(selectId)) return '';
-    return row?.role === 'Public Direct' ? 'Public' : '';
+  function triggerRole(row) {
+    const role = String(row?.role || '');
+    if (role === 'Public Direct') return 'Public';
+    if (['Public','Mapped','Global Direct','Relay'].includes(role)) return role;
+    return '';
   }
 
   function pathBlockHtml(row, {recommended = false, trigger = false, showRecommendation = false, selectId = activeSelectId} = {}) {
-    const role = trigger ? triggerRole(row, selectId) : row.role;
+    const role = trigger ? triggerRole(row) : row.role;
     return `
       <span class="path-family-block${trigger ? ' path-family-block-trigger' : ''}">
         <span class="path-family-head">

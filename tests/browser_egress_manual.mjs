@@ -9,6 +9,40 @@ async function selectExitMode(page, mode) {
   await page.waitForFunction((value) => document.querySelector('#egress-mode-segment .active')?.dataset.egressMode === value, mode);
 }
 
+function addMappedExitFixture(payload) {
+  const base = payload.endpoints?.find((item) => item?.id === 'ep-wan2-v4');
+  if (!base) throw new Error('fixture is missing ep-wan2-v4');
+  payload.endpoints.push({
+    ...base,
+    id: 'ep-wan-v4-mapped',
+    wan: 'WAN',
+    device: 'pppoe-WAN',
+    provider: 'mapper',
+    access_method: 'mapped',
+    reachability: 'mapped',
+    external_address: '198.51.100.44',
+    external_port: 4187,
+    ingress_port: 57470,
+    local_port: 57470,
+    service_port: 51820,
+    priority: 20,
+  });
+  payload.endpoints.push({
+    ...base,
+    id: 'ep-wan-v4-try',
+    wan: 'WAN',
+    device: 'pppoe-WAN',
+    provider: 'egress_probe',
+    reachability: 'egress_probe',
+    external_address: '198.51.100.44',
+    external_port: 51820,
+    ingress_port: 51820,
+    local_port: 51820,
+    service_port: 51820,
+    priority: 30,
+  });
+}
+
 async function assertThemeCycle(page, label) {
   const snapshots = [];
   for (const theme of ['light', 'dark']) {
@@ -44,7 +78,16 @@ async function assertThemeCycle(page, label) {
   assert(snapshots[0].canvas !== snapshots[1].canvas, `${label}: Light/Dark resolved to the same --canvas token`);
 }
 
-async function assertExitPicker(page, family, expectedSurface) {
+async function assertExitTrigger(page, family, expectedRole) {
+  const snapshot = await page.locator(`#egress-${family}-select-picker-trigger`).evaluate((root) => ({
+    role: root.querySelector('.path-family-role')?.textContent?.trim() || '',
+    family: root.querySelector('.path-family-label')?.textContent?.trim() || '',
+  }));
+  assert(snapshot.family === (family === 'ipv6' ? 'IPv6' : 'IPv4'), `${family} Internet Exit trigger rendered ${snapshot.family}`);
+  assert(snapshot.role === expectedRole, `${family} Internet Exit trigger role is ${snapshot.role} instead of ${expectedRole}`);
+}
+
+async function assertExitPicker(page, family, expectedSurface, expectedRoles = {}) {
   const opposite = family === 'ipv4' ? 'ipv6' : 'ipv4';
   const trigger = page.locator(`#egress-${family}-select-picker-trigger`);
   assert(await trigger.isVisible(), `${family} Internet Exit trigger is not visible`);
@@ -60,6 +103,8 @@ async function assertExitPicker(page, family, expectedSurface) {
         return {
           blockCount: blocks.length,
           families: blocks.map((block) => block.querySelector('.path-family-label')?.textContent?.trim() || ''),
+          wans: blocks.map((block) => block.querySelector('.path-family-wan')?.textContent?.trim() || ''),
+          roles: blocks.map((block) => block.querySelector('.path-family-role')?.textContent?.trim() || ''),
           values: blocks.map((block) => block.querySelector('.path-family-value')?.textContent?.trim() || ''),
           text: card.textContent || ''
         };
@@ -75,6 +120,12 @@ async function assertExitPicker(page, family, expectedSurface) {
     assert(card.families[0] === snapshot.expected, `${family} Internet Exit option rendered wrong family ${card.families[0]}`);
     assert(!card.families.includes(snapshot.forbidden), `${family} Internet Exit option leaked ${snapshot.forbidden}`);
     assert(!card.values.some((value) => /^\[[^\]]+\]:\d+$/.test(value) || /^\d{1,3}(?:\.\d{1,3}){3}:\d+$/.test(value)), `${family} Internet Exit option leaked Access endpoint port identity`);
+    assert(!card.roles.includes('Try'), `${family} Internet Exit option exposed Try as an Exit role`);
+  }
+  for (const [wan, role] of Object.entries(expectedRoles)) {
+    const card = snapshot.cards.find((item) => item.wans[0] === wan);
+    assert(card, `${family} Internet Exit picker is missing ${wan}`);
+    assert(card.roles[0] === role, `${family} ${wan} role is ${card.roles[0]} instead of ${role}`);
   }
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => !document.querySelector('#endpoint-picker-layer')?.classList.contains('open'));
@@ -156,6 +207,7 @@ try {
   await page.route('**/api/v1/dashboard', async (route) => {
     const response = await route.fetch();
     const payload = await response.json();
+    addMappedExitFixture(payload);
     if (topology === 'wan-v4-down') {
       const wan = payload.inventory?.wans?.find((item) => item?.name === 'WAN');
       if (wan) wan.default_route_v4 = false;
@@ -168,33 +220,39 @@ try {
   await page.waitForFunction(() => document.querySelector('#egress-ipv4-select')?.value === 'WAN2');
   await assertModeVisibility(page, 'ipv4');
   await assertExitLayout(page, 'ipv4', 'stacked');
+  await assertExitTrigger(page, 'ipv4', 'Public');
   await assertThemeCycle(page, 'mobile Internet Exit');
-  await assertExitPicker(page, 'ipv4', 'sheet');
+  await assertExitPicker(page, 'ipv4', 'sheet', {WAN2:'Public', WAN:'Mapped'});
 
   await page.selectOption('#egress-ipv4-select', 'WAN');
   await page.waitForFunction(() => document.querySelector('#egress-ipv4-select')?.value === 'WAN');
   await page.waitForTimeout(100);
   assert(await page.locator('#egress-ipv4-select').inputValue() === 'WAN', 'manual IPv4 Internet Exit was overwritten by its own render');
+  await assertExitTrigger(page, 'ipv4', 'Mapped');
 
   await page.locator('[data-family="ipv6"]').click();
   await page.waitForFunction(() => document.querySelector('#egress-mode-segment .active')?.dataset.egressMode === 'ipv6');
   await page.waitForFunction(() => document.querySelector('#egress-ipv6-select')?.value === 'WAN2');
   await assertModeVisibility(page, 'ipv6');
   await assertExitLayout(page, 'ipv6', 'stacked');
-  await assertExitPicker(page, 'ipv6', 'sheet');
+  await assertExitTrigger(page, 'ipv6', 'Global Direct');
+  await assertExitPicker(page, 'ipv6', 'sheet', {WAN2:'Global Direct', WAN:'Global Direct'});
 
   await page.locator('[data-family="ipv4"]').click();
   await page.waitForFunction(() => document.querySelector('#egress-mode-segment .active')?.dataset.egressMode === 'ipv4');
   await page.waitForFunction(() => document.querySelector('#egress-ipv4-select')?.value === 'WAN');
   assert(await page.locator('#egress-ipv4-select').inputValue() === 'WAN', 'manual IPv4 Internet Exit was not restored after Access-family switching');
+  await assertExitTrigger(page, 'ipv4', 'Mapped');
 
   await selectExitMode(page, 'dual');
   await assertModeVisibility(page, 'dual');
   await assertExitLayout(page, 'dual', 'stacked');
   assert(await page.locator('#egress-ipv4-select').inputValue() === 'WAN', 'Dual did not retain the explicit IPv4 WAN scalar');
   assert(await page.locator('#egress-ipv6-select').inputValue() === 'WAN2', 'Dual did not use the independently recommended IPv6 WAN scalar');
-  await assertExitPicker(page, 'ipv4', 'sheet');
-  await assertExitPicker(page, 'ipv6', 'sheet');
+  await assertExitTrigger(page, 'ipv4', 'Mapped');
+  await assertExitTrigger(page, 'ipv6', 'Global Direct');
+  await assertExitPicker(page, 'ipv4', 'sheet', {WAN2:'Public', WAN:'Mapped'});
+  await assertExitPicker(page, 'ipv6', 'sheet', {WAN2:'Global Direct', WAN:'Global Direct'});
 
   await selectExitMode(page, 'none');
   await assertModeVisibility(page, 'none');
@@ -207,6 +265,7 @@ try {
   await page.evaluate(() => window.RemoteGateApp?.refresh?.());
   await page.waitForFunction(() => document.querySelector('#egress-ipv4-select')?.value === 'WAN2');
   assert(await page.locator('#egress-ipv4-select').inputValue() === 'WAN2', 'invalid manual Internet Exit did not fail back to a current WAN');
+  await assertExitTrigger(page, 'ipv4', 'Public');
 
   topology = 'normal';
   await page.evaluate(() => window.RemoteGateApp?.refresh?.());
@@ -224,17 +283,21 @@ try {
   await desktop.waitForFunction(() => document.querySelector('#egress-mode-segment .active')?.dataset.egressMode === 'ipv4');
   await assertModeVisibility(desktop, 'ipv4');
   await assertExitLayout(desktop, 'ipv4', 'adaptive');
+  await assertExitTrigger(desktop, 'ipv4', 'Public');
   await assertThemeCycle(desktop, 'desktop Internet Exit');
-  await assertExitPicker(desktop, 'ipv4', 'popover');
+  await assertExitPicker(desktop, 'ipv4', 'popover', {WAN2:'Public'});
   await selectExitMode(desktop, 'ipv6');
   await assertModeVisibility(desktop, 'ipv6');
   await assertExitLayout(desktop, 'ipv6', 'adaptive');
-  await assertExitPicker(desktop, 'ipv6', 'popover');
+  await assertExitTrigger(desktop, 'ipv6', 'Global Direct');
+  await assertExitPicker(desktop, 'ipv6', 'popover', {WAN2:'Global Direct'});
   await selectExitMode(desktop, 'dual');
   await assertModeVisibility(desktop, 'dual');
   await assertExitLayout(desktop, 'dual', 'adaptive');
-  await assertExitPicker(desktop, 'ipv4', 'popover');
-  await assertExitPicker(desktop, 'ipv6', 'popover');
+  await assertExitTrigger(desktop, 'ipv4', 'Public');
+  await assertExitTrigger(desktop, 'ipv6', 'Global Direct');
+  await assertExitPicker(desktop, 'ipv4', 'popover', {WAN2:'Public'});
+  await assertExitPicker(desktop, 'ipv6', 'popover', {WAN2:'Global Direct'});
   await selectExitMode(desktop, 'none');
   await assertModeVisibility(desktop, 'none');
   await assertExitLayout(desktop, 'none', 'adaptive');
@@ -251,10 +314,12 @@ try {
   await selectExitMode(fullWidthGate, 'dual');
   await assertModeVisibility(fullWidthGate, 'dual');
   await assertExitLayout(fullWidthGate, 'dual', 'side-by-side');
+  await assertExitTrigger(fullWidthGate, 'ipv4', 'Public');
+  await assertExitTrigger(fullWidthGate, 'ipv6', 'Global Direct');
   assert(fullWidthGateActivatePosts === 0, `full-width Gate Dual layout posted Activate (${fullWidthGateActivatePosts})`);
   await fullWidthGate.close();
 
-  console.log('Browser Internet Exit regression passed: LAN has zero WAN pickers, single-family modes span one family only, Dual uses one scalar per family with adaptive stacked/side-by-side layout, mobile uses the shared sheet, desktop uses the shared popover, Light/Dark preserve the canonical Exit controls, no Access port identity leaks, and zero auto-Activate.');
+  console.log('Browser Internet Exit regression passed: LAN has zero WAN pickers, single-family modes span one family only, Dual reuses one scalar picker per family, Public/Mapped/Global Direct presentation stays family-pure, mobile uses the shared sheet, desktop uses the shared popover, no Access port identity leaks, and zero auto-Activate.');
 } finally {
   await browser.close();
 }

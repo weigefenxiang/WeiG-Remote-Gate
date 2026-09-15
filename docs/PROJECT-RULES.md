@@ -58,6 +58,8 @@ NATMap is not a product concept, required package or provider label.
 
 `Private/CGNAT` is an internal network fact when needed for discovery/eligibility. It must not be presented as a selectable public Access Endpoint and must not be exposed as an Internet Exit mode/identity label.
 
+Internet Exit PathCards may show concise `Public`, `Mapped` or `Global Direct` presentation context beside the WAN/family identity. These badges are descriptive only: they are not Internet Exit modes, do not change egress eligibility/ranking, and never carry Access ports into the Exit plan.
+
 ## Core layering contract
 
 Keep these decisions separate:
@@ -91,6 +93,8 @@ Public IPv4 Direct
 ```
 
 Do not expose `Private/CGNAT Try` as a user Access Endpoint.
+
+An observed-NAT `Try` remains a fallback when it is the only usable public candidate for that logical WAN. If the same WAN already has a stronger visible Direct, Mapped or Relay path for the selected service, suppress the redundant same-WAN `Try` card from the picker rather than showing two representations of the same WAN path.
 
 IPv6 Access is Direct only in the current scope and requires a Global IPv6 endpoint plus IPv6 Gate capability.
 
@@ -158,6 +162,8 @@ Automatic WAN recommendation is independent from Access Endpoint selection. If t
 IPv4 egress requires an up WAN with a current IPv4 default route. Its local address may be public, RFC1918 or CGNAT; that classification does not by itself disqualify outbound Internet use.
 
 IPv6 egress requires an up WAN, a current IPv6 default route and usable Global IPv6.
+
+The Exit PathCard may display `Public` for a WAN with a current public IPv4 fact, `Mapped` when that logical WAN currently has a validated Mapped Access path for the selected service, and `Global Direct` for a usable Global IPv6 WAN. This is presentation-only context. It must not alter `wanSupportsEgress`, egress scoring/recommendation, selected `wan4`/`wan6`, or runtime validation.
 
 Dual egress is atomic. Same-WAN and split-WAN Dual are representations of one plan. Any family failure rolls back the whole Dual egress runtime.
 
@@ -266,21 +272,18 @@ Do not build separate interaction systems for IPv4, IPv6, Dual, Direct, Mapped o
 Approved Access presentation:
 
 ```text
-PathCard
-  -> one FamilyPathBlock for single-family Access
-  -> two FamilyPathBlocks for Dual Access
+single-family Access -> EndpointPicker -> PathCard -> FamilyPathBlock[1]
+Dual Access          -> one IPv4 scalar picker + one IPv6 scalar picker
 ```
 
-Dual Access card presentation is four information lines:
+Each scalar Access card uses the same two-line information structure:
 
 ```text
-IPv4   <WAN>   <Access Method when applicable>
-<IPv4 endpoint/address>
-IPv6   <WAN>   <Access Method when applicable>
-<IPv6 endpoint/address>
+<Family>   <WAN>   <Access Method when applicable>
+<endpoint/address>
 ```
 
-Internet Exit reuses the same `EndpointPicker`/single-family `FamilyPathBlock` renderer for each WAN field. Dual Exit is two independent family pickers, not one generated two-family combination card.
+Internet Exit reuses the same `EndpointPicker`/single-family `FamilyPathBlock` renderer for each WAN field. Each row may show the same concise right-side presentation context (`Public`, `Mapped`, `Global Direct`) without changing Exit planning authority. Dual Exit is two independent family pickers, not one generated two-family combination card.
 
 Do not add redundant `Dual`, `Split WAN` or `Split Exit` text where family controls already express the topology.
 

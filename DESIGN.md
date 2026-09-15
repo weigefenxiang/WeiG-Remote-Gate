@@ -1,5 +1,5 @@
 ---
-version: 12
+version: 13
 name: WeiG-Remote-Gate
 description: "A dense, tactile, adaptive network-security workspace with standardized spatial depth, modular controls, and a distinct Wei.G security identity."
 ---
@@ -215,13 +215,20 @@ For a single-family Access trigger, keep the selected path compact and two-line.
 <WAN>   <family>   <flexible space>   <concise reachability when useful>
 ```
 
-For `Public Direct`, the trigger may shorten only the trailing presentation token to `Public`; the structured role remains `Public Direct`. The second line is always the complete endpoint identity.
+For `Public Direct`, the trigger shortens only the trailing presentation token to `Public`; the structured role remains `Public Direct`. `Mapped`, `Global Direct` and future `Relay` remain visible in the trigger without inventing a second role vocabulary. The second line is always the complete endpoint identity.
 
 Example trigger:
 
 ```text
 WAN2   IPv4                         Public
 223.73.44.6:51820
+```
+
+IPv6 uses the same trigger template:
+
+```text
+WAN2   IPv6                  Global Direct
+[2408:8256:1970::1234]:51820
 ```
 
 The corresponding picker option keeps recommendation and role distinct:
@@ -237,6 +244,8 @@ Mapped Access uses the same two-line block:
 IPv4   WAN                              Mapped
 223.73.44.6:7179
 ```
+
+An observed-NAT `Try` remains a fallback Access candidate when no stronger path represents that WAN. If the same logical WAN already has a visible Direct, Mapped or Relay path for the selected service, the redundant same-WAN `Try` card is hidden from the picker instead of duplicating the WAN.
 
 Access family selection is mode-first and scalar:
 
@@ -274,11 +283,21 @@ IPv6     -> one IPv6 WAN picker
 Dual     -> one IPv4 WAN picker + one IPv6 WAN picker
 ```
 
-Each Internet Exit WAN picker is a normal `EndpointPicker` consumer and each option renders exactly one single-family `FamilyPathBlock` containing family, WAN and observed/known address. Dual Exit does **not** render a generated two-family combination option/card; the two independent scalar selectors already express the plan.
+Each Internet Exit WAN picker is a normal `EndpointPicker` consumer and each option renders exactly one single-family `FamilyPathBlock` containing family, WAN, observed/known address and an optional concise presentation badge. The approved Exit badges are:
+
+```text
+IPv4 public WAN                          -> Public
+IPv4 WAN with current selected-service Mapping -> Mapped
+usable Global IPv6 WAN                   -> Global Direct
+```
+
+These badges are presentation context only. They do not become Internet Exit modes, do not affect egress eligibility/scoring/recommendation, and do not carry `external_port`, `ingress_port` or `service_port` into Exit identity. A WAN without one of these facts may render no right-side badge rather than inventing `Try` or `Private/CGNAT` as an Exit role.
+
+Dual Exit does **not** render a generated two-family combination option/card; the two independent scalar selectors already express the plan and reuse the same single-family template.
 
 This is an intentional scalability rule: adding WAN3/WAN4 adds rows to the relevant family picker, not `n4 × n6` Dual combinations.
 
-Internet Exit rows do not expose `Private/CGNAT` as a product role. A private/CGNAT local IPv4 WAN may still be a valid outbound exit when routing capability is valid.
+Internet Exit rows do not expose `Private/CGNAT` or `Try` as a product role. A private/CGNAT local IPv4 WAN may still be a valid outbound exit when routing capability is valid.
 
 Automatic recommendation should prefer one best shared dual-capable WAN for applicable IPv4/IPv6 fields when available. If no shared WAN is eligible, the two family fields recommend independently. Access Endpoint selection and split/same-WAN Access topology must not rewrite these Exit choices.
 
@@ -286,7 +305,7 @@ The Internet Exit section has one visible heading (`Internet Exit` / `上网出�
 
 Structured ownership is mandatory:
 - `gate-controls.js` is the browser Current Owner of Access Endpoint eligibility/ranking, per-family Access selection and the complete `InternetExitPlan {mode, wan4, wan6}` state/recommendation;
-- it writes structured `data-path-rows` and recommendation metadata (`data-path-primary`) onto internal select options;
+- it writes structured `data-path-rows`, optional presentation roles and recommendation metadata (`data-path-primary`) onto internal select options;
 - `plan-preferences.js` persists only non-authoritative per-family Access hints; there is no `endpointSelections.dual` shadow state;
 - `endpoint-picker.js` is render/interaction only: it consumes those structured records and must not parse `option.textContent`, infer policy from strings/order, or use `MutationObserver` to rediscover policy state;
 - `app.js` must not re-filter, re-rank, relabel or store a second Access/Exit plan;
@@ -389,7 +408,7 @@ Rules:
 
 WireGuard remains a professional term and is not translated. Never expose private keys. A Handshake alone does not prove LAN routing health.
 
-Multi-WAN cards may show network facts such as Public, Private/CGNAT, Global IPv6, NAT egress probe and mapped endpoint information. These are diagnostics/facts; they do not automatically become Access Endpoint or Internet Exit product labels.
+Multi-WAN cards may show network facts such as Public, Private/CGNAT, Global IPv6, NAT egress probe and mapped endpoint information. These are diagnostics/facts; they do not automatically become Access Endpoint or Internet Exit runtime authority. Exit PathCards may reuse the concise `Public` / `Mapped` / `Global Direct` presentation tokens defined above only as descriptive context.
 
 Remote Gate remains INPUT-only. FORWARD, DNAT, UPnP, NAT-PMP and qBittorrent forwarding remain outside Gate ownership.
 
@@ -464,7 +483,7 @@ JavaScript:
 - `client-sources.js`: missing-family IPv4/IPv6 probe completion.
 - `endpoint-picker.js`: the one custom picker and scalar PathCard renderer for Access Endpoint and Internet Exit family WANs; also owns progressive visibility of the existing WireGuard service selector; render/interaction only, with no policy inference from label text or DOM mutation observation.
 - `duration-control.js`: presets-to-Custom bridge, range/detent/feedback.
-- `gate-controls.js`: Family/Scope/TTL state, capability/eligibility, per-family AccessPlan selection, canonical InternetExitPlan mode/family-WAN state, structured PathCard view-model data and the single activation path.
+- `gate-controls.js`: Family/Scope/TTL state, capability/eligibility, per-family AccessPlan selection, canonical InternetExitPlan mode/family-WAN state, structured PathCard view-model data, presentation roles and the single activation path.
 - `plan-preferences.js`: browser-only persistence adapter for non-authoritative per-family Access hints; no Dual pair/shadow selection owner.
 - `app.js`: API state, refresh and general data rendering orchestration; it does not own Access Endpoint filtering/ranking/labels/options or Internet Exit selection state.
 
@@ -482,6 +501,8 @@ Do:
 - keep AccessPlan independent from InternetExitPlan;
 - represent Dual Access as one scalar Endpoint selection per family, never a generated pair list;
 - represent Internet Exit as mode plus at most one WAN scalar per family;
+- reuse the same single-family role presentation for Access, Exit and both halves of Dual;
+- keep Exit role badges presentation-only and free of Access port identity;
 - derive WireGuard service port from runtime service identity;
 - test mobile and desktop interactions before release.
 
@@ -490,7 +511,8 @@ Don't:
 - silently choose among multiple registered WireGuard services by registry/list order;
 - create a second WireGuard-specific picker or PathCard framework;
 - show Private/CGNAT as a selectable public Access Endpoint;
-- expose Private/CGNAT as an Internet Exit product mode/role;
+- expose Private/CGNAT or Try as an Internet Exit product mode/role;
+- let `Public` / `Mapped` / `Global Direct` Exit badges alter egress eligibility, recommendation or runtime authority;
 - generate IPv4×IPv6 Endpoint combinations for Dual Access;
 - generate IPv4×IPv6 WAN combinations for Dual Internet Exit;
 - keep `endpointSelections.dual`, a `dual:<v4>:<v6>` option id or other pair shadow state after scalar Access becomes canonical;

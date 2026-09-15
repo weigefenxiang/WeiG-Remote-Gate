@@ -25,15 +25,30 @@ class PathCardContractTests(unittest.TestCase):
     def test_access_endpoint_policy_has_one_current_owner(self):
         for role in ("'Public Direct'", "'Global Direct'", "'Mapped'", "'Try'", "'Relay'"):
             self.assertIn(role, GATE)
+        self.assertIn("function visibleAccessEndpoints", GATE)
+        self.assertIn("accessRole(item) !== 'Try'", GATE)
+        self.assertIn("!strongerWans.has(String(item?.wan || ''))", GATE)
         for stale in ("function reachableEndpoints", "function endpointLabel", "function syncEndpointSelect", "NAT egress · Try"):
             self.assertNotIn(stale, APP)
         for stale in ("function rewriteMappedOptions", "function observeMappedPicker", "parts.indexOf('Mapped')"):
             self.assertNotIn(stale, BOOTSTRAP)
 
+    def test_exit_path_roles_are_presentation_only_in_gate_owner(self):
+        self.assertIn("function mappedAccessAvailableOnWan", GATE)
+        self.assertIn("function egressRole", GATE)
+        self.assertIn("role:egressRole(wan, family)", GATE)
+        self.assertIn("pathRow(family, item.wan.name, item.role, item.address)", GATE)
+        self.assertIn("? 'Global Direct' : ''", GATE)
+        self.assertIn("return 'Public';", GATE)
+        self.assertIn("return 'Mapped';", GATE)
+        self.assertNotIn("egressRole(wan, family) ===", GATE)
+
     def test_picker_consumes_structured_rows_without_policy_ownership(self):
         self.assertIn("dataset?.pathRows", PICKER)
         self.assertIn("dataset?.pathPrimary", PICKER)
-        for stale in ("MutationObserver", "splitLabel", "NAT egress · Try"):
+        self.assertIn("role === 'Public Direct'", PICKER)
+        self.assertIn("['Public','Mapped','Global Direct','Relay'].includes(role)", PICKER)
+        for stale in ("MutationObserver", "splitLabel", "NAT egress · Try", "isAccessSelect"):
             self.assertNotIn(stale, PICKER)
         self.assertIn("scalar.blocks === 1", BROWSER_LAYOUT)
 

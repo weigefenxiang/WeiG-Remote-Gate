@@ -42,7 +42,7 @@ Examples of wrong reasoning:
 
 A recurring UI form of the same mistake is letting Access topology drive Internet Exit topology. A split-WAN AccessPlan does not imply a split-WAN InternetExitPlan, and changing the Access Endpoint must not silently rewrite a manually or automatically selected Internet Exit WAN.
 
-A second recurring UI form is leaking Access identity into Internet Exit presentation. Access Endpoint rows may legitimately contain an Internet endpoint plus a service/mapping port. Internet Exit rows identify an outbound WAN path and therefore show only that selected family, logical WAN and WAN address. They must not borrow the opposite family or any `external_port`, `ingress_port` or `service_port` from Access.
+A second recurring UI form is leaking Access identity into Internet Exit authority. Access Endpoint rows may legitimately contain an Internet endpoint plus a service/mapping port. Internet Exit rows identify an outbound WAN path and therefore contain only the selected family, logical WAN and WAN address as identity. For visual consistency they may additionally show a concise **presentation-only** reachability badge derived from current facts: `Public`, `Mapped` or `Global Direct`. `Mapped` on an Exit row means that the same logical WAN currently has a validated Mapped Access path for the selected service; it does **not** make Mapping part of InternetExitPlan, change egress eligibility/ranking, or authorize any mapping/port. Exit rows must never borrow the opposite family or any `external_port`, `ingress_port` or `service_port` from Access.
 
 ## 2. Product concepts must not leak implementation facts
 
@@ -61,6 +61,8 @@ Do not expose implementation/provider names such as NATMap as the product concep
 `Private/CGNAT` remains an internal network classification when needed for discovery, filtering and mapping eligibility. It is not a selectable public Access Endpoint and must not be presented as an Internet Exit product mode.
 
 An IPv4 WAN behind CGNAT may still be a valid Internet Exit when it is up and has the required default route. Access eligibility and egress eligibility are therefore different policies.
+
+The optional `Public` / `Mapped` / `Global Direct` text shown on an Internet Exit PathCard is presentation context only. It is not an Internet Exit mode, capability decision, recommendation score or runtime authority.
 
 ## 3. Access and Internet Exit are independent plans
 
@@ -123,7 +125,7 @@ ipv6 -> exactly one IPv6 WAN selector
 dual -> exactly one IPv4 WAN selector + exactly one IPv6 WAN selector
 ```
 
-Each visible selector is family-pure. IPv4 mode exposes only the IPv4 WAN picker and every option contains one IPv4 `FamilyPathBlock`; IPv6 mode is symmetric. Dual exposes the same two scalar pickers side by side/stacked according to viewport, never a combined pair card. Exit rows contain WAN address identity only, not WireGuard or Mapping port identity.
+Each visible selector is family-pure. IPv4 mode exposes only the IPv4 WAN picker and every option contains one IPv4 `FamilyPathBlock`; IPv6 mode is symmetric. Dual exposes the same two scalar pickers side by side/stacked according to viewport, never a combined pair card. Exit rows contain WAN address identity plus an optional presentation-only `Public` / `Mapped` / `Global Direct` badge; they never contain WireGuard or Mapping port identity, and the badge never participates in InternetExitPlan selection authority.
 
 Never generate an IPv4-WAN × IPv6-WAN Cartesian product as selectable Internet Exit plans. Adding a third, fourth or later WAN may add rows to each family picker, but must not multiply Dual choices. Dual egress is one transaction containing two scalar family choices, not a list of precomputed pair combinations.
 
@@ -210,7 +212,7 @@ Each section has one useful visible heading. When a trigger already contains WAN
 
 Do not repeat low-value labels such as `Dual`, `Split WAN` or `Split Exit` when the family selectors/rows already express the fact.
 
-Access rows may show `Direct`, `Mapped` or another real Access Method. Internet Exit rows show family/WAN/address information without leaking `Private/CGNAT` as a product label or any Access endpoint port.
+Access rows may show `Direct`, `Mapped` or another real Access Method. Internet Exit rows show family/WAN/address plus optional non-authoritative `Public` / `Mapped` / `Global Direct` presentation context without leaking `Private/CGNAT` as a product label or any Access endpoint port. The same generic `FamilyPathBlock` renders these roles for IPv4, IPv6 and Dual; do not add Exit- or Dual-specific card templates.
 
 Module ownership:
 
@@ -239,7 +241,7 @@ Internet Exit: best shared dual-capable WAN when available -> otherwise best WAN
 
 The Access recommendation above never materializes an IPv4×IPv6 pair list. Dual simply uses the current recommended scalar for each family until the user makes an independent manual choice.
 
-There is no user-facing `Private/CGNAT Try` Access Endpoint.
+There is no user-facing `Private/CGNAT Try` Access Endpoint. A valid observed-NAT `Try` remains a fallback Access candidate, but when the same logical WAN already has a stronger visible Direct, Mapped or Relay path for the selected service, the redundant same-WAN `Try` card is suppressed from the picker instead of presenting two versions of the same WAN path.
 
 A manual Access selection is remembered independently per family while it remains valid. When a dynamic Endpoint id changes, a browser-local fallback may preserve the same family intent only if the stable logical WAN **and Access Method** still match. WAN identity alone is insufficient when Direct, Mapped or future Relay candidates coexist on the same WAN. Older preferences that do not yet contain a method hint may use the historical WAN-only compatibility fallback, but the current eligible scalar selection must enrich the stored hint for subsequent churn. There is no Dual pair preference to migrate or restore. These hints remain non-authoritative UI state: refresh, PPPoE churn, mapping changes or a new recommendation must not create or migrate authorization automatically.
 
@@ -409,7 +411,7 @@ Before implementing any network/UI change, answer all of these:
 17. Does Internet Exit remain `mode + wan4 + wan6` with at most one WAN selection per family, rather than generated pair combinations?
 18. If a new canonical owner was introduced, did the previous runtime owner and its old state/DOM/test contract exit in the same change?
 19. Is normal ready state quiet, with persistent explanatory UI reserved for actionable exceptions rather than repeating current OpenWrt reports?
-20. Does each visible Internet Exit picker contain exactly one matching family block and WAN address, with no opposite-family row or Access/service port identity?
+20. Does each visible Internet Exit picker contain exactly one matching family block and WAN address, with at most a presentation-only `Public` / `Mapped` / `Global Direct` badge and no opposite-family row or Access/service port identity?
 21. Do mobile and desktop consume the same semantic DOM/plan state, with only the existing EndpointPicker sheet/popover presentation changing by viewport?
 22. Is `theme-bootstrap.js` still bootstrap-only rather than a hidden Gate DOM/data owner?
 23. Does Dual Access remain two independent scalar family selectors with one FamilyPathBlock each, no Cartesian pair list, no `dual:<...>` option id and no `endpointSelections.dual` shadow state?

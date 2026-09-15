@@ -8,32 +8,71 @@ async function waitForEndpoint(page, selectId, value) {
   await page.waitForFunction(({selectId, value}) => document.querySelector(`#${selectId}`)?.value === value, {selectId, value});
 }
 
-async function assertScalarPathCard(page, triggerSelector, expectedFamily, context) {
+async function assertScalarPathCard(page, triggerSelector, expectedFamily, context, expectedRole = '') {
   const trigger = await page.locator(triggerSelector).evaluate((root) => {
     const block = root?.querySelector('.path-family-block');
     const head = block?.querySelector('.path-family-head');
     const value = block?.querySelector('.path-family-value');
+    const role = block?.querySelector('.path-family-role');
     return {
       blocks: root?.querySelectorAll('.path-family-block').length || 0,
       head: head?.textContent.replace(/\s+/g, ' ').trim() || '',
       value: value?.textContent.trim() || '',
+      role: role?.textContent?.trim() || '',
     };
   });
   assert(trigger.blocks === 1, `${context}: trigger must render exactly one FamilyPathBlock (${trigger.blocks})`);
   assert(trigger.head.includes(expectedFamily), `${context}: trigger rendered the wrong family (${trigger.head})`);
   assert(trigger.value, `${context}: trigger endpoint identity is empty`);
+  if (expectedRole) assert(trigger.role === expectedRole, `${context}: trigger role is ${trigger.role} instead of ${expectedRole}`);
 }
 
-async function assertScalarPicker(page, triggerSelector, expectedFamily, context) {
+async function assertScalarPicker(page, triggerSelector, expectedFamily, context, expectedRole = '') {
   await page.locator(triggerSelector).click();
   await page.waitForSelector('#endpoint-picker-layer.open .endpoint-option-card.selected');
   const snapshot = await page.locator('#endpoint-picker-layer .endpoint-option-card.selected').evaluate((root) => ({
     blocks: root.querySelectorAll('.path-family-block').length,
     family: root.querySelector('.path-family-label')?.textContent?.trim() || '',
+    role: root.querySelector('.path-family-role')?.textContent?.trim() || '',
   }));
   assert(snapshot.blocks === 1, `${context}: selected picker card must render exactly one FamilyPathBlock (${snapshot.blocks})`);
   assert(snapshot.family === expectedFamily, `${context}: selected picker card rendered ${snapshot.family}`);
+  if (expectedRole) assert(snapshot.role === expectedRole, `${context}: picker role is ${snapshot.role} instead of ${expectedRole}`);
   await page.keyboard.press('Escape');
+}
+
+function addMappedAndTryFixture(payload) {
+  const base = payload.endpoints?.find((item) => item?.id === 'ep-wan2-v4');
+  if (!base) throw new Error('fixture is missing ep-wan2-v4');
+  payload.endpoints.push({
+    ...base,
+    id: 'ep-wan-v4-mapped',
+    wan: 'WAN',
+    device: 'pppoe-WAN',
+    provider: 'mapper',
+    access_method: 'mapped',
+    reachability: 'mapped',
+    external_address: '198.51.100.44',
+    external_port: 4187,
+    ingress_port: 57470,
+    local_port: 57470,
+    service_port: 51820,
+    priority: 20,
+  });
+  payload.endpoints.push({
+    ...base,
+    id: 'ep-wan-v4-try',
+    wan: 'WAN',
+    device: 'pppoe-WAN',
+    provider: 'egress_probe',
+    reachability: 'egress_probe',
+    external_address: '198.51.100.44',
+    external_port: 51820,
+    ingress_port: 51820,
+    local_port: 51820,
+    service_port: 51820,
+    priority: 30,
+  });
 }
 
 const browser = await chromium.launch({headless: true});
@@ -45,6 +84,12 @@ try {
       if (message.type() === 'error') consoleErrors.push(message.text());
     });
     page.on('pageerror', (error) => consoleErrors.push(String(error)));
+    await page.route('**/api/v1/dashboard', async (route) => {
+      const response = await route.fetch();
+      const payload = await response.json();
+      addMappedAndTryFixture(payload);
+      await route.fulfill({response, contentType: 'application/json', body: JSON.stringify(payload)});
+    });
 
     await page.goto('http://127.0.0.1:8765/', {waitUntil: 'networkidle'});
     await page.waitForSelector('#endpoint-picker-trigger');
@@ -95,7 +140,21 @@ try {
     }
     assert(picker.value === '203.0.113.18:51820', `${width}: picker endpoint identity changed: ${picker.value}`);
     assert(!/Private|CGNAT|NAT egress/i.test(picker.text), `${width}: Access picker leaked network classification: ${picker.text}`);
+    assert(await page.locator('#endpoint-picker-layer .endpoint-option-card[data-value="ep-wan-v4-mapped"]').count() === 1, `${width}: mapped Access path disappeared`);
+    assert(await page.locator('#endpoint-picker-layer .endpoint-option-card[data-value="ep-wan-v4-try"]').count() === 0, `${width}: redundant same-WAN Try path remained visible`);
     await page.keyboard.press('Escape');
+
+    await page.selectOption('#endpoint-select', 'ep-wan-v4-mapped');
+    await waitForEndpoint(page, 'endpoint-select', 'ep-wan-v4-mapped');
+    await assertScalarPathCard(page, '#endpoint-picker-trigger', 'IPv4', `${width}: mapped IPv4 Access`, 'Mapped');
+    await page.selectOption('#endpoint-select', 'ep-wan2-v4');
+    await waitForEndpoint(page, 'endpoint-select', 'ep-wan2-v4');
+
+    await page.locator('[data-family="ipv6"]').click();
+    await page.waitForFunction(() => document.querySelector('#family-segment .active')?.dataset.family === 'ipv6');
+    await waitForEndpoint(page, 'endpoint-select', 'ep-wan2-v6');
+    await assertScalarPathCard(page, '#endpoint-picker-trigger', 'IPv6', `${width}: single IPv6 Access`, 'Global Direct');
+    await assertScalarPicker(page, '#endpoint-picker-trigger', 'IPv6', `${width}: single IPv6 Access`, 'Global Direct');
 
     await page.locator('[data-family="dual"]').click();
     await page.waitForFunction(() => document.querySelector('#family-segment .active')?.dataset.family === 'dual');
@@ -112,12 +171,13 @@ try {
     assert(dualState.v4 === 'ep-wan2-v4' && dualState.v6 === 'ep-wan2-v6', `${width}: Dual scalar recommendation changed (${dualState.v4}/${dualState.v6})`);
     assert(!dualState.v4Options.some((value) => String(value).startsWith('dual:')), `${width}: IPv4 selector still contains a Dual pair id`);
     assert(!dualState.v6Options.some((value) => String(value).startsWith('dual:')), `${width}: IPv6 selector still contains a Dual pair id`);
+    assert(!dualState.v4Options.includes('ep-wan-v4-try'), `${width}: Dual IPv4 selector restored redundant same-WAN Try path`);
     assert(dualState.visibleHeadings.length === 1, `${width}: Dual Access added redundant visible per-family headings`);
 
-    await assertScalarPathCard(page, '#endpoint-picker-trigger', 'IPv4', `${width}: Dual IPv4`);
-    await assertScalarPathCard(page, '#access-ipv6-select-picker-trigger', 'IPv6', `${width}: Dual IPv6`);
-    await assertScalarPicker(page, '#endpoint-picker-trigger', 'IPv4', `${width}: Dual IPv4`);
-    await assertScalarPicker(page, '#access-ipv6-select-picker-trigger', 'IPv6', `${width}: Dual IPv6`);
+    await assertScalarPathCard(page, '#endpoint-picker-trigger', 'IPv4', `${width}: Dual IPv4`, 'Public');
+    await assertScalarPathCard(page, '#access-ipv6-select-picker-trigger', 'IPv6', `${width}: Dual IPv6`, 'Global Direct');
+    await assertScalarPicker(page, '#endpoint-picker-trigger', 'IPv4', `${width}: Dual IPv4`, 'Public Direct');
+    await assertScalarPicker(page, '#access-ipv6-select-picker-trigger', 'IPv6', `${width}: Dual IPv6`, 'Global Direct');
 
     assert(consoleErrors.length === 0, `${width}: browser console errors: ${consoleErrors.join(' | ')}`);
     await page.close();

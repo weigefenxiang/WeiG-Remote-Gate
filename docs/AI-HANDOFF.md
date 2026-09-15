@@ -69,7 +69,7 @@ gate-controls.js
   -> AccessPlan
   -> InternetExitPlan
   -> automatic/manual recommendation
-  -> structured PathCard view-model data
+  -> structured PathCard view-model data and presentation roles
   -> single Activate path
 
 endpoint-picker.js
@@ -112,7 +112,9 @@ Relay (future)
 
 `Private/CGNAT` remains an internal network fact and is not a selectable public Access Endpoint.
 
-Dual Access contains one IPv4 Endpoint and one IPv6 Endpoint for the same registered WireGuard service. Same-WAN and split-WAN are ordinary plan data. Access Dual may legitimately pair two endpoints; this must not be confused with Internet Exit selection.
+An observed-NAT `Try` remains a fallback. When the same logical WAN already has a stronger visible Direct, Mapped or Relay endpoint for the selected WireGuard service, the redundant same-WAN `Try` card is suppressed from the picker. This is presentation/choice deduplication, not removal of the fallback capability.
+
+Dual Access contains one IPv4 Endpoint and one IPv6 Endpoint for the same registered WireGuard service. Same-WAN and split-WAN are ordinary plan data. Dual is represented by two scalar family selectors using the same PathCard template; it must not become a pre-generated pair/card model.
 
 Manual Access preferences remain browser-local, non-authoritative hints. They are bound to family and WireGuard service and are revalidated through the current eligible Endpoint set. Restore/fallback never auto-Activates.
 
@@ -193,11 +195,11 @@ IPv6 mode -> only IPv6 trigger/options are visible
 Dual mode -> the same IPv4 trigger + the same IPv6 trigger, independently
 ```
 
-An Internet Exit option contains family + logical WAN + WAN address only. It must not show the opposite family and must not display Access endpoint/service/Mapping port identity. Access Endpoint remains the component that may show `<address>:<port>` because that port is part of the inbound service identity.
+An Internet Exit option contains family + logical WAN + WAN address, plus an optional presentation-only reachability badge. Approved badges are `Public` for a current public IPv4 WAN, `Mapped` when the same WAN currently has a validated Mapped Access path for the selected service, and `Global Direct` for usable Global IPv6. The badge is not egress authority and must not change egress eligibility/ranking/recommendation. Exit rows must not show the opposite family or any Access endpoint/service/Mapping port identity. `Try` and `Private/CGNAT` are not Exit role labels.
 
 Phone and desktop have one semantic implementation. On phone the existing `EndpointPicker` becomes its established bottom sheet; on desktop the same picker becomes its established popover. There is no mobile-only Exit planner, select model or card framework.
 
-Dual Access still uses one PathCard with two FamilyPathBlocks. Dual Internet Exit is different: it uses two independent single-family WAN pickers, not a generated two-family combination card.
+Dual Access and Dual Internet Exit both reuse the same single-family PathCard primitive. Dual Access has one IPv4 scalar Access picker plus one IPv6 scalar Access picker; Dual Internet Exit has one IPv4 WAN picker plus one IPv6 WAN picker. Neither generates a Cartesian pair card.
 
 Do not create Exit-specific picker/card/fitting frameworks.
 
@@ -254,7 +256,7 @@ runtime simulator
 real-device hardware
 ```
 
-Routine `dev` CI executes Python/static/runtime checks and JavaScript syntax checks. Release Playwright scripts may be syntax-checked on `dev`, but executable Browser Matrix remains `main`-only/manual.
+Routine `dev` CI executes Python/static/runtime checks and JavaScript syntax checks. Release Playwright scripts may be syntax-checked on `dev`, but executable Browser Matrix remains `main`-only/manual unless an exact `dev` candidate commit intentionally requests the candidate matrix.
 
 Focused coverage for the Internet Exit/Gate presentation chain now includes:
 
@@ -268,7 +270,12 @@ Focused coverage for the Internet Exit/Gate presentation chain now includes:
 - mobile IPv6 Exit exposes only IPv6;
 - Dual uses the same two scalar pickers;
 - desktop consumes the same semantic controls through the existing picker popover;
-- Exit PathCards reject Access-style address+port identity;
+- IPv4 Access suppresses redundant same-WAN `Try` when Mapped/Direct/Relay is present;
+- IPv6 Access current trigger keeps `Global Direct` visible;
+- IPv4 Exit presents `Public` / `Mapped` context without changing plan authority;
+- IPv6 Exit presents `Global Direct` context;
+- Dual Exit reuses those same scalar family-role templates;
+- Exit PathCards reject Access-style address+port identity and reject `Try` as an Exit role;
 - Current WireGuard Public Endpoint has no permanent Direct/OpenWrt-report note;
 - old `theme-bootstrap.js` Gate DOM/fetch/Observer owner is absent;
 - quiet ready family-note behavior;
@@ -278,7 +285,7 @@ Focused coverage for the Internet Exit/Gate presentation chain now includes:
 - mixed Access-family / Exit-family Activate payloads;
 - zero auto-Activate during selection changes.
 
-Do not call those Browser Matrix PASS until the release workflow actually executes them.
+Do not call those Browser Matrix PASS until the candidate/release workflow actually executes them for the exact SHA.
 
 ## Highest-frequency systemic mistakes
 
