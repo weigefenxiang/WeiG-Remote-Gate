@@ -19,8 +19,11 @@ from app.client_profiles import (  # noqa: E402
     accept_profile_result,
     consume_public_token,
     create_public_token,
+    profile_command_owned,
+    profile_history,
     queue_profile_create,
     queue_profile_revoke,
+    recent_results,
     render_format,
     result_view,
     sanitize_agent_profiles,
@@ -28,6 +31,7 @@ from app.client_profiles import (  # noqa: E402
 from app.client_sources import agent_status_is_fresh  # noqa: E402
 from app.control_queue import terminal_control_error  # noqa: E402
 from app.gate import GateError  # noqa: E402
+from app.security import token_hash  # noqa: E402
 
 STORE = base.STORE
 SETTINGS = base.SETTINGS
@@ -40,10 +44,12 @@ PROFILE_CSS = r'''
 .profile-layer.open{display:flex}.profile-dialog{width:min(760px,100%);max-height:min(88vh,860px);overflow:auto;border:1px solid var(--hairline-strong);border-radius:var(--radius-lg);background:var(--surface-2);box-shadow:var(--depth-z4),var(--rim-light);padding:22px;color:var(--ink)}
 .profile-dialog-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}.profile-dialog-head h2{margin:0;font-size:var(--type-card)}.profile-dialog-head p{margin:5px 0 0;color:var(--ink-muted);font-size:var(--type-label);line-height:1.45}.profile-close{min-width:44px;min-height:44px;border:0;border-radius:var(--radius-sm);background:transparent;color:var(--ink-muted);font-size:24px;cursor:pointer}.profile-close:hover{background:var(--surface-recessed);color:var(--ink)}
 .profile-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.profile-field{display:grid;gap:6px;min-width:0}.profile-field.full{grid-column:1/-1}.profile-field label,.profile-label{font-size:var(--type-label);font-weight:700;color:var(--ink-muted)}.profile-field input,.profile-field select{width:100%;box-sizing:border-box;min-height:46px;border:1px solid var(--hairline-strong);border-radius:var(--radius-sm);background:var(--surface-recessed);color:var(--ink);padding:8px 10px;font:inherit}.profile-field input:focus-visible,.profile-field select:focus-visible,.profile-button:focus-visible,.profile-launch:focus-visible,.profile-close:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
-.profile-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.profile-button{min-height:44px;border-radius:var(--radius-sm);border:1px solid var(--hairline-strong);padding:8px 12px;background:var(--surface-raised);color:var(--ink);box-shadow:var(--elevation-control-rest),var(--highlight-control);font:inherit;font-weight:700;cursor:pointer}.profile-button:hover{border-color:var(--border-hover)}.profile-button.primary{background:var(--primary);border-color:var(--primary);color:#fff}.profile-button.primary:hover{background:var(--primary-hover)}.profile-button.danger{color:var(--danger)}.profile-button:disabled{opacity:.48;cursor:not-allowed}
+.profile-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.profile-button{min-height:44px;border-radius:var(--radius-sm);border:1px solid var(--hairline-strong);padding:8px 12px;background:var(--surface-raised);color:var(--ink);box-shadow:var(--elevation-control-rest),var(--highlight-control);font:inherit;font-weight:700;cursor:pointer}.profile-button:hover{border-color:var(--border-hover)}.profile-button.primary{background:var(--primary);border-color:var(--primary);color:#fff}.profile-button.primary:hover{background:var(--primary-hover)}.profile-button.danger{color:var(--danger)}.profile-button:disabled{opacity:.48;cursor:not-allowed}.profile-count{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;margin-left:5px;padding:0 6px;border-radius:999px;background:var(--surface-recessed);font-size:12px}
 .profile-note{margin-top:12px;padding:10px 12px;border-radius:var(--radius-sm);background:var(--surface-recessed);color:var(--ink-muted);font-size:var(--type-label);line-height:1.5}.profile-note.warning{border:1px solid color-mix(in srgb,var(--warning) 45%,transparent)}.profile-list{display:grid;gap:8px;margin-top:18px}.profile-item{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;border:1px solid var(--hairline);border-radius:var(--radius-sm);background:var(--surface-1)}.profile-item-main{min-width:0}.profile-item-name{font-weight:800}.profile-item-meta{margin-top:3px;color:var(--ink-muted);font-size:var(--type-caption);overflow-wrap:anywhere}.profile-empty{color:var(--ink-muted);padding:14px 0;font-size:var(--type-body)}
-.profile-export{display:none;margin-top:18px;padding:14px;border:1px solid var(--hairline-strong);border-radius:var(--radius-md);background:var(--surface-1)}.profile-export.open{display:block}.profile-export-tabs{display:flex;flex-wrap:wrap;gap:7px}.profile-export-tabs button.active{border-color:var(--border-active);box-shadow:0 0 0 1px var(--border-active),var(--elevation-control-rest)}.profile-qr-wrap{display:none;margin-top:14px;text-align:center}.profile-qr-wrap.open{display:block}.profile-qr{width:min(280px,80vw);height:auto;background:white;border-radius:var(--radius-sm);padding:8px}.profile-status{min-height:20px;margin-top:10px;color:var(--ink-muted);font-size:var(--type-label)}.profile-status.error{color:var(--danger)}
-@media(max-width:640px){.profile-layer{padding:0;align-items:flex-end}.profile-dialog{width:100%;max-height:92vh;border-radius:var(--radius-lg) var(--radius-lg) 0 0;padding:18px;padding-bottom:max(18px,env(safe-area-inset-bottom))}.profile-grid{grid-template-columns:1fr}.profile-field.full{grid-column:auto}.profile-item{align-items:flex-start;flex-direction:column}.profile-item .profile-actions{margin-top:0}}
+.profile-recent-panel{display:none;margin-top:14px;padding:14px;border:1px solid var(--hairline-strong);border-radius:var(--radius-md);background:var(--surface-recessed)}.profile-recent-panel.open{display:block}.profile-recent-section+.profile-recent-section{margin-top:16px}.profile-recent-list{display:grid;gap:8px;margin-top:8px}.profile-recent-state{font-weight:700;color:var(--ink)}
+.profile-export{display:none;margin-top:18px;padding:14px;border:1px solid var(--hairline-strong);border-radius:var(--radius-md);background:var(--surface-1)}.profile-export.open{display:block}.profile-export-tabs{display:flex;flex-wrap:wrap;gap:7px}.profile-export-tabs button.active{border-color:var(--border-active);box-shadow:0 0 0 1px var(--border-active),var(--elevation-control-rest)}.profile-status{min-height:20px;margin-top:10px;color:var(--ink-muted);font-size:var(--type-label)}.profile-status.error{color:var(--danger)}
+.profile-qr-layer{position:fixed;inset:0;z-index:1320;display:none;align-items:center;justify-content:center;padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));background:rgba(0,0,0,.72);backdrop-filter:blur(10px)}.profile-qr-layer.open{display:flex}.profile-qr-dialog{box-sizing:border-box;width:min(520px,100%);max-height:calc(100dvh - 32px);display:flex;flex-direction:column;overflow:auto;border:1px solid var(--hairline-strong);border-radius:var(--radius-lg);background:var(--surface-2);box-shadow:var(--depth-z4),var(--rim-light);padding:18px;color:var(--ink)}.profile-qr-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.profile-qr-head h3{margin:0;font-size:var(--type-card)}.profile-qr-stage{display:flex;align-items:center;justify-content:center;min-height:0;margin-top:14px}.profile-qr{display:block;box-sizing:border-box;width:min(92vw,440px);max-width:100%;height:auto;max-height:min(72dvh,440px);object-fit:contain;background:#fff;border-radius:var(--radius-sm);padding:10px}.profile-qr-note{margin:12px 0 0;color:var(--ink-muted);font-size:var(--type-label);line-height:1.45;text-align:center}
+@media(max-width:640px){.profile-layer{padding:0;align-items:flex-end}.profile-dialog{width:100%;max-height:92dvh;border-radius:var(--radius-lg) var(--radius-lg) 0 0;padding:18px;padding-bottom:max(18px,env(safe-area-inset-bottom))}.profile-grid{grid-template-columns:1fr}.profile-field.full{grid-column:auto}.profile-item{align-items:flex-start;flex-direction:column}.profile-item .profile-actions{margin-top:0}.profile-qr-layer{padding:0}.profile-qr-dialog{width:100vw;height:100dvh;max-height:100dvh;border-radius:0;border:0;padding:max(16px,env(safe-area-inset-top)) max(14px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(14px,env(safe-area-inset-left));overflow:hidden}.profile-qr-stage{flex:1}.profile-qr{width:min(92vw,440px);max-height:min(68dvh,440px)}}
 @media(prefers-reduced-motion:reduce){.profile-launch{transition:none}}
 '''
 
@@ -68,6 +74,15 @@ PROFILE_JS = r'''
   function setStatus(text, error=false) {
     const el = q('#profile-status'); if (!el) return; el.textContent = text || ''; el.classList.toggle('error', error);
   }
+  function remainingLabel(expiresAt) {
+    const seconds=Math.max(0,Math.floor(Number(expiresAt||0)-Date.now()/1000));
+    const minutes=Math.floor(seconds/60), rest=seconds%60;
+    return `${String(minutes).padStart(2,'0')}:${String(rest).padStart(2,'0')} remaining`;
+  }
+  function createdLabel(value) {
+    const time=Number(value||0)*1000; if(!time)return 'Unknown time';
+    try{return new Intl.DateTimeFormat(undefined,{dateStyle:'short',timeStyle:'short'}).format(new Date(time))}catch(_){return new Date(time).toLocaleString()}
+  }
   function build() {
     const card = q('[data-card-id="wireguard"]');
     if (!card || q('#profile-launch')) return;
@@ -83,21 +98,35 @@ PROFILE_JS = r'''
           <div class="profile-field full"><label for="profile-endpoint">Access endpoint snapshot</label><select id="profile-endpoint"></select></div>
           <div class="profile-field"><label for="profile-keepalive">Persistent keepalive</label><select id="profile-keepalive"><option value="25">25 seconds</option><option value="0">Off</option></select></div>
         </div>
-        <div class="profile-actions"><button id="profile-create" class="profile-button primary" type="button">Create profile</button></div>
-        <div class="profile-note warning">The client private key is generated on OpenWrt and is available only during this one-time export window. Remote Gate does not persist it on the VPS. Save the configuration before closing or refreshing.</div>
+        <div class="profile-actions"><button id="profile-create" class="profile-button primary" type="button">Create profile</button><button id="profile-recent-button" class="profile-button" type="button" aria-expanded="false">Recent results<span id="profile-recent-count" class="profile-count" hidden>0</span></button></div>
+        <div class="profile-note warning">The client private key is generated on OpenWrt and is available only during this one-time export window. Remote Gate never stores it in browser storage or persistent VPS history. Save the configuration before the export timer expires.</div>
         <div id="profile-status" class="profile-status" aria-live="polite"></div>
-        <div id="profile-export" class="profile-export"><span class="profile-label">One-time export</span><div id="profile-format-tabs" class="profile-export-tabs profile-actions"></div><div class="profile-actions"><button id="profile-download" class="profile-button" type="button">Download</button><button id="profile-copy" class="profile-button" type="button">Copy</button><button id="profile-qr-button" class="profile-button" type="button">QR</button></div><div id="profile-qr-wrap" class="profile-qr-wrap"><img id="profile-qr" class="profile-qr" alt="Client profile QR code"></div></div>
+        <div id="profile-recent-panel" class="profile-recent-panel">
+          <div class="profile-recent-section"><span class="profile-label">Recent results</span><div id="profile-recent-list" class="profile-recent-list"></div></div>
+          <div class="profile-recent-section"><span class="profile-label">History</span><div id="profile-history-list" class="profile-recent-list"></div></div>
+        </div>
+        <div id="profile-export" class="profile-export"><span class="profile-label">One-time export</span><div id="profile-format-tabs" class="profile-export-tabs profile-actions"></div><div class="profile-actions"><button id="profile-download" class="profile-button" type="button">Download</button><button id="profile-copy" class="profile-button" type="button">Copy</button><button id="profile-qr-button" class="profile-button" type="button">QR</button></div></div>
         <div id="profile-list" class="profile-list"></div>
       </section>`;
     document.body.append(layer);
+    const qrLayer=document.createElement('div'); qrLayer.id='profile-qr-layer'; qrLayer.className='profile-qr-layer'; qrLayer.innerHTML=`
+      <section class="profile-qr-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-qr-title" tabindex="-1">
+        <div class="profile-qr-head"><h3 id="profile-qr-title">Client profile QR</h3><button class="profile-close" type="button" aria-label="Close QR">×</button></div>
+        <div class="profile-qr-stage"><img id="profile-qr" class="profile-qr" alt="Client profile QR code"></div>
+        <p id="profile-qr-note" class="profile-qr-note"></p>
+      </section>`;
+    document.body.append(qrLayer);
     q('#profile-launch').addEventListener('click', open);
     q('.profile-close', layer).addEventListener('click', close);
     layer.addEventListener('click', (e) => { if (e.target === layer) close(); });
     q('#profile-create').addEventListener('click', createProfile);
+    q('#profile-recent-button').addEventListener('click', toggleRecent);
     q('#profile-download').addEventListener('click', downloadProfile);
     q('#profile-copy').addEventListener('click', copyProfile);
     q('#profile-qr-button').addEventListener('click', showQr);
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && layer.classList.contains('open')) close(); });
+    q('.profile-close',qrLayer).addEventListener('click',closeQr);
+    qrLayer.addEventListener('click',(e)=>{if(e.target===qrLayer)closeQr()});
+    document.addEventListener('keydown', (e) => { if (e.key !== 'Escape') return; if (qrLayer.classList.contains('open')) closeQr(); else if (layer.classList.contains('open')) close(); });
   }
   async function fetchDashboard() {
     const r = await fetch('/api/v1/dashboard', {credentials:'same-origin', cache:'no-store'});
@@ -119,11 +148,38 @@ PROFILE_JS = r'''
       q('button',row).addEventListener('click',()=>revokeProfile(item.id)); host.append(row);
     }
   }
+  async function fetchRecent() {
+    const r=await fetch('/api/v1/client-profiles/recent',{credentials:'same-origin',cache:'no-store'});
+    if(!r.ok)throw new Error(`Recent results HTTP ${r.status}`);
+    const payload=await r.json(); renderRecent(payload); return payload;
+  }
+  function renderRecent(payload) {
+    const recent=Array.isArray(payload?.recent)?payload.recent:[];
+    const history=Array.isArray(payload?.history)?payload.history:[];
+    const count=q('#profile-recent-count'); count.textContent=String(recent.length); count.hidden=!recent.length;
+    const recentHost=q('#profile-recent-list'); recentHost.replaceChildren();
+    if(!recent.length){const empty=document.createElement('div');empty.className='profile-empty';empty.textContent='No recoverable one-time exports in this signed-in browser session.';recentHost.append(empty)}
+    for(const item of recent){
+      const profile=item?.profile||{}; const row=document.createElement('div');row.className='profile-item';
+      row.innerHTML=`<div class="profile-item-main"><div class="profile-item-name">${esc(profile.name)}</div><div class="profile-item-meta">${esc(profile.client_address)} · ${esc(profile.wireguard)} · <span class="profile-recent-state">Export available</span> · ${esc(remainingLabel(profile.export_expires_at))}</div></div><div class="profile-actions"><button class="profile-button" type="button">Open export</button></div>`;
+      q('button',row).addEventListener('click',()=>{commandId=String(item.command_id||'');activeFormat='wireguard';showExport(profile);setStatus(`Recovered one-time export for ${profile.name}. Save it before the timer expires.`)});recentHost.append(row);
+    }
+    const managed=new Set((dashboard?.agent?.client_profiles||[]).map((item)=>item.id));
+    const historyHost=q('#profile-history-list');historyHost.replaceChildren();
+    if(!history.length){const empty=document.createElement('div');empty.className='profile-empty';empty.textContent='No Client Profile history yet.';historyHost.append(empty)}
+    for(const item of history){const row=document.createElement('div');row.className='profile-item';const state=managed.has(item.profile_id)?'Managed now':'Historical record';row.innerHTML=`<div class="profile-item-main"><div class="profile-item-name">${esc(item.name)}</div><div class="profile-item-meta">${esc(item.client_address)} · ${esc(item.wireguard)} · ${esc(item.endpoint_family)} ${esc(item.access_method)} · ${esc(state)} · ${esc(createdLabel(item.created_at))}</div></div>`;historyHost.append(row)}
+  }
+  async function toggleRecent() {
+    const panel=q('#profile-recent-panel'),button=q('#profile-recent-button');
+    if(panel.classList.contains('open')){panel.classList.remove('open');button.setAttribute('aria-expanded','false');return}
+    try{await fetchRecent();panel.classList.add('open');button.setAttribute('aria-expanded','true')}catch(e){setStatus(String(e.message||e),true)}
+  }
   async function open() {
     q('#profile-layer').classList.add('open'); q('.profile-dialog').focus(); setStatus('Loading current OpenWrt profile state…');
-    try { await fetchDashboard(); setStatus(''); } catch (e) { setStatus(String(e.message || e), true); }
+    try { await fetchDashboard(); await fetchRecent(); setStatus(''); } catch (e) { setStatus(String(e.message || e), true); }
   }
-  function close() { q('#profile-layer')?.classList.remove('open'); q('#profile-qr-wrap')?.classList.remove('open'); q('#profile-launch')?.focus(); }
+  function close() { closeQr(); q('#profile-layer')?.classList.remove('open'); q('#profile-launch')?.focus(); }
+  function closeQr(){const layer=q('#profile-qr-layer');if(!layer)return;layer.classList.remove('open');const img=q('#profile-qr');if(img)img.removeAttribute('src')}
   async function apiPost(path, body) {
     const r=await fetch(path,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)});
     const payload=await r.json().catch(()=>({})); if(!r.ok) throw new Error(payload.error || `HTTP ${r.status}`); return payload;
@@ -146,21 +202,27 @@ PROFILE_JS = r'''
       if (r.status===202) { pollTimer=setTimeout(pollResult,1000); return; }
       if (!r.ok) throw new Error(p.error || `HTTP ${r.status}`);
       if (p.state!=='ready') { pollTimer=setTimeout(pollResult,1000); return; }
-      showExport(p.profile); setStatus('Profile created. Save the one-time configuration now.'); q('#profile-create').disabled=false; await fetchDashboard();
+      showExport(p.profile); setStatus('Profile created. Save the one-time configuration now.'); q('#profile-create').disabled=false; await fetchDashboard(); await fetchRecent();
     } catch(e) { setStatus(String(e.message||e),true); q('#profile-create').disabled=false; }
   }
   function showExport(profile) {
     const formats=Array.isArray(profile?.formats)?profile.formats:['wireguard']; const tabs=q('#profile-format-tabs'); tabs.replaceChildren();
     if(!formats.includes(activeFormat)) activeFormat='wireguard';
-    for(const fmt of formats){const b=document.createElement('button');b.type='button';b.className='profile-button';b.textContent=fmt==='netproxy-8.1.0'?'NetProxy 8.1.0':fmt;b.classList.toggle('active',fmt===activeFormat);b.addEventListener('click',()=>{activeFormat=fmt;showExport(profile);q('#profile-qr-wrap').classList.remove('open');});tabs.append(b)}
-    q('#profile-export').classList.add('open'); q('#profile-qr-wrap').classList.remove('open');
+    for(const fmt of formats){const b=document.createElement('button');b.type='button';b.className='profile-button';b.textContent=fmt==='netproxy-8.1.0'?'NetProxy 8.1.0':fmt;b.classList.toggle('active',fmt===activeFormat);b.addEventListener('click',()=>{activeFormat=fmt;showExport(profile);closeQr()});tabs.append(b)}
+    q('#profile-export').classList.add('open'); closeQr();
   }
   function exportUrl(){return `/api/v1/client-profiles/export/${encodeURIComponent(commandId)}/${encodeURIComponent(activeFormat)}`}
   function downloadProfile(){if(!commandId)return;location.href=exportUrl()}
   async function copyProfile(){if(!commandId)return;try{const r=await fetch(exportUrl(),{credentials:'same-origin',cache:'no-store'});if(!r.ok)throw new Error(`HTTP ${r.status}`);await navigator.clipboard.writeText(await r.text());setStatus('Configuration copied. It contains the private key; protect your clipboard.')}catch(e){setStatus(String(e.message||e),true)}}
-  async function showQr(){if(!commandId)return;const img=q('#profile-qr');const url=`/api/v1/client-profiles/qr/${encodeURIComponent(commandId)}/${encodeURIComponent(activeFormat)}?t=${Date.now()}`;q('#profile-qr-wrap').classList.add('open');img.onload=()=>setStatus(activeFormat==='wireguard'?'QR contains the WireGuard private key. Scan it only on the intended client.':'QR contains a one-time HTTPS configuration URL.');img.onerror=()=>{q('#profile-qr-wrap').classList.remove('open');setStatus('QR generation is unavailable on this VPS. Download or Copy remains available.',true)};img.src=url}
+  async function showQr(){
+    if(!commandId)return;const layer=q('#profile-qr-layer'),img=q('#profile-qr'),note=q('#profile-qr-note');
+    note.textContent='Loading QR…';layer.classList.add('open');q('.profile-qr-dialog',layer).focus();
+    const url=`/api/v1/client-profiles/qr/${encodeURIComponent(commandId)}/${encodeURIComponent(activeFormat)}?t=${Date.now()}`;
+    img.onload=()=>{note.textContent=activeFormat==='wireguard'?'QR contains the WireGuard private key. Scan it only on the intended client.':'QR contains a one-time HTTPS configuration URL.'};
+    img.onerror=()=>{closeQr();setStatus('QR generation is unavailable on this VPS. Download or Copy remains available.',true)};img.src=url;
+  }
   async function revokeProfile(id){if(!confirm('Revoke this Remote Gate-managed WireGuard client?'))return;setStatus('Revoking managed peer…');try{await apiPost('/api/v1/client-profiles/revoke',{profile_id:id});await waitForProfileRemoval(id)}catch(e){setStatus(String(e.message||e),true)}}
-  async function waitForProfileRemoval(id){for(let i=0;i<25;i++){await new Promise(r=>setTimeout(r,1000));try{await fetchDashboard();if(!(dashboard?.agent?.client_profiles||[]).some(x=>x.id===id)){setStatus('Client revoked.');return}}catch(_){}}setStatus('Revoke is queued; OpenWrt has not reported convergence yet.')}
+  async function waitForProfileRemoval(id){for(let i=0;i<25;i++){await new Promise(r=>setTimeout(r,1000));try{await fetchDashboard();if(!(dashboard?.agent?.client_profiles||[]).some(x=>x.id===id)){setStatus('Client revoked.');await fetchRecent();return}}catch(_){}}setStatus('Revoke is queued; OpenWrt has not reported convergence yet.')}
   build();
 })();
 '''
@@ -222,6 +284,10 @@ class Handler(base.Handler):
             return None
         return self._require_session()
 
+    @staticmethod
+    def _owner_key(session) -> str:
+        return token_hash(session.token)
+
     def _profile_create_post(self) -> None:
         session = self._require_browser()
         if not session or not self._require_csrf(session):
@@ -237,6 +303,7 @@ class Handler(base.Handler):
                 endpoint_id=data.get("endpoint_id"),
                 route_mode=data.get("route_mode", "home"),
                 persistent_keepalive=data.get("persistent_keepalive", 25),
+                owner_key=self._owner_key(session),
             )
         except (GateError, ValueError, TypeError) as exc:
             code = str(exc)
@@ -321,14 +388,26 @@ class Handler(base.Handler):
                 return
             _send_bytes(self, 200, body, content_type, filename=filename)
             return
+        if path == "/api/v1/client-profiles/recent":
+            session = self._require_browser()
+            if not session:
+                return
+            owner = self._owner_key(session)
+            self._json(200, {"recent": recent_results(owner), "history": profile_history(STORE)})
+            return
         if path == "/api/v1/client-profiles/result":
-            if not self._require_browser():
+            session = self._require_browser()
+            if not session:
                 return
             command_id = parse_qs(parsed.query).get("command_id", [""])[0]
+            owner = self._owner_key(session)
+            if not profile_command_owned(command_id, owner):
+                self._json(404, {"error": "profile_result_unavailable"})
+                return
             try:
-                result = result_view(command_id)
+                result = result_view(command_id, owner)
             except GateError as exc:
-                self._json(400, {"error": str(exc)})
+                self._json(410, {"error": str(exc)})
                 return
             if result is None:
                 terminal_error = terminal_control_error(STORE, command_id, "profile_create")
@@ -340,36 +419,40 @@ class Handler(base.Handler):
                 self._json(200, {"state": "ready", "profile": result})
             return
         if path.startswith("/api/v1/client-profiles/export/"):
-            if not self._require_browser():
+            session = self._require_browser()
+            if not session:
                 return
             parts = path.split("/")
             if len(parts) != 7:
                 self._json(404, {"error": "not_found"})
                 return
             try:
-                content_type, filename, body = render_format(parts[5], parts[6])
+                content_type, filename, body = render_format(parts[5], parts[6], self._owner_key(session))
             except GateError as exc:
                 self._json(410, {"error": str(exc)})
                 return
             _send_bytes(self, 200, body, content_type, filename=filename)
             return
         if path.startswith("/api/v1/client-profiles/qr/"):
-            if not self._require_browser():
+            session = self._require_browser()
+            if not session:
                 return
             parts = path.split("/")
             if len(parts) != 7:
                 self._json(404, {"error": "not_found"})
                 return
             command_id, format_name = parts[5], parts[6]
+            owner = self._owner_key(session)
             try:
                 if format_name == "wireguard":
-                    _, _, content = render_format(command_id, format_name)
+                    _, _, content = render_format(command_id, format_name, owner)
                 else:
                     share = create_public_token(
                         command_id,
                         format_name,
                         ttl_seconds=_profile_export_ttl(),
                         public_base=f"https://{SETTINGS.public_hostname}",
+                        owner_key=owner,
                     )
                     content = share["url"].encode("utf-8")
                 svg = _qr_svg(content)

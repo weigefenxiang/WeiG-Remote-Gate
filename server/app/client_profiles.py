@@ -17,11 +17,15 @@ from .store import JsonStore
 PROFILE_NAME_RE = re.compile(r"^[A-Za-z0-9_. +()\-]{1,48}$")
 PROFILE_ID_RE = re.compile(r"^[a-f0-9]{24}$")
 COMMAND_ID_RE = re.compile(r"^[a-f0-9]{32}$")
+OWNER_KEY_RE = re.compile(r"^[a-f0-9]{64}$")
 WG_KEY_RE = re.compile(r"^[A-Za-z0-9+/]{43}=$")
 SUPPORTED_FORMATS = {"wireguard", "flclash", "netproxy-8.1.0", "sing-box"}
 PROFILE_COMMAND_TTL = 2 * 60 * 60
+PROFILE_HISTORY_FILE = "client-profile-history.json"
+PROFILE_HISTORY_LIMIT = 100
 EXPORT_LOCK = threading.RLock()
 EXPORTS: dict[str, dict[str, Any]] = {}
+EXPORT_OWNERS: dict[str, dict[str, Any]] = {}
 PUBLIC_TOKENS: dict[str, dict[str, Any]] = {}
 
 
@@ -31,7 +35,7 @@ def _now() -> int:
 
 def _clean_expired(now: int | None = None) -> None:
     current = _now() if now is None else int(now)
-    for mapping in (EXPORTS, PUBLIC_TOKENS):
+    for mapping in (EXPORTS, EXPORT_OWNERS, PUBLIC_TOKENS):
         expired = [key for key, value in mapping.items() if int(value.get("expires_at", 0) or 0) <= current]
         for key in expired:
             mapping.pop(key, None)
@@ -41,6 +45,13 @@ def _safe_profile_name(value: object) -> str:
     text = str(value or "").strip()
     if not PROFILE_NAME_RE.fullmatch(text):
         raise GateError("invalid_profile_name")
+    return text
+
+
+def _safe_owner_key(value: object) -> str:
+    text = str(value or "").strip()
+    if not OWNER_KEY_RE.fullmatch(text):
+        raise GateError("invalid_profile_export_owner")
     return text
 
 
@@ -133,6 +144,66 @@ def _agent_profile(store: JsonStore, profile_id: str) -> dict[str, Any]:
     raise GateError("profile_not_found")
 
 
+def _record_profile_history(store: JsonStore, profile: dict[str, Any]) -> None:
+    record = {
+        "schema": 1,
+        "profile_id": str(profile["id"]),
+        "name": str(profile["name"]),
+        "wireguard": str(profile["wireguard"]),
+        "client_address": str(profile["client_address"]),
+        "route_mode": str(profile["route_mode"]),
+        "endpoint_family": str(profile["endpoint_family"]),
+        "access_method": str(profile["access_method"]),
+        "endpoint_address": str(profile["endpoint_address"]),
+        "endpoint_port": int(profile["endpoint_port"]),
+        "persistent_keepalive": int(profile["persistent_keepalive"]),
+        "created_at": int(profile["created_at"]),
+        "state": "created",
+    }
+    history = store.read(PROFILE_HISTORY_FILE, [])
+    if not isinstance(history, list):
+        history = []
+    history = [item for item in history if isinstance(item, dict) and item.get("profile_id") != record["profile_id"]]
+    history.append(record)
+    store.write(PROFILE_HISTORY_FILE, history[-PROFILE_HISTORY_LIMIT:])
+
+
+def profile_history(store: JsonStore) -> list[dict[str, Any]]:
+    raw = store.read(PROFILE_HISTORY_FILE, [])
+    if not isinstance(raw, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for item in raw[-PROFILE_HISTORY_LIMIT:]:
+        if not isinstance(item, dict):
+            continue
+        try:
+            profile_id = str(item.get("profile_id") or "").strip()
+            if not PROFILE_ID_RE.fullmatch(profile_id):
+                continue
+            family = str(item.get("endpoint_family") or "")
+            if family not in {"ipv4", "ipv6"}:
+                continue
+            result.append({
+                "schema": 1,
+                "profile_id": profile_id,
+                "name": _safe_profile_name(item.get("name")),
+                "wireguard": str(item.get("wireguard") or "")[:64],
+                "client_address": _safe_cidr(item.get("client_address"), version=4),
+                "route_mode": _safe_route_mode(item.get("route_mode")),
+                "endpoint_family": family,
+                "access_method": str(item.get("access_method") or "")[:16],
+                "endpoint_address": _safe_endpoint_address(item.get("endpoint_address"), family),
+                "endpoint_port": _safe_port(item.get("endpoint_port")),
+                "persistent_keepalive": _safe_keepalive(item.get("persistent_keepalive")),
+                "created_at": max(0, int(item.get("created_at", 0) or 0)),
+                "state": "created",
+            })
+        except (GateError, TypeError, ValueError):
+            continue
+    result.sort(key=lambda item: int(item.get("created_at", 0)), reverse=True)
+    return result
+
+
 def queue_profile_create(
     store: JsonStore,
     *,
@@ -140,6 +211,7 @@ def queue_profile_create(
     endpoint_id: object,
     route_mode: object = "home",
     persistent_keepalive: object = 25,
+    owner_key: object | None = None,
 ) -> dict[str, Any]:
     profile_name = _safe_profile_name(name)
     endpoint_key = str(endpoint_id or "").strip()
@@ -160,6 +232,7 @@ def queue_profile_create(
     external_address = _safe_endpoint_address(endpoint.get("external_address"), family)
     mode = _safe_route_mode(route_mode)
     keepalive = _safe_keepalive(persistent_keepalive)
+    owner = _safe_owner_key(owner_key) if owner_key not in (None, "") else ""
     now = _now()
     command = {
         "schema": 1,
@@ -184,7 +257,17 @@ def queue_profile_create(
         "external_port": external_port,
         "state": "pending",
     }
-    queue_control_command(store, command)
+    if owner:
+        with EXPORT_LOCK:
+            _clean_expired(now)
+            EXPORT_OWNERS[command["id"]] = {"owner_key": owner, "expires_at": command["expires_at"]}
+    try:
+        queue_control_command(store, command)
+    except Exception:
+        if owner:
+            with EXPORT_LOCK:
+                EXPORT_OWNERS.pop(command["id"], None)
+        raise
     return command
 
 
@@ -218,6 +301,20 @@ def _expected_profile_command(store: JsonStore, command_id: str) -> dict[str, An
         if isinstance(item, dict) and item.get("id") == command_id and item.get("action") == "profile_create":
             return item
     raise GateError("profile_command_not_found")
+
+
+def profile_command_owned(command_id: object, owner_key: object) -> bool:
+    key = str(command_id or "").strip()
+    if not COMMAND_ID_RE.fullmatch(key):
+        return False
+    try:
+        owner = _safe_owner_key(owner_key)
+    except GateError:
+        return False
+    with EXPORT_LOCK:
+        _clean_expired()
+        record = EXPORT_OWNERS.get(key)
+        return isinstance(record, dict) and record.get("owner_key") == owner
 
 
 def accept_profile_result(store: JsonStore, payload: object, *, ttl_seconds: int) -> dict[str, Any]:
@@ -287,11 +384,19 @@ def accept_profile_result(store: JsonStore, payload: object, *, ttl_seconds: int
         "persistent_keepalive": keepalive,
         "created_at": max(0, int(raw.get("created_at", _now()) or 0)),
     }
+    _record_profile_history(store, profile)
     now = _now()
+    expires_at = now + ttl_seconds
+    owner = ""
     with EXPORT_LOCK:
         _clean_expired(now)
-        EXPORTS[command_id] = {"profile": profile, "expires_at": now + ttl_seconds}
-    return public_profile(profile, export_available=True, export_expires_at=now + ttl_seconds)
+        owner_record = EXPORT_OWNERS.get(command_id)
+        if isinstance(owner_record, dict):
+            owner = str(owner_record.get("owner_key") or "")
+        EXPORTS[command_id] = {"profile": profile, "expires_at": expires_at, "owner_key": owner}
+        if owner:
+            EXPORT_OWNERS[command_id] = {"owner_key": owner, "expires_at": expires_at}
+    return public_profile(profile, export_available=bool(owner), export_expires_at=expires_at if owner else 0)
 
 
 def sanitize_agent_profiles(value: object) -> list[dict[str, Any]]:
@@ -336,26 +441,51 @@ def public_profile(profile: dict[str, Any], *, export_available: bool = False, e
     return result
 
 
-def result_view(command_id: object) -> dict[str, Any] | None:
+def result_view(command_id: object, owner_key: object | None = None) -> dict[str, Any] | None:
     key = str(command_id or "").strip()
     if not COMMAND_ID_RE.fullmatch(key):
         raise GateError("invalid_profile_command")
+    owner = _safe_owner_key(owner_key) if owner_key not in (None, "") else None
     with EXPORT_LOCK:
         _clean_expired()
         item = EXPORTS.get(key)
         if not isinstance(item, dict):
             return None
+        if owner is not None and item.get("owner_key") != owner:
+            raise GateError("profile_export_expired")
         profile = item.get("profile")
         if not isinstance(profile, dict):
             return None
-        return public_profile(profile, export_available=True, export_expires_at=int(item.get("expires_at", 0) or 0))
+        return public_profile(profile, export_available=bool(item.get("owner_key")), export_expires_at=int(item.get("expires_at", 0) or 0))
 
 
-def _profile_for_export(command_id: str) -> dict[str, Any]:
+def recent_results(owner_key: object) -> list[dict[str, Any]]:
+    owner = _safe_owner_key(owner_key)
+    with EXPORT_LOCK:
+        _clean_expired()
+        result: list[dict[str, Any]] = []
+        for command_id, item in EXPORTS.items():
+            if not isinstance(item, dict) or item.get("owner_key") != owner:
+                continue
+            profile = item.get("profile")
+            if not isinstance(profile, dict):
+                continue
+            result.append({
+                "command_id": command_id,
+                "profile": public_profile(profile, export_available=True, export_expires_at=int(item.get("expires_at", 0) or 0)),
+            })
+        result.sort(key=lambda item: int(item.get("profile", {}).get("created_at", 0)), reverse=True)
+        return result
+
+
+def _profile_for_export(command_id: str, owner_key: object | None = None) -> dict[str, Any]:
+    owner = _safe_owner_key(owner_key) if owner_key not in (None, "") else None
     with EXPORT_LOCK:
         _clean_expired()
         item = EXPORTS.get(command_id)
         if not isinstance(item, dict) or not isinstance(item.get("profile"), dict):
+            raise GateError("profile_export_expired")
+        if owner is not None and item.get("owner_key") != owner:
             raise GateError("profile_export_expired")
         return dict(item["profile"])
 
@@ -431,11 +561,11 @@ def render_sing_box(profile: dict[str, Any]) -> str:
     return json.dumps({"endpoints": [endpoint]}, ensure_ascii=False, indent=2) + "\n"
 
 
-def render_format(command_id: object, fmt: object) -> tuple[str, str, bytes]:
+def render_format(command_id: object, fmt: object, owner_key: object | None = None) -> tuple[str, str, bytes]:
     key = str(command_id or "").strip(); format_name = str(fmt or "").strip()
     if not COMMAND_ID_RE.fullmatch(key) or format_name not in SUPPORTED_FORMATS:
         raise GateError("invalid_profile_export")
-    profile = _profile_for_export(key)
+    profile = _profile_for_export(key, owner_key)
     if format_name == "wireguard": text, content_type, ext = render_wireguard(profile), "text/plain; charset=utf-8", "conf"
     elif format_name == "flclash": text, content_type, ext = render_flclash(profile), "application/yaml; charset=utf-8", "yaml"
     elif format_name == "netproxy-8.1.0": text, content_type, ext = render_netproxy_810(profile), "application/yaml; charset=utf-8", "yaml"
@@ -444,14 +574,15 @@ def render_format(command_id: object, fmt: object) -> tuple[str, str, bytes]:
     return content_type, f"{safe_name}.{format_name}.{ext}", text.encode("utf-8")
 
 
-def create_public_token(command_id: object, fmt: object, *, ttl_seconds: int, public_base: str) -> dict[str, Any]:
+def create_public_token(command_id: object, fmt: object, *, ttl_seconds: int, public_base: str, owner_key: object | None = None) -> dict[str, Any]:
     key = str(command_id or "").strip(); format_name = str(fmt or "").strip()
     if format_name not in {"flclash", "netproxy-8.1.0", "sing-box"}:
         raise GateError("profile_qr_not_supported")
-    _profile_for_export(key)
+    _profile_for_export(key, owner_key)
+    owner = _safe_owner_key(owner_key) if owner_key not in (None, "") else ""
     now = _now(); token = secrets.token_urlsafe(24)
     with EXPORT_LOCK:
-        _clean_expired(now); PUBLIC_TOKENS[token] = {"command_id": key, "format": format_name, "expires_at": now + ttl_seconds}
+        _clean_expired(now); PUBLIC_TOKENS[token] = {"command_id": key, "format": format_name, "owner_key": owner, "expires_at": now + ttl_seconds}
     return {"token": token, "url": f"{public_base.rstrip('/')}/p/{token}", "expires_at": now + ttl_seconds}
 
 
@@ -463,4 +594,4 @@ def consume_public_token(token: object) -> tuple[str, str, bytes]:
         _clean_expired(); item = PUBLIC_TOKENS.pop(key, None)
     if not isinstance(item, dict):
         raise GateError("profile_share_expired")
-    return render_format(item["command_id"], item["format"])
+    return render_format(item["command_id"], item["format"], item.get("owner_key") or None)
