@@ -45,10 +45,13 @@ class AgentCadenceContractTests(unittest.TestCase):
         self.assertIn('AGENT_INTERACTIVE_INTERVAL="${AGENT_INTERACTIVE_INTERVAL:-5}"', REPORT)
         self.assertIn('AGENT_COMMAND_INTERVAL="${AGENT_COMMAND_INTERVAL:-5}"', REPORT)
         self.assertIn('mode="$(cadence_mode', REPORT)
+        self.assertIn('profile_command_cycle() {', REPORT)
+        self.assertIn('"https://${HOSTNAME}/api/v1/agent/pull"', REPORT)
+        self.assertIn('*) "$AGENT" once || true; return', REPORT)
         scheduler = REPORT.split('scheduler_loop() {', 1)[1].split('case "${1:-report}"', 1)[0]
-        self.assertIn('command)\n                "$AGENT" once', scheduler)
-        self.assertIn('interactive)\n                if [ "$last_agent_run"', scheduler)
-        self.assertIn('idle)\n                if [ "$last_agent_run"', scheduler)
+        self.assertIn('command) profile_command_cycle || true', scheduler)
+        self.assertIn('interactive) if [ "$last_agent_run"', scheduler)
+        self.assertIn('idle) if [ "$last_agent_run"', scheduler)
         self.assertIn('next="$AGENT_COMMAND_INTERVAL"', scheduler)
         self.assertIn('procd_set_param command "$SCHEDULER_BIN" loop', INIT)
 

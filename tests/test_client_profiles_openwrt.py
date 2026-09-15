@@ -19,6 +19,14 @@ class ClientProfilesOpenWrtContractTests(unittest.TestCase):
         self.assertNotIn('"private_key"', metadata_part)
         self.assertIn('"private_key":"$private_key"', text)
 
+    def test_partial_create_rolls_back_live_and_persistent_peer(self):
+        text = (ROOT / "openwrt" / "remote-gate-client-profiles.sh").read_text(encoding="utf-8")
+        self.assertIn("cleanup_created_peer()", text)
+        self.assertIn('cleanup_created_peer "$wg_name" "$public_key" "$section"', text)
+        metadata = text.split('meta_tmp="${meta}.tmp.$$"', 1)[1].split('result_tmp="${saved_result}.tmp.$$"', 1)[0]
+        self.assertIn('cleanup_created_peer "$wg_name" "$public_key" "$section"', metadata)
+        self.assertIn("profile-metadata-write-failed", metadata)
+
     def test_scheduler_uses_existing_serialized_agent_pull_channel(self):
         text = (ROOT / "openwrt" / "remote-gate-report.sh").read_text(encoding="utf-8")
         self.assertIn('/api/v1/agent/pull', text)

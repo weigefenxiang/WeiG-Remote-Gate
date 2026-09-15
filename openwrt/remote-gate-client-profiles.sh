@@ -52,8 +52,6 @@ json_escape() {
     printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/[[:cntrl:]]/ /g'
 }
 
-ipv4_to_int_awk='function ipn(v, a){split(v,a,"."); return a[1]*16777216+a[2]*65536+a[3]*256+a[4]}'
-
 cidr_network() {
     cidr="$1"
     case "$cidr" in */*) ;; *) return 1 ;; esac
@@ -192,6 +190,15 @@ owned_section() {
     [ "$section_type" = "wireguard_${wg_name}" ] && [ "$description" = "remote-gate:${profile_id}" ] && [ "$persisted_key" = "$public_key" ]
 }
 
+cleanup_created_peer() {
+    wg_name="$1"; public_key="$2"; section="$3"
+    if command -v wg >/dev/null 2>&1 && wg show interfaces 2>/dev/null | tr ' ' '\n' | grep -Fxq "$wg_name"; then
+        wg set "$wg_name" peer "$public_key" remove >/dev/null 2>&1 || true
+    fi
+    uci -q delete "network.$section" >/dev/null 2>&1 || true
+    uci commit network >/dev/null 2>&1 || true
+}
+
 revoke_profile() {
     profile_id="$1"
     valid_id "$profile_id" || { echo 'ERROR: invalid-profile-id' >&2; return 1; }
@@ -262,9 +269,7 @@ create_profile() {
         uci add_list "network.$section.allowed_ips=$client_ip/32"
         uci commit network
     }; then
-        wg set "$wg_name" peer "$public_key" remove >/dev/null 2>&1 || true
-        uci -q delete "network.$section" >/dev/null 2>&1 || true
-        uci commit network >/dev/null 2>&1 || true
+        cleanup_created_peer "$wg_name" "$public_key" "$section"
         echo 'ERROR: wireguard-peer-persist-failed' >&2
         return 1
     fi
@@ -282,14 +287,16 @@ create_profile() {
 EOF
     then
         rm -f "$meta_tmp"
-        wg set "$wg_name" peer "$public_key" remove >/dev/null 2>&1 || true
-        uci -q delete "network.$section" >/dev/null 2>&1 || true
-        uci commit network >/dev/null 2>&1 || true
+        cleanup_created_peer "$wg_name" "$public_key" "$section"
         echo 'ERROR: profile-metadata-write-failed' >&2
         return 1
     fi
-    chmod 600 "$meta_tmp" || { rm -f "$meta_tmp"; echo 'ERROR: profile-metadata-write-failed' >&2; return 1; }
-    mv -f "$meta_tmp" "$meta" || { rm -f "$meta_tmp"; echo 'ERROR: profile-metadata-write-failed' >&2; return 1; }
+    if ! chmod 600 "$meta_tmp" || ! mv -f "$meta_tmp" "$meta"; then
+        rm -f "$meta_tmp" "$meta"
+        cleanup_created_peer "$wg_name" "$public_key" "$section"
+        echo 'ERROR: profile-metadata-write-failed' >&2
+        return 1
+    fi
 
     result_tmp="${saved_result}.tmp.$$"
     mtu_json=null; [ -n "$mtu" ] && mtu_json="$mtu"
