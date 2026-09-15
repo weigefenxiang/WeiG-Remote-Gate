@@ -26,6 +26,7 @@ from app.client_profiles import (  # noqa: E402
     sanitize_agent_profiles,
 )
 from app.client_sources import agent_status_is_fresh  # noqa: E402
+from app.control_queue import terminal_control_error  # noqa: E402
 from app.gate import GateError  # noqa: E402
 
 STORE = base.STORE
@@ -330,7 +331,11 @@ class Handler(base.Handler):
                 self._json(400, {"error": str(exc)})
                 return
             if result is None:
-                self._json(202, {"state": "pending"})
+                terminal_error = terminal_control_error(STORE, command_id, "profile_create")
+                if terminal_error:
+                    self._json(409, {"state": "failed", "error": terminal_error})
+                else:
+                    self._json(202, {"state": "pending"})
             else:
                 self._json(200, {"state": "ready", "profile": result})
             return
