@@ -149,11 +149,23 @@ else
 fi
 
 append_default() { key="$1" value="$2"; grep -Eq "^${key}=" "$CONFIG_FILE" 2>/dev/null || printf "%s='%s'\n" "$key" "$value" >> "$CONFIG_FILE"; }
+legacy_interval="$(sed -n "s/^AGENT_INTERVAL=['\"]\{0,1\}\([0-9][0-9]*\)['\"]\{0,1\}$/\1/p" "$CONFIG_FILE" | sed -n '1p')"
+idle_default=1800
+case "$legacy_interval" in ''|*[!0-9]*) ;; *) [ "$legacy_interval" -ge 60 ] && idle_default="$legacy_interval" ;; esac
+grep -Ev '^(AGENT_INTERVAL|NATMAP_DISCOVERY)=' "$CONFIG_FILE" > "$TMP_DIR/remote-gate.conf.migrated" || true
+mv "$TMP_DIR/remote-gate.conf.migrated" "$CONFIG_FILE"
+append_default AGENT_IDLE_INTERVAL "$idle_default"
+append_default AGENT_INTERACTIVE_INTERVAL 5
+append_default AGENT_COMMAND_INTERVAL 5
+append_default AGENT_EGRESS_PROBE_INTERVAL 1800
 append_default GATE_IPV6 auto
 append_default CONTROL_TRANSPORT auto
 append_default MAPPED_ACCESS auto
-grep -Ev '^NATMAP_DISCOVERY=' "$CONFIG_FILE" > "$TMP_DIR/remote-gate.conf.migrated" || true
-mv "$TMP_DIR/remote-gate.conf.migrated" "$CONFIG_FILE"
+append_default MAPPER_KEEPALIVE 60
+append_default MAPPER_IDLE_TIMEOUT 180
+append_default MAPPER_MAX_SESSIONS 64
+append_default MAPPER_DIAGNOSTICS 1
+append_default MAPPER_DIAGNOSTIC_SUMMARY_INTERVAL 1800
 chmod 0600 "$CONFIG_FILE"
 
 mkdir -p "$STATE_DIR"
@@ -196,6 +208,8 @@ elif [ -x "$LIB_DIR/remote-gate-mapper" ]; then
 else
     printf 'Mapped Access: mapper binary unavailable; Direct/IPv6/Gate features remain enabled\n'
 fi
+printf 'Adaptive Agent cadence: 30m idle reports, 5s interactive/command convergence by default\n'
+printf 'Mapped keepalive: 60s by default; diagnostics summarize to logd every 30m\n'
 printf 'Private/CGNAT WAN IPv4 egress probe: enabled\n'
 printf 'Optional WG home Internet egress: runtime only, reboot returns it to OFF\n'
 printf 'Read-only audit: %s/remote-gate-audit.sh\n' "$LIB_DIR"

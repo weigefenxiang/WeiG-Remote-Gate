@@ -22,6 +22,8 @@ class Settings:
     scrypt_r: int
     scrypt_p: int
     scrypt_dklen: int
+    agent_status_fresh_seconds: int
+    agent_web_activity_ttl: int
 
 
 def _read_json(path: Path) -> dict:
@@ -29,6 +31,16 @@ def _read_json(path: Path) -> dict:
         value = json.load(handle)
     if not isinstance(value, dict):
         raise ValueError(f"{path} must contain a JSON object")
+    return value
+
+
+def _bounded_int(config: dict, key: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(config.get(key, default))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"Invalid {key}") from exc
+    if not minimum <= value <= maximum:
+        raise RuntimeError(f"{key} must be between {minimum} and {maximum}")
     return value
 
 
@@ -69,4 +81,6 @@ def load_settings() -> Settings:
         scrypt_r=int(params.get("r", 8)),
         scrypt_p=int(params.get("p", 1)),
         scrypt_dklen=int(params.get("dklen", 32)),
+        agent_status_fresh_seconds=_bounded_int(config, "agent_status_fresh_seconds", 7200, 60, 86400),
+        agent_web_activity_ttl=_bounded_int(config, "agent_web_activity_ttl", 120, 30, 3600),
     )

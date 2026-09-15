@@ -9,7 +9,6 @@ CONFIG_FILE="/etc/remote-gate.conf"
 INIT_FILE="/etc/init.d/remote-gate-agent"
 HOTPLUG_FILE="/etc/hotplug.d/iface/95-remote-gate"
 PLATFORM="$LIB_DIR/remote-gate-platform.sh"
-CRON_LINE="*/5 * * * * /usr/lib/remote-gate/remote-gate-report.sh"
 
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 [ "$(id -u)" -eq 0 ] || fail "Run this installer as root."
@@ -151,10 +150,18 @@ cat > "$CONFIG_FILE" <<CFGEOF
 HOSTNAME='$HOSTNAME'
 WRITE_TOKEN='$WRITE_TOKEN'
 AGENT_INTERFACE=''
-AGENT_INTERVAL='10'
+AGENT_IDLE_INTERVAL='1800'
+AGENT_INTERACTIVE_INTERVAL='5'
+AGENT_COMMAND_INTERVAL='5'
+AGENT_EGRESS_PROBE_INTERVAL='1800'
 GATE_IPV6='auto'
 CONTROL_TRANSPORT='auto'
 MAPPED_ACCESS='auto'
+MAPPER_KEEPALIVE='60'
+MAPPER_IDLE_TIMEOUT='180'
+MAPPER_MAX_SESSIONS='64'
+MAPPER_DIAGNOSTICS='1'
+MAPPER_DIAGNOSTIC_SUMMARY_INTERVAL='1800'
 CFGEOF
 chmod 0600 "$CONFIG_FILE"
 unset WRITE_TOKEN
@@ -178,9 +185,6 @@ else
     fw4 -q check
 fi
 
-grep -Fqx "$CRON_LINE" /etc/crontabs/root 2>/dev/null || printf '%s\n' "$CRON_LINE" >> /etc/crontabs/root
-if [ -x /etc/init.d/cron ]; then /etc/init.d/cron restart >/dev/null 2>&1 || true; fi
-
 "$INIT_FILE" enable
 "$INIT_FILE" stop >/dev/null 2>&1 || true
 "$INIT_FILE" start || fail "Remote Gate agent failed to start."
@@ -193,6 +197,8 @@ printf 'Firewall backend: %s\n' "$BACKEND"
 printf 'IPv6 Gate: auto (%s firewall capability)\n' "$IPV6_CAPABLE"
 printf 'Mapped Access: %s\n' "$([ "$MAPPER_AVAILABLE" = yes ] && printf 'available when NAT behavior permits UDP mapping' || printf 'unavailable until a current exact-ABI Remote Gate mapper passes integrity validation')"
 printf 'Control transport: automatic IPv4/IPv6 Multi-WAN health fallback\n'
+printf 'Adaptive Agent cadence: 30m idle reports, 5s interactive/command convergence\n'
+printf 'Mapped keepalive: 60s with 30m logd diagnostic summaries\n'
 printf 'Private/CGNAT WAN IPv4 egress: best-effort per-WAN probe enabled\n'
 printf 'The WAN has no HTTP/HTTPS listener from this project.\n'
 printf 'qBittorrent/BT port forwarding remains under the original firewall and is unaffected.\n'

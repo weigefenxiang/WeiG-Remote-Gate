@@ -12,6 +12,7 @@ INSTALL = (ROOT / "openwrt" / "install.sh").read_text(encoding="utf-8")
 UPDATE = (ROOT / "openwrt" / "update.sh").read_text(encoding="utf-8")
 AUDIT = (ROOT / "openwrt" / "remote-gate-audit.sh").read_text(encoding="utf-8")
 INIT = (ROOT / "openwrt" / "remote-gate-agent.init").read_text(encoding="utf-8")
+REPORT = (ROOT / "openwrt" / "remote-gate-report.sh").read_text(encoding="utf-8")
 RULES = (ROOT / "docs" / "PROJECT-RULES.md").read_text(encoding="utf-8")
 
 
@@ -168,10 +169,15 @@ DISTRIB_TARGET='ramips/mt7621'
         self.assertIn("legacy_stop_one()", INIT)
         self.assertIn("return-route-loop", INIT)
 
-    def test_agent_control_polling_defaults_to_five_seconds(self):
-        self.assertIn('AGENT_INTERVAL="${REMOTE_GATE_AGENT_INTERVAL:-5}"', INIT)
-        self.assertIn('procd_set_param env AGENT_INTERVAL="$AGENT_INTERVAL"', INIT)
-        self.assertIn("export AGENT_INTERVAL", INIT)
+    def test_agent_scheduler_keeps_lightweight_five_second_command_checks(self):
+        self.assertIn('SCHEDULER_BIN="/usr/lib/remote-gate/remote-gate-report.sh"', INIT)
+        self.assertIn('procd_set_param command "$SCHEDULER_BIN" loop', INIT)
+        self.assertNotIn("AGENT_INTERVAL", INIT)
+        self.assertIn('AGENT_IDLE_INTERVAL="${AGENT_IDLE_INTERVAL:-1800}"', REPORT)
+        self.assertIn('AGENT_INTERACTIVE_INTERVAL="${AGENT_INTERACTIVE_INTERVAL:-5}"', REPORT)
+        self.assertIn('AGENT_COMMAND_INTERVAL="${AGENT_COMMAND_INTERVAL:-5}"', REPORT)
+        self.assertIn('/api/v1/agent/cadence', REPORT)
+        self.assertIn('next="$AGENT_COMMAND_INTERVAL"', REPORT)
 
     def test_lifecycle_deploys_shared_platform_helper(self):
         self.assertIn('fetch_file "remote-gate-platform.sh"', INSTALL)

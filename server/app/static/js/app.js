@@ -11,6 +11,28 @@
     scope: 'wg',
     requestFamily: 'unknown'
   };
+  let operatorActivityPending = false;
+  let operatorActivityLastSent = 0;
+
+  async function signalOperatorActivity() {
+    if (!state.csrf || document.visibilityState !== 'visible') return;
+    const now = Date.now();
+    if (operatorActivityPending || now - operatorActivityLastSent < 30000) return;
+    operatorActivityLastSent = now;
+    operatorActivityPending = true;
+    try {
+      await fetch('/api/v1/operator/activity', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {'X-CSRF-Token': state.csrf},
+        keepalive: true
+      });
+    } catch (_) {
+      // Operator activity is only a cadence hint; normal control requests remain authoritative.
+    } finally {
+      operatorActivityPending = false;
+    }
+  }
 
   function toast(message, kind = 'info') {
     const el = $('toast');
@@ -566,6 +588,9 @@
 
   document.querySelector('[data-public-endpoint-value]')?.addEventListener('click', copyCurrentPublicEndpoint);
   document.querySelectorAll('[data-action="logout"]').forEach((button) => button.addEventListener('click', logout));
+  document.addEventListener('pointerdown', signalOperatorActivity, {capture:true, passive:true});
+  document.addEventListener('keydown', signalOperatorActivity, {capture:true});
+  document.addEventListener('change', signalOperatorActivity, {capture:true});
   window.addEventListener('remote-gate-endpoint-selection', () => renderCurrentPublicEndpoint());
   window.addEventListener('remote-gate-language', () => {
     window.RemoteGateI18n?.apply();

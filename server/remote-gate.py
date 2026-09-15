@@ -7,16 +7,38 @@ import time
 from http.server import ThreadingHTTPServer
 from urllib.parse import urlparse
 
+from app import client_sources as client_sources_module
 from app.client_sources import agent_status_is_fresh, observe_candidate, observe_source, source_record_for_family
 from app.endpoints import is_globally_reachable_unicast, validate_inventory_v2, validate_inventory_v3
-from app.gate import GateError, queue_activate, queue_activate_many
+from app.gate import GateError, pull_command, queue_activate, queue_activate_many
 from app.main import Handler as BaseHandler
 from app.main import SETTINGS, STORE
+
+client_sources_module.AGENT_STATUS_FRESH_SECONDS = SETTINGS.agent_status_fresh_seconds
 
 ENDPOINT_RE = re.compile(r"^ep_[a-f0-9]{20}$")
 NAME_RE = re.compile(r"^[A-Za-z0-9_.:@-]{1,64}$")
 DEVICE_RE = re.compile(r"^[A-Za-z0-9_.:@+-]{1,128}$")
 EGRESS_MODES = {"none", "ipv4", "ipv6", "dual"}
+OPERATOR_ACTIVITY_STATE = "operator-activity.json"
+
+
+def _touch_operator_activity() -> int:
+    now = int(time.time())
+    active_until = now + SETTINGS.agent_web_activity_ttl
+    STORE.write(OPERATOR_ACTIVITY_STATE, {"updated_at": now, "active_until": active_until})
+    return active_until
+
+
+def _operator_active_until() -> int:
+    value = STORE.read(OPERATOR_ACTIVITY_STATE, {})
+    if not isinstance(value, dict):
+        return 0
+    try:
+        active_until = int(value.get("active_until", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+    return active_until if active_until > int(time.time()) else 0
 
 
 def _endpoint_id(value: object) -> str:
@@ -268,8 +290,26 @@ class Handler(BaseHandler):
         self.send_header("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self' https://api.ipify.org https://api6.ipify.org https://api-ipv4.ip.sb https://api-ipv6.ip.sb; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 
     def do_GET(self) -> None:
-        if urlparse(self.path).path == "/api/v1/dashboard":
+        path = urlparse(self.path).path
+        if path == "/":
+            if not self._host_ok():
+                return
+            if self._session():
+                _touch_operator_activity()
+        elif path == "/api/v1/dashboard":
             _sanitize_stored_inventory()
+        elif path == "/api/v1/agent/cadence":
+            if not self._host_ok() or not self._require_agent():
+                return
+            pending = pull_command(STORE)
+            if pending is not None:
+                mode = "command"
+                active_until = _operator_active_until()
+            else:
+                active_until = _operator_active_until()
+                mode = "interactive" if active_until else "idle"
+            self._json(200, {"schema": 1, "mode": mode, "active_until": active_until})
+            return
         super().do_GET()
 
     def _candidate_post(self) -> None:
@@ -297,6 +337,7 @@ class Handler(BaseHandler):
         session = self._require_session()
         if not session or not self._require_csrf(session):
             return
+        _touch_operator_activity()
         current_source = self._trusted_client_ip()
         if not current_source:
             self._json(400, {"error": "missing_cf_connecting_ip"})
@@ -502,6 +543,15 @@ class Handler(BaseHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        if path == "/api/v1/operator/activity":
+            if not self._host_ok():
+                return
+            session = self._require_session()
+            if not session or not self._require_csrf(session):
+                return
+            _touch_operator_activity()
+            self._empty(204)
+            return
         if path == "/api/v1/client-source/probe":
             if not self._host_ok():
                 return
