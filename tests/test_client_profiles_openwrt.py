@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -75,6 +76,51 @@ class ClientProfilesOpenWrtContractTests(unittest.TestCase):
             )
             self.assertEqual(process.returncode, 0, process.stderr)
             self.assertEqual(process.stdout.strip(), "10.77.0.3")
+
+    def test_home_networks_does_not_require_paste(self):
+        text = (ROOT / "openwrt" / "remote-gate-client-profiles.sh").read_text(encoding="utf-8")
+        self.assertNotIn("paste -sd", text)
+        start = text.index("home_networks() {")
+        end = text.index("\nprofile_dns() {", start)
+        function = text[start:end]
+
+        with tempfile.TemporaryDirectory() as td:
+            bindir = Path(td) / "bin"
+            bindir.mkdir()
+            for name in ("awk", "sed", "tr"):
+                source = shutil.which(name)
+                self.assertIsNotNone(source)
+                os.symlink(source, bindir / name)
+
+            shell = (
+                "set -eu\n"
+                "WG_PROFILE_HOME_NETWORKS='192.168.1.0/24,10.77.0.0/24,192.168.1.0/24'\n"
+                f"{function}\n"
+                "home_networks 10.77.0.0/24\n"
+            )
+            env = dict(os.environ)
+            env["PATH"] = str(bindir)
+            process = subprocess.run(
+                [shutil.which("sh") or "/bin/sh", "-c", shell],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(process.returncode, 0, process.stderr)
+            self.assertEqual(process.stdout.strip(), "192.168.1.0/24,10.77.0.0/24")
+
+    def test_profile_network_preflight_precedes_peer_side_effects(self):
+        text = (ROOT / "openwrt" / "remote-gate-client-profiles.sh").read_text(encoding="utf-8")
+        start = text.index("create_profile() {")
+        end = text.index("\nlist_json() {", start)
+        create = text[start:end]
+        side_effect = create.index('wg set "$wg_name" peer "$public_key"')
+        self.assertLess(create.index('networks="$(home_networks "$pool")"'), side_effect)
+        self.assertLess(create.index('dns="$(profile_dns)"'), side_effect)
+        self.assertLess(create.index('networks_json="$(csv_json_array "$networks")"'), side_effect)
+        self.assertIn("profile-network-preflight-failed", create)
 
     def test_partial_create_rolls_back_live_and_persistent_peer(self):
         text = (ROOT / "openwrt" / "remote-gate-client-profiles.sh").read_text(encoding="utf-8")
