@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -18,6 +21,60 @@ class ClientProfilesOpenWrtContractTests(unittest.TestCase):
         metadata_part = text.split('result_tmp="${saved_result}.tmp.$$"', 1)[0]
         self.assertNotIn('"private_key"', metadata_part)
         self.assertIn('"private_key":"$private_key"', text)
+
+    def test_allocator_counts_wireguard_interface_cidr_as_one_host(self):
+        text = (ROOT / "openwrt" / "remote-gate-client-profiles.sh").read_text(encoding="utf-8")
+        start = text.index("collect_used_ipv4() {")
+        end = text.index("\nlan_values() {", start)
+        functions = text[start:end]
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            bindir = root / "bin"
+            state = root / "state"
+            runtime = root / "runtime"
+            bindir.mkdir()
+            state.mkdir()
+            runtime.mkdir()
+
+            ip = bindir / "ip"
+            ip.write_text(
+                "#!/bin/sh\n"
+                "printf '%s\\n' '29: WG_HOME    inet 10.77.0.1/24 brd 10.77.0.255 scope global WG_HOME'\n",
+                encoding="utf-8",
+            )
+            wg = bindir / "wg"
+            wg.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$*\" = 'show WG_HOME allowed-ips' ]; then\n"
+                "  printf '%s\\n' 'peerkey=    10.77.0.2/32 fd77:77:77::2/128'\n"
+                "fi\n",
+                encoding="utf-8",
+            )
+            ip.chmod(0o755)
+            wg.chmod(0o755)
+
+            shell = (
+                "set -eu\n"
+                'STATE_DIR="$TEST_STATE_DIR"\n'
+                'RUNTIME_DIR="$TEST_RUNTIME_DIR"\n'
+                f"{functions}\n"
+                "allocate_ipv4 WG_HOME 10.77.0.0/24\n"
+            )
+            env = dict(os.environ)
+            env["PATH"] = f"{bindir}:{env.get('PATH', '')}"
+            env["TEST_STATE_DIR"] = str(state)
+            env["TEST_RUNTIME_DIR"] = str(runtime)
+            process = subprocess.run(
+                ["sh", "-c", shell],
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(process.returncode, 0, process.stderr)
+            self.assertEqual(process.stdout.strip(), "10.77.0.3")
 
     def test_partial_create_rolls_back_live_and_persistent_peer(self):
         text = (ROOT / "openwrt" / "remote-gate-client-profiles.sh").read_text(encoding="utf-8")
@@ -50,6 +107,8 @@ class ClientProfilesOpenWrtContractTests(unittest.TestCase):
         self.assertNotIn('path == "/api/v1/agent/status"', entry)
         self.assertIn('/api/v1/agent/profile-result', entry)
         self.assertIn('/api/v1/agent/profiles-status', entry)
+        self.assertIn('terminal_control_error(STORE, command_id, "profile_create")', entry)
+        self.assertIn('{"state": "failed", "error": terminal_error}', entry)
         self.assertNotIn('localStorage', entry)
         self.assertNotIn('sessionStorage', entry)
 
