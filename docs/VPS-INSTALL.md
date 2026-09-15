@@ -5,6 +5,7 @@ Requirements:
 - Python 3
 - OpenSSL
 - curl
+- `apt-get` access to the distribution package repositories
 
 Install from a checkout:
 
@@ -20,6 +21,8 @@ The installer creates:
 - `/usr/local/lib/remote-gate`
 - `remote-gate.service`
 - a random `WRITE_TOKEN`
+
+The installer and updater require `qrencode` for Client Profile QR export. If the binary is missing, they install the Debian/Ubuntu `qrencode` package before changing the Remote Gate runtime. If package installation cannot complete, installation/update stops before replacing the service so the UI is not knowingly deployed with a broken QR action.
 
 The service must listen only on:
 

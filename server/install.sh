@@ -23,12 +23,25 @@ fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 warn() { printf 'WARN: %s\n' "$*" >&2; }
 info() { printf '==> %s\n' "$*"; }
 
+ensure_qrencode() {
+    command -v qrencode >/dev/null 2>&1 && return 0
+    info "Installing qrencode for Client Profile QR export."
+    if DEBIAN_FRONTEND=noninteractive apt-get -y -qq install --no-install-recommends qrencode; then
+        command -v qrencode >/dev/null 2>&1 && return 0
+    fi
+    warn "Initial qrencode install failed; refreshing apt package metadata."
+    DEBIAN_FRONTEND=noninteractive apt-get -qq update || return 1
+    DEBIAN_FRONTEND=noninteractive apt-get -y -qq install --no-install-recommends qrencode || return 1
+    command -v qrencode >/dev/null 2>&1
+}
+
 [ "${EUID:-$(id -u)}" -eq 0 ] || fail "Run this installer as root."
 command -v systemctl >/dev/null 2>&1 || fail "systemd is required."
 
-for cmd in python3 openssl curl; do
+for cmd in python3 openssl curl apt-get; do
     command -v "$cmd" >/dev/null 2>&1 || fail "Missing dependency: $cmd"
 done
+ensure_qrencode || fail "qrencode is required for Client Profile QR export and could not be installed."
 
 resolve_build_sha() {
     local suffix ref sha
@@ -294,9 +307,7 @@ printf 'Backend:       127.0.0.1:29444 (localhost only)\n'
 printf 'WRITE_TOKEN:   %s\n' "$WRITE_TOKEN"
 printf '\nStore WRITE_TOKEN only on the OpenWrt device and the VPS secret file.\n'
 printf 'Client Profiles: private keys are transient; save a newly generated export before its one-time window expires.\n'
-if ! command -v qrencode >/dev/null 2>&1; then
-    printf 'WARN: qrencode is not installed; Client Profile Download/Copy works, but QR export stays unavailable.\n' >&2
-fi
+printf 'Client Profile QR: qrencode ready.\n'
 printf 'Recommended public path: Cloudflare Tunnel -> http://127.0.0.1:29444\n'
 printf 'Safe update:    %s/update.sh\n' "$LIB_DIR"
 printf 'Safe uninstall: %s/uninstall.sh --dry-run\n' "$LIB_DIR"

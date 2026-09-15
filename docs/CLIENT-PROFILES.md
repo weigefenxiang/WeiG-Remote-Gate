@@ -61,7 +61,7 @@ The VPS may persist a bounded Client Profile history containing only non-secret 
 - **NetProxy 8.1.0**: Clash-YAML node import. NetProxy 8.1.0 documents `netproxyctl node import <clash.yaml>`; Remote Gate does not claim authority over NetProxy's own routing, DNS, eBPF, or service policy.
 - **sing-box**: modern WireGuard `endpoints` JSON. It is a transport fragment/config input, not an assertion that Remote Gate owns the rest of the user's sing-box policy.
 
-For non-WireGuard QR export, the QR contains a short-lived one-time HTTPS URL rather than embedding a large configuration. The URL is consumed on first successful fetch. QR generation uses the optional VPS `qrencode` utility; Download and Copy remain available if `qrencode` is absent.
+For non-WireGuard QR export, the QR contains a short-lived one-time HTTPS URL rather than embedding a large configuration. The URL is consumed on first successful fetch. QR generation requires the VPS `qrencode` utility. On the supported Debian/Ubuntu VPS target, the server installer and updater provision the `qrencode` package before changing the Remote Gate runtime; a missing/uninstallable QR dependency therefore stops deployment instead of knowingly leaving the visible QR action broken. Download and Copy remain separate export paths.
 
 ## Route presets
 

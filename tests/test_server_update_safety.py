@@ -4,6 +4,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 UPDATE = (ROOT / "server" / "update.sh").read_text(encoding="utf-8")
+INSTALL = (ROOT / "server" / "install.sh").read_text(encoding="utf-8")
 
 
 class ServerUpdateSafetyTests(unittest.TestCase):
@@ -17,6 +18,13 @@ class ServerUpdateSafetyTests(unittest.TestCase):
         self.assertIn('"server/app/client_profiles.py"', UPDATE)
         self.assertIn('"server/app/control_queue.py"', UPDATE)
         self.assertIn('test -x "$LIB_DIR/profile-entry.py"', UPDATE)
+
+    def test_client_profile_qr_dependency_is_provisioned_before_runtime_change(self):
+        for source in (INSTALL, UPDATE):
+            self.assertIn("ensure_qrencode()", source)
+            self.assertIn("apt-get -y -qq install --no-install-recommends qrencode", source)
+            self.assertIn('qrencode is required for Client Profile QR export and could not be installed.', source)
+        self.assertLess(UPDATE.index("ensure_qrencode || fail"), UPDATE.index('systemctl stop "$SERVICE_NAME"'))
 
     def test_backup_container_is_private_without_destroying_archived_modes(self):
         self.assertNotIn('chmod -R go-rwx "$BACKUP"', UPDATE)
