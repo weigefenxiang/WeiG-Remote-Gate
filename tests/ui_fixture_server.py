@@ -187,6 +187,9 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0") or 0)
         if length:
             self.rfile.read(length)
+        if path == "/api/v1/operator/activity":
+            self._send(204, b"", "text/plain")
+            return
         if path == "/api/v1/gate/activate":
             self._send(202, b'{"command_id":"fixture","state":"pending"}', "application/json")
             return
