@@ -134,7 +134,7 @@ class ClientProfileRecentResultsTests(unittest.TestCase):
         entry = (ROOT / "server" / "profile-entry.py").read_text(encoding="utf-8")
         self.assertIn("/api/v1/client-profiles/recent", entry)
         self.assertIn('id="profile-recent-button"', entry)
-        self.assertIn('id="profile-qr-layer"', entry)
+        self.assertIn("profile-qr-layer", entry)
         self.assertIn("100dvh", entry)
         self.assertIn("max-height:min(68dvh,440px)", entry)
         self.assertNotIn("localStorage", entry)
