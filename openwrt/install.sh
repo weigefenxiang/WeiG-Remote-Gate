@@ -13,9 +13,6 @@ PLATFORM="$LIB_DIR/remote-gate-platform.sh"
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 [ "$(id -u)" -eq 0 ] || fail "Run this installer as root."
 
-# These are core runtime capabilities, not release-number gates. OpenWrt,
-# LEDE, ImmortalWrt and compatible derivatives are accepted when they provide
-# the required OpenWrt-family runtime interfaces.
 for cmd in curl ubus jsonfilter awk sed grep sort uci ip; do
     command -v "$cmd" >/dev/null 2>&1 || fail "Missing core dependency: $cmd"
 done
@@ -62,6 +59,7 @@ fetch_file "remote-gate-agent.sh" "$LIB_DIR/remote-gate-agent.sh"
 fetch_file "remote-gate-egress-probe.sh" "$LIB_DIR/remote-gate-egress-probe.sh"
 fetch_file "remote-gate-wireguard-egress.sh" "$LIB_DIR/remote-gate-wireguard-egress.sh"
 fetch_file "remote-gate-service-registry.sh" "$LIB_DIR/remote-gate-service-registry.sh"
+fetch_file "remote-gate-client-profiles.sh" "$LIB_DIR/remote-gate-client-profiles.sh"
 fetch_file "remote-gate-mapping.sh" "$LIB_DIR/remote-gate-mapping.sh"
 fetch_file "remote-gate-mapper-install.sh" "$LIB_DIR/remote-gate-mapper-install.sh"
 fetch_file "remote-gate-firewall.sh" "$LIB_DIR/remote-gate-firewall.sh"
@@ -81,10 +79,7 @@ done
 
 "$PLATFORM" core-capable || fail "Required OpenWrt-family core runtime capabilities are unavailable."
 INIT_SYSTEM="$("$PLATFORM" init 2>/dev/null || printf unknown)"
-case "$INIT_SYSTEM" in
-    procd|rc.common) ;;
-    *) fail "Unsupported OpenWrt-family service framework: $INIT_SYSTEM" ;;
-esac
+case "$INIT_SYSTEM" in procd|rc.common) ;; *) fail "Unsupported OpenWrt-family service framework: $INIT_SYSTEM" ;; esac
 DIST="$("$PLATFORM" distribution 2>/dev/null || printf unknown)"
 RELEASE="$("$PLATFORM" release 2>/dev/null || printf unknown)"
 PKG_MANAGER="$("$PLATFORM" package-manager 2>/dev/null || printf none)"
@@ -99,17 +94,9 @@ printf 'Package ABI: %s\n' "${PKG_ARCH:-unknown}"
 printf 'Kernel machine: %s\n' "$KERNEL_ARCH"
 printf 'libc: %s\n' "$LIBC_FAMILY"
 
-if [ -f "$SCRIPT_DIR/../VERSION" ]; then
-    cp "$SCRIPT_DIR/../VERSION" "$LIB_DIR/VERSION"
-else
-    curl -fsSL "$RAW_BASE/VERSION" -o "$LIB_DIR/VERSION"
-fi
+if [ -f "$SCRIPT_DIR/../VERSION" ]; then cp "$SCRIPT_DIR/../VERSION" "$LIB_DIR/VERSION"; else curl -fsSL "$RAW_BASE/VERSION" -o "$LIB_DIR/VERSION"; fi
 chmod 0644 "$LIB_DIR/VERSION"
 
-# The router never compiles the mapper. An explicit/local mapper is target-
-# smoke-tested and recorded as local; otherwise only a published Release asset
-# selected by exact Package ABI and verified by SHA-256 is accepted. Failure to
-# obtain a released mapper is non-fatal: Direct/Gate remain available.
 MAPPER_INSTALLER="$LIB_DIR/remote-gate-mapper-install.sh"
 MAPPER_EXPLICIT_SOURCE="${REMOTE_GATE_MAPPER_SOURCE:-}"
 MAPPER_LOCAL_SOURCE="$SCRIPT_DIR/../native/remote-gate-mapper"
@@ -118,24 +105,14 @@ if [ -n "$MAPPER_EXPLICIT_SOURCE" ]; then
 elif [ -f "$MAPPER_LOCAL_SOURCE" ] && [ -x "$MAPPER_LOCAL_SOURCE" ]; then
     sh "$MAPPER_INSTALLER" install-local "$MAPPER_LOCAL_SOURCE" || fail "Local mapper binary failed validation."
 else
-    if sh "$MAPPER_INSTALLER" install-release; then
-        :
-    else
+    if sh "$MAPPER_INSTALLER" install-release; then :; else
         mapper_rc=$?
-        if [ "$mapper_rc" -eq 3 ]; then
-            printf 'WARN: No released mapper is available for this exact Package ABI; Mapped Access stays unavailable.\n' >&2
-        else
-            printf 'WARN: Released mapper validation failed; Mapped Access stays unavailable.\n' >&2
-        fi
+        if [ "$mapper_rc" -eq 3 ]; then printf 'WARN: No released mapper is available for this exact Package ABI; Mapped Access stays unavailable.\n' >&2; else printf 'WARN: Released mapper validation failed; Mapped Access stays unavailable.\n' >&2; fi
     fi
 fi
 
 BACKEND="$("$LIB_DIR/remote-gate-firewall.sh" detect 2>/dev/null)" || fail "Unsupported firewall capability. Need fw4+nftables or fw3+iptables+ipset."
-case "$BACKEND" in
-    fw4-nftables) printf 'Detected firewall backend: firewall4 / nftables\n' ;;
-    fw3-iptables) printf 'Detected firewall backend: firewall3 / iptables + ipset\n' ;;
-    *) fail "Unsupported firewall backend: $BACKEND" ;;
-esac
+case "$BACKEND" in fw4-nftables) printf 'Detected firewall backend: firewall4 / nftables\n' ;; fw3-iptables) printf 'Detected firewall backend: firewall3 / iptables + ipset\n' ;; *) fail "Unsupported firewall backend: $BACKEND" ;; esac
 
 IPV6_CAPABLE=no
 if "$LIB_DIR/remote-gate-firewall.sh" ipv6-capable >/dev/null 2>&1; then IPV6_CAPABLE=yes; fi
@@ -162,6 +139,11 @@ MAPPER_IDLE_TIMEOUT='180'
 MAPPER_MAX_SESSIONS='64'
 MAPPER_DIAGNOSTICS='1'
 MAPPER_DIAGNOSTIC_SUMMARY_INTERVAL='1800'
+WG_PROFILE_IPV4_POOL=''
+WG_PROFILE_HOME_NETWORKS=''
+WG_PROFILE_DNS=''
+WG_PROFILE_MTU=''
+WG_PROFILE_PERSISTENT_KEEPALIVE='25'
 CFGEOF
 chmod 0600 "$CONFIG_FILE"
 unset WRITE_TOKEN
@@ -172,6 +154,7 @@ wireguard_owned=0
 firewall_include_owned=1
 agent_owned=1
 mapper_owned=1
+client_profiles_owned=1
 MANIFEST
 chmod 0600 "$STATE_DIR/install-manifest"
 
@@ -189,7 +172,7 @@ fi
 "$INIT_FILE" stop >/dev/null 2>&1 || true
 "$INIT_FILE" start || fail "Remote Gate agent failed to start."
 "$LIB_DIR/remote-gate-egress-probe.sh" >/dev/null 2>&1 || true
-"$LIB_DIR/remote-gate-agent.sh" report || true
+"$LIB_DIR/remote-gate-report.sh" report || true
 
 printf '\nWeiG Remote Gate OpenWrt-family components installed.\n'
 printf 'Platform: %s %s | service=%s | package=%s | ABI=%s\n' "$DIST" "$RELEASE" "$INIT_SYSTEM" "$PKG_MANAGER" "${PKG_ARCH:-unknown}"
@@ -199,6 +182,7 @@ printf 'Mapped Access: %s\n' "$([ "$MAPPER_AVAILABLE" = yes ] && printf 'availab
 printf 'Control transport: automatic IPv4/IPv6 Multi-WAN health fallback\n'
 printf 'Adaptive Agent cadence: 30m idle reports, 5s interactive/command convergence\n'
 printf 'Mapped keepalive: 60s with 30m logd diagnostic summaries\n'
+printf 'Client Profiles: managed WireGuard peers, one-time private-key export, default client keepalive 25s\n'
 printf 'Private/CGNAT WAN IPv4 egress: best-effort per-WAN probe enabled\n'
 printf 'The WAN has no HTTP/HTTPS listener from this project.\n'
 printf 'qBittorrent/BT port forwarding remains under the original firewall and is unaffected.\n'
@@ -207,6 +191,7 @@ printf 'Read-only audit: %s/remote-gate-audit.sh\n' "$LIB_DIR"
 printf 'Platform audit: %s summary\n' "$PLATFORM"
 printf 'Mapper delivery audit: %s/remote-gate-mapper-install.sh status-json\n' "$LIB_DIR"
 printf 'Mapped Access status: %s/remote-gate-mapping.sh status-json\n' "$LIB_DIR"
+printf 'Client Profiles status: %s/remote-gate-client-profiles.sh list-json\n' "$LIB_DIR"
 printf 'Optional WG home Internet egress: %s/remote-gate-wireguard-egress.sh status-json\n' "$LIB_DIR"
 printf 'Safe uninstall: %s/uninstall.sh --dry-run\n' "$LIB_DIR"
 printf 'Firewall status: %s/remote-gate-firewall.sh status-json\n' "$LIB_DIR"

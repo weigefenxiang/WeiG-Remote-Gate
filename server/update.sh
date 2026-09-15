@@ -63,7 +63,6 @@ fi
 [[ "$BUILD_SHA" =~ ^[0-9a-fA-F]{40}$ ]] || fail "Invalid build SHA: $BUILD_SHA"
 BUILD_SHA="${BUILD_SHA,,}"
 BUILD_SHORT="${BUILD_SHA:0:12}"
-# Freeze the whole deployment to one immutable commit before downloading files.
 RAW_BASE="${RAW_PREFIX}${BUILD_SHA}"
 
 TMP_DIR="$(mktemp -d)"
@@ -108,6 +107,7 @@ fetch_raw() {
 
 FILES=(
   "server/remote-gate.py"
+  "server/profile-entry.py"
   "server/remote-gate.service"
   "server/uninstall.sh"
   "server/update.sh"
@@ -116,6 +116,8 @@ FILES=(
   "server/app/store.py"
   "server/app/security.py"
   "server/app/client_sources.py"
+  "server/app/client_profiles.py"
+  "server/app/control_queue.py"
   "server/app/endpoints.py"
   "server/app/gate.py"
   "server/app/main.py"
@@ -154,7 +156,7 @@ for rel in "${FILES[@]}"; do
     mkdir -p "$TMP_DIR/$(dirname "$rel")"
     fetch_raw "$rel" "$TMP_DIR/$rel"
 done
-python3 -m py_compile "$TMP_DIR"/server/app/*.py "$TMP_DIR/server/remote-gate.py"
+python3 -m py_compile "$TMP_DIR"/server/app/*.py "$TMP_DIR/server/remote-gate.py" "$TMP_DIR/server/profile-entry.py"
 bash -n "$TMP_DIR/server/uninstall.sh"
 bash -n "$TMP_DIR/server/update.sh"
 sh -n "$TMP_DIR/shared/backup-retention.sh"
@@ -206,6 +208,7 @@ systemctl stop "$SERVICE_NAME" >/dev/null 2>&1 || true
 rm -rf "$LIB_DIR"
 install -d -o root -g root -m 0755 "$LIB_DIR/app"
 install -o root -g root -m 0755 "$TMP_DIR/server/remote-gate.py" "$LIB_DIR/remote-gate.py"
+install -o root -g root -m 0755 "$TMP_DIR/server/profile-entry.py" "$LIB_DIR/profile-entry.py"
 install -o root -g root -m 0755 "$TMP_DIR/server/uninstall.sh" "$LIB_DIR/uninstall.sh"
 install -o root -g root -m 0755 "$TMP_DIR/server/update.sh" "$LIB_DIR/update.sh"
 install -o root -g root -m 0644 "$TMP_DIR/server/remote-gate.service" "$SERVICE_FILE"
@@ -258,5 +261,9 @@ printf 'WeiG Remote Gate updated: %s -> %s\n' "$LOCAL_VERSION" "$REMOTE_VERSION"
 printf 'Build: %s\n' "$BUILD_SHA"
 printf 'Backup: %s\n' "$BACKUP"
 printf 'Backup retention: latest %s project backups\n' "$(remote_gate_backup_keep 2>/dev/null || printf 2)"
+printf 'Client Profiles: managed peers enabled; private-key export remains transient and non-persistent on the VPS.\n'
+if ! command -v qrencode >/dev/null 2>&1; then
+    printf 'WARN: qrencode is not installed; Client Profile Download/Copy works, but QR export stays unavailable.\n' >&2
+fi
 printf 'Safe update: %s/update.sh\n' "$LIB_DIR"
 printf 'Safe uninstall: %s/uninstall.sh --dry-run\n' "$LIB_DIR"

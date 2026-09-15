@@ -95,6 +95,8 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'browser_egress_manual.mjs failed' }
             & node tests/browser_mixed_egress.mjs
             if ($LASTEXITCODE -ne 0) { throw 'browser_mixed_egress.mjs failed' }
+            & node tests/browser_client_profiles.mjs
+            if ($LASTEXITCODE -ne 0) { throw 'browser_client_profiles.mjs failed' }
           } finally {
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
             if (Test-Path $stdout) { Get-Content $stdout }
@@ -132,6 +134,10 @@ jobs:
       - name: Mixed Access and Internet exit regression
         if: runner.os == 'Linux'
         run: node tests/browser_mixed_egress.mjs
+
+      - name: Client Profiles browser regression
+        if: runner.os == 'Linux'
+        run: node tests/browser_client_profiles.mjs
 
       - name: Stop fixture server (Linux)
         if: always() && runner.os == 'Linux'

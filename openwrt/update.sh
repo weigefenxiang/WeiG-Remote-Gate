@@ -11,12 +11,8 @@ case "$RAW_BASE" in
 esac
 RAW_REF=""
 case "$RAW_BASE" in
-    "${RAW_PREFIX}"refs/heads/*)
-        RAW_REF="${RAW_BASE#${RAW_PREFIX}refs/heads/}"
-        ;;
-    "${RAW_PREFIX}"*)
-        RAW_REF="${RAW_BASE#${RAW_PREFIX}}"
-        ;;
+    "${RAW_PREFIX}"refs/heads/*) RAW_REF="${RAW_BASE#${RAW_PREFIX}refs/heads/}" ;;
+    "${RAW_PREFIX}"*) RAW_REF="${RAW_BASE#${RAW_PREFIX}}" ;;
 esac
 GITHUB_API_BASE="https://api.github.com/repos/weigefenxiang/WeiG-Remote-Gate/contents"
 LIB_DIR="/usr/lib/remote-gate"
@@ -73,24 +69,17 @@ fetch_api_raw() {
 
 fetch_repo_path() {
     repo_rel="$1"; out="$2"; raw_url="${RAW_BASE}/${repo_rel}"
-    if curl -fsSL -H 'Cache-Control: no-cache' "$raw_url" -o "$out" 2>/dev/null; then
-        return 0
-    fi
+    if curl -fsSL -H 'Cache-Control: no-cache' "$raw_url" -o "$out" 2>/dev/null; then return 0; fi
     rm -f "$out"
     printf 'WARN: Raw download failed; trying GitHub API: %s\n' "$repo_rel" >&2
-    if fetch_api_raw "$repo_rel" "$out"; then
-        return 0
-    fi
+    if fetch_api_raw "$repo_rel" "$out"; then return 0; fi
     rm -f "$out"
     fail "Download failed from Raw and GitHub API: $repo_rel"
 }
 
-fetch() {
-    rel="$1"; out="$2"
-    fetch_repo_path "openwrt/${rel}" "$out"
-}
+fetch() { rel="$1"; out="$2"; fetch_repo_path "openwrt/${rel}" "$out"; }
 
-FILES="remote-gate-platform.sh remote-gate-report.sh remote-gate-agent.sh remote-gate-egress-probe.sh remote-gate-wireguard-egress.sh remote-gate-service-registry.sh remote-gate-mapping.sh remote-gate-mapper-install.sh remote-gate-firewall.sh remote-gate-firewall-backends.sh remote-gate-wireguard-verify.sh remote-gate-firewall-include.sh remote-gate-audit.sh remote-gate-agent.init remote-gate-hotplug.sh uninstall.sh update.sh"
+FILES="remote-gate-platform.sh remote-gate-report.sh remote-gate-agent.sh remote-gate-egress-probe.sh remote-gate-wireguard-egress.sh remote-gate-service-registry.sh remote-gate-client-profiles.sh remote-gate-mapping.sh remote-gate-mapper-install.sh remote-gate-firewall.sh remote-gate-firewall-backends.sh remote-gate-wireguard-verify.sh remote-gate-firewall-include.sh remote-gate-audit.sh remote-gate-agent.init remote-gate-hotplug.sh uninstall.sh update.sh"
 info "Downloading OpenWrt-family update."
 for rel in $FILES; do fetch "$rel" "$TMP_DIR/$rel"; done
 fetch_repo_path "shared/backup-retention.sh" "$TMP_DIR/backup-retention.sh"
@@ -100,10 +89,7 @@ sh -n "$TMP_DIR/backup-retention.sh" || fail "Shell syntax check failed: shared/
 
 sh "$TMP_DIR/remote-gate-platform.sh" core-capable || fail "Required OpenWrt-family core runtime capabilities are unavailable."
 init_system="$(sh "$TMP_DIR/remote-gate-platform.sh" init 2>/dev/null || printf unknown)"
-case "$init_system" in
-    procd|rc.common) ;;
-    *) fail "Unsupported OpenWrt-family service framework: $init_system" ;;
-esac
+case "$init_system" in procd|rc.common) ;; *) fail "Unsupported OpenWrt-family service framework: $init_system" ;; esac
 
 remote_version="$(sed -n '1p' "$TMP_DIR/VERSION")"
 local_version="$(cat "$LIB_DIR/VERSION" 2>/dev/null || echo unknown)"
@@ -127,7 +113,7 @@ chmod -R go-rwx "$BACKUP"; info "Backup created: $BACKUP"
 [ -x "$INIT_FILE" ] && "$INIT_FILE" stop >/dev/null 2>&1 || true
 [ -x "$LIB_DIR/remote-gate-mapping.sh" ] && "$LIB_DIR/remote-gate-mapping.sh" stop-all >/dev/null 2>&1 || true
 mkdir -p "$LIB_DIR" "$(dirname "$HOTPLUG_FILE")" "$STATE_DIR"
-for rel in remote-gate-platform.sh remote-gate-report.sh remote-gate-agent.sh remote-gate-egress-probe.sh remote-gate-wireguard-egress.sh remote-gate-service-registry.sh remote-gate-mapping.sh remote-gate-mapper-install.sh remote-gate-firewall.sh remote-gate-firewall-backends.sh remote-gate-wireguard-verify.sh remote-gate-firewall-include.sh remote-gate-audit.sh uninstall.sh update.sh; do cp "$TMP_DIR/$rel" "$LIB_DIR/$rel"; done
+for rel in remote-gate-platform.sh remote-gate-report.sh remote-gate-agent.sh remote-gate-egress-probe.sh remote-gate-wireguard-egress.sh remote-gate-service-registry.sh remote-gate-client-profiles.sh remote-gate-mapping.sh remote-gate-mapper-install.sh remote-gate-firewall.sh remote-gate-firewall-backends.sh remote-gate-wireguard-verify.sh remote-gate-firewall-include.sh remote-gate-audit.sh uninstall.sh update.sh; do cp "$TMP_DIR/$rel" "$LIB_DIR/$rel"; done
 cp "$TMP_DIR/remote-gate-agent.init" "$INIT_FILE"
 cp "$TMP_DIR/remote-gate-hotplug.sh" "$HOTPLUG_FILE"
 cp "$TMP_DIR/VERSION" "$LIB_DIR/VERSION"
@@ -169,13 +155,19 @@ append_default MAPPER_IDLE_TIMEOUT 180
 append_default MAPPER_MAX_SESSIONS 64
 append_default MAPPER_DIAGNOSTICS 1
 append_default MAPPER_DIAGNOSTIC_SUMMARY_INTERVAL 1800
+append_default WG_PROFILE_IPV4_POOL ''
+append_default WG_PROFILE_HOME_NETWORKS ''
+append_default WG_PROFILE_DNS ''
+append_default WG_PROFILE_MTU ''
+append_default WG_PROFILE_PERSISTENT_KEEPALIVE 25
 chmod 0600 "$CONFIG_FILE"
 
 mkdir -p "$STATE_DIR"
 if [ ! -f "$STATE_DIR/install-manifest" ]; then
-    { printf 'schema=2\n'; printf 'wireguard_owned=0\n'; printf 'firewall_include_owned=1\n'; printf 'agent_owned=1\n'; printf 'mapper_owned=1\n'; } > "$STATE_DIR/install-manifest"; chmod 0600 "$STATE_DIR/install-manifest"
+    { printf 'schema=2\n'; printf 'wireguard_owned=0\n'; printf 'firewall_include_owned=1\n'; printf 'agent_owned=1\n'; printf 'mapper_owned=1\n'; printf 'client_profiles_owned=1\n'; } > "$STATE_DIR/install-manifest"; chmod 0600 "$STATE_DIR/install-manifest"
 else
     grep -Eq '^mapper_owned=' "$STATE_DIR/install-manifest" 2>/dev/null || printf 'mapper_owned=1\n' >> "$STATE_DIR/install-manifest"
+    grep -Eq '^client_profiles_owned=' "$STATE_DIR/install-manifest" 2>/dev/null || printf 'client_profiles_owned=1\n' >> "$STATE_DIR/install-manifest"
 fi
 
 "$LIB_DIR/remote-gate-wireguard-egress.sh" cleanup-legacy >/dev/null || fail "Legacy WireGuard egress cleanup failed."
@@ -221,9 +213,11 @@ else
 fi
 printf 'Adaptive Agent cadence: 30m idle reports, 5s interactive/command convergence by default\n'
 printf 'Mapped keepalive: 60s by default; diagnostics summarize to logd every 30m\n'
+printf 'Client Profiles: managed WireGuard peers enabled; private-key export is transient and one-time\n'
 printf 'Private/CGNAT WAN IPv4 egress probe: enabled\n'
 printf 'Optional WG home Internet egress: runtime only, reboot returns it to OFF\n'
 printf 'Read-only audit: %s/remote-gate-audit.sh\n' "$LIB_DIR"
 printf 'Platform audit: %s summary\n' "$PLATFORM"
 printf 'Mapper delivery audit: %s/remote-gate-mapper-install.sh status-json\n' "$LIB_DIR"
-printf 'WireGuard configuration was preserved.\n'
+printf 'Client Profiles status: %s/remote-gate-client-profiles.sh list-json\n' "$LIB_DIR"
+printf 'WireGuard interface and user-owned peer configuration were preserved.\n'

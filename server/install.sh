@@ -135,6 +135,7 @@ fetch_file() {
 
 FILES=(
   "server/remote-gate.py"
+  "server/profile-entry.py"
   "server/remote-gate.service"
   "server/uninstall.sh"
   "server/update.sh"
@@ -143,6 +144,8 @@ FILES=(
   "server/app/store.py"
   "server/app/security.py"
   "server/app/client_sources.py"
+  "server/app/client_profiles.py"
+  "server/app/control_queue.py"
   "server/app/endpoints.py"
   "server/app/gate.py"
   "server/app/main.py"
@@ -181,7 +184,7 @@ for rel in "${FILES[@]}"; do
     fetch_file "$rel" "$TMP_DIR/$rel"
 done
 
-python3 -m py_compile "$TMP_DIR"/server/app/*.py "$TMP_DIR/server/remote-gate.py"
+python3 -m py_compile "$TMP_DIR"/server/app/*.py "$TMP_DIR/server/remote-gate.py" "$TMP_DIR/server/profile-entry.py"
 bash -n "$TMP_DIR/server/uninstall.sh"
 bash -n "$TMP_DIR/server/update.sh"
 REMOTE_VERSION="$(sed -n '1p' "$TMP_DIR/VERSION")"
@@ -211,6 +214,7 @@ PY
 printf '%s\n' "$BUILD_SHA" > "$TMP_DIR/BUILD"
 
 install -o root -g root -m 0755 "$TMP_DIR/server/remote-gate.py" "$LIB_DIR/remote-gate.py"
+install -o root -g root -m 0755 "$TMP_DIR/server/profile-entry.py" "$LIB_DIR/profile-entry.py"
 install -o root -g root -m 0755 "$TMP_DIR/server/uninstall.sh" "$LIB_DIR/uninstall.sh"
 install -o root -g root -m 0755 "$TMP_DIR/server/update.sh" "$LIB_DIR/update.sh"
 install -o root -g root -m 0644 "$TMP_DIR/server/remote-gate.service" "$SERVICE_FILE"
@@ -241,7 +245,8 @@ cat > "$ETC_DIR/config.json" <<EOF
 {
   "public_hostname": "$PUBLIC_HOSTNAME",
   "bind_host": "127.0.0.1",
-  "bind_port": 29444
+  "bind_port": 29444,
+  "profile_export_ttl_seconds": 300
 }
 EOF
 
@@ -288,6 +293,10 @@ printf 'Hostname:      %s\n' "$PUBLIC_HOSTNAME"
 printf 'Backend:       127.0.0.1:29444 (localhost only)\n'
 printf 'WRITE_TOKEN:   %s\n' "$WRITE_TOKEN"
 printf '\nStore WRITE_TOKEN only on the OpenWrt device and the VPS secret file.\n'
+printf 'Client Profiles: private keys are transient; save a newly generated export before its one-time window expires.\n'
+if ! command -v qrencode >/dev/null 2>&1; then
+    printf 'WARN: qrencode is not installed; Client Profile Download/Copy works, but QR export stays unavailable.\n' >&2
+fi
 printf 'Recommended public path: Cloudflare Tunnel -> http://127.0.0.1:29444\n'
 printf 'Safe update:    %s/update.sh\n' "$LIB_DIR"
 printf 'Safe uninstall: %s/uninstall.sh --dry-run\n' "$LIB_DIR"

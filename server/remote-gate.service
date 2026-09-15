@@ -8,16 +8,18 @@ Type=simple
 User=remotegate
 Group=remotegate
 WorkingDirectory=/usr/local/lib/remote-gate
-ExecStart=/usr/bin/python3 /usr/local/lib/remote-gate/remote-gate.py
+ExecStart=/usr/bin/python3 /usr/local/lib/remote-gate/profile-entry.py
 Restart=on-failure
-RestartSec=3
+RestartSec=2
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/remote-gate
-ReadOnlyPaths=/etc/remote-gate /usr/local/lib/remote-gate
-UMask=0077
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
 
 [Install]
 WantedBy=multi-user.target

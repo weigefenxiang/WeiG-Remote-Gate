@@ -27,7 +27,7 @@ jobs:
         run: python -m unittest discover -s tests -p 'test_*.py' -v
 
       - name: Python compile
-        run: python -m py_compile server/app/*.py server/remote-gate.py tests/*.py
+        run: python -m py_compile server/app/*.py server/remote-gate.py server/profile-entry.py tests/*.py
 
       - name: Shell syntax
         shell: bash
@@ -58,3 +58,4 @@ jobs:
           node --check tests/browser_egress_manual.mjs
           node --check tests/browser_mixed_egress.mjs
           node --check tests/browser_access_pathcard.mjs
+          node --check tests/browser_client_profiles.mjs
