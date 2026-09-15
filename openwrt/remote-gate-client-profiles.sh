@@ -147,7 +147,7 @@ lan_values() {
 home_networks() {
     pool="$1"
     if [ -n "$WG_PROFILE_HOME_NETWORKS" ]; then
-        printf '%s\n' "$WG_PROFILE_HOME_NETWORKS" | tr ',' '\n' | sed '/^$/d' | awk '!seen[$0]++' | paste -sd, -
+        printf '%s\n' "$WG_PROFILE_HOME_NETWORKS" | tr ',' '\n' | sed '/^$/d' | awk 'NF && !seen[$0]++ { if (out != "") out=out "," $0; else out=$0 } END { if (out != "") print out }'
         return
     fi
     lan="$(lan_values | sed -n '1p')"
@@ -156,7 +156,7 @@ home_networks() {
     {
         [ -n "$lan_network" ] && printf '%s\n' "$lan_network"
         printf '%s\n' "$pool"
-    } | awk 'NF && !seen[$0]++' | paste -sd, -
+    } | awk 'NF && !seen[$0]++ { if (out != "") out=out "," $0; else out=$0 } END { if (out != "") print out }'
 }
 
 profile_dns() {
@@ -251,6 +251,13 @@ create_profile() {
     client_ip="$(allocate_ipv4 "$wg_name" "$pool" | sed -n '1p')"
     valid_ipv4 "$client_ip" || { echo 'ERROR: profile-ipv4-pool-exhausted' >&2; return 1; }
 
+    created_at="$(date +%s)"
+    networks="$(home_networks "$pool")" || { echo 'ERROR: profile-network-preflight-failed' >&2; return 1; }
+    dns="$(profile_dns)" || { echo 'ERROR: profile-network-preflight-failed' >&2; return 1; }
+    mtu="$WG_PROFILE_MTU"
+    if [ -n "$mtu" ]; then valid_uint "$mtu" && [ "$mtu" -ge 576 ] && [ "$mtu" -le 9000 ] || mtu=""; fi
+    networks_json="$(csv_json_array "$networks")" || { echo 'ERROR: profile-network-preflight-failed' >&2; return 1; }
+
     private_key="$(wg genkey 2>/dev/null)"
     valid_key "$private_key" || { echo 'ERROR: client-key-generation-failed' >&2; return 1; }
     public_key="$(printf '%s\n' "$private_key" | wg pubkey 2>/dev/null)"
@@ -273,13 +280,6 @@ create_profile() {
         echo 'ERROR: wireguard-peer-persist-failed' >&2
         return 1
     fi
-
-    created_at="$(date +%s)"
-    networks="$(home_networks "$pool")"
-    dns="$(profile_dns)"
-    mtu="$WG_PROFILE_MTU"
-    if [ -n "$mtu" ]; then valid_uint "$mtu" && [ "$mtu" -ge 576 ] && [ "$mtu" -le 9000 ] || mtu=""; fi
-    networks_json="$(csv_json_array "$networks")"
 
     meta_tmp="${meta}.tmp.$$"
     if ! cat > "$meta_tmp" <<EOF
