@@ -21,6 +21,7 @@ try {
     ${css}</style></head><body><article class="workspace-card" data-card-id="wireguard"><h2>WireGuard</h2></article></body></html>`);
 
   await page.evaluate(() => {
+    window.__qrShouldFail = false;
     window.fetch = async (input, init = {}) => {
       const url = String(input);
       if (url === '/api/v1/dashboard') {
@@ -43,6 +44,12 @@ try {
       }
       if (url.startsWith('/api/v1/client-profiles/result?')) {
         return new Response(JSON.stringify({state:'ready', profile:{id:'cccccccccccccccccccccccc',name:'Pixel 10',client_address:'10.66.66.5/32',wireguard:'WG_HOME',formats:['wireguard','flclash','netproxy-8.1.0','sing-box'],export_available:true,export_expires_at:Math.floor(Date.now()/1000)+300}}), {status:200, headers:{'Content-Type':'application/json'}});
+      }
+      if (url.startsWith('/api/v1/client-profiles/qr/')) {
+        if (window.__qrShouldFail) {
+          return new Response(JSON.stringify({error:'profile_qr_failed'}), {status:400, headers:{'Content-Type':'application/json'}});
+        }
+        return new Response('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400"><rect width="400" height="400" fill="white"/><rect x="32" y="32" width="336" height="336" fill="black"/></svg>', {status:200, headers:{'Content-Type':'image/svg+xml'}});
       }
       return new Response(JSON.stringify({error:`unexpected ${url}`}), {status:404, headers:{'Content-Type':'application/json'}});
     };
@@ -77,13 +84,13 @@ try {
   const bottom = await page.locator('#profile-layer').evaluate((el) => getComputedStyle(el).alignItems);
   if (bottom !== 'flex-end') throw new Error(`mobile sheet should align to bottom, got ${bottom}`);
 
-  await page.evaluate(() => {
-    const layer=document.querySelector('#profile-qr-layer');
-    const img=document.querySelector('#profile-qr');
-    layer.classList.add('open');
-    img.src='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400"><rect width="400" height="400" fill="white"/><rect x="32" y="32" width="336" height="336" fill="black"/></svg>';
-  });
-  await page.locator('#profile-qr').evaluate((img) => img.complete ? true : new Promise((resolve) => { img.onload=()=>resolve(true); }));
+  await page.getByRole('button', {name:'QR'}).click();
+  await page.locator('#profile-qr-layer.open').waitFor({state:'visible'});
+  await page.locator('#profile-qr').evaluate((img) => img.complete && img.naturalWidth > 0 ? true : new Promise((resolve, reject) => {
+    img.onload=()=>resolve(true); img.onerror=()=>reject(new Error('QR image failed to load'));
+  }));
+  const qrNote = await page.locator('#profile-qr-note').textContent();
+  if (!qrNote?.includes('private key')) throw new Error(`unexpected QR success note: ${qrNote}`);
   const qrBox = await page.locator('#profile-qr').boundingBox();
   if (!qrBox) throw new Error('mobile QR is not visible');
   if (qrBox.x < 0 || qrBox.y < 0 || qrBox.x + qrBox.width > 390.5 || qrBox.y + qrBox.height > 844.5) {
@@ -91,6 +98,17 @@ try {
   }
   const qrDialogBox = await page.locator('#profile-qr-layer .profile-qr-dialog').boundingBox();
   if (!qrDialogBox || qrDialogBox.height > 844.5) throw new Error(`QR viewer exceeds dynamic viewport: ${JSON.stringify(qrDialogBox)}`);
+
+  await page.getByRole('button', {name:'Close QR'}).click();
+  await page.evaluate(() => { window.__qrShouldFail = true; });
+  await page.getByRole('button', {name:'QR'}).click();
+  await page.locator('#profile-qr-layer.open').waitFor({state:'visible'});
+  await page.getByText(/QR unavailable: profile_qr_failed/).waitFor({state:'visible'});
+  if (!(await page.locator('#profile-qr-layer').evaluate((el) => el.classList.contains('open')))) {
+    throw new Error('QR failure must remain visible instead of auto-closing');
+  }
+  if (await page.locator('#profile-qr').getAttribute('src')) throw new Error('failed QR should not retain a broken image src');
+
   console.log('client profiles browser regression: PASS');
 } finally {
   await browser.close();

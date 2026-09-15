@@ -5,6 +5,7 @@ import importlib.util
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -214,12 +215,20 @@ PROFILE_JS = r'''
   function exportUrl(){return `/api/v1/client-profiles/export/${encodeURIComponent(commandId)}/${encodeURIComponent(activeFormat)}`}
   function downloadProfile(){if(!commandId)return;location.href=exportUrl()}
   async function copyProfile(){if(!commandId)return;try{const r=await fetch(exportUrl(),{credentials:'same-origin',cache:'no-store'});if(!r.ok)throw new Error(`HTTP ${r.status}`);await navigator.clipboard.writeText(await r.text());setStatus('Configuration copied. It contains the private key; protect your clipboard.')}catch(e){setStatus(String(e.message||e),true)}}
+  function blobDataUrl(blob){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result||''));reader.onerror=()=>reject(new Error('QR image could not be decoded'));reader.readAsDataURL(blob)})}
   async function showQr(){
     if(!commandId)return;const layer=q('#profile-qr-layer'),img=q('#profile-qr'),note=q('#profile-qr-note');
-    note.textContent='Loading QR…';layer.classList.add('open');q('.profile-qr-dialog',layer).focus();
+    img.removeAttribute('src');note.textContent='Loading QR…';layer.classList.add('open');q('.profile-qr-dialog',layer).focus();
     const url=`/api/v1/client-profiles/qr/${encodeURIComponent(commandId)}/${encodeURIComponent(activeFormat)}?t=${Date.now()}`;
-    img.onload=()=>{note.textContent=activeFormat==='wireguard'?'QR contains the WireGuard private key. Scan it only on the intended client.':'QR contains a one-time HTTPS configuration URL.'};
-    img.onerror=()=>{closeQr();setStatus('QR generation is unavailable on this VPS. Download or Copy remains available.',true)};img.src=url;
+    try{
+      const r=await fetch(url,{credentials:'same-origin',cache:'no-store'});const type=String(r.headers.get('Content-Type')||'').toLowerCase();
+      if(!r.ok){const p=await r.json().catch(()=>({}));throw new Error(p.error||`QR HTTP ${r.status}`)}
+      if(!type.startsWith('image/'))throw new Error(`Unexpected QR response type: ${type||'unknown'}`);
+      const blob=await r.blob();if(!blob.size)throw new Error('QR response is empty');
+      img.onload=()=>{note.textContent=activeFormat==='wireguard'?'QR contains the WireGuard private key. Scan it only on the intended client.':'QR contains a one-time HTTPS configuration URL.'};
+      img.onerror=()=>{note.textContent='QR image could not be rendered on this device. Download or Copy remains available.';setStatus('QR image could not be rendered on this device.',true)};
+      img.src=await blobDataUrl(blob);
+    }catch(e){const message=String(e.message||e);img.removeAttribute('src');note.textContent=`QR unavailable: ${message}. Download or Copy remains available.`;setStatus(`QR unavailable: ${message}`,true)}
   }
   async function revokeProfile(id){if(!confirm('Revoke this Remote Gate-managed WireGuard client?'))return;setStatus('Revoking managed peer…');try{await apiPost('/api/v1/client-profiles/revoke',{profile_id:id});await waitForProfileRemoval(id)}catch(e){setStatus(String(e.message||e),true)}}
   async function waitForProfileRemoval(id){for(let i=0;i<25;i++){await new Promise(r=>setTimeout(r,1000));try{await fetchDashboard();if(!(dashboard?.agent?.client_profiles||[]).some(x=>x.id===id)){setStatus('Client revoked.');await fetchRecent();return}}catch(_){}}setStatus('Revoke is queued; OpenWrt has not reported convergence yet.')}
@@ -258,15 +267,26 @@ def _qr_svg(content: bytes) -> bytes:
         raise GateError("qrencode_unavailable")
     if len(content) > 12_000:
         raise GateError("profile_qr_too_large")
-    process = subprocess.run(
-        [binary, "-t", "SVG", "-m", "2", "-o", "-"],
-        input=content,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        check=False,
-        timeout=5,
-    )
+    try:
+        process = subprocess.run(
+            [binary, "-t", "SVG", "-m", "2", "-o", "-"],
+            input=content,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired as exc:
+        print("Client Profile QR: qrencode timed out after 5s", file=sys.stderr)
+        raise GateError("profile_qr_timeout") from exc
+    except OSError as exc:
+        print(f"Client Profile QR: qrencode execution failed ({type(exc).__name__})", file=sys.stderr)
+        raise GateError("profile_qr_failed") from exc
     if process.returncode != 0 or b"<svg" not in process.stdout[:512]:
+        print(
+            f"Client Profile QR: qrencode failed rc={process.returncode} stdout_bytes={len(process.stdout)} stderr_bytes={len(process.stderr)}",
+            file=sys.stderr,
+        )
         raise GateError("profile_qr_failed")
     return process.stdout
 
@@ -457,7 +477,8 @@ class Handler(base.Handler):
                     content = share["url"].encode("utf-8")
                 svg = _qr_svg(content)
             except GateError as exc:
-                self._json(503 if str(exc) == "qrencode_unavailable" else 400, {"error": str(exc)})
+                code = str(exc)
+                self._json(503 if code in {"qrencode_unavailable", "profile_qr_timeout"} else 400, {"error": code})
                 return
             _send_bytes(self, 200, svg, "image/svg+xml; charset=utf-8")
             return
