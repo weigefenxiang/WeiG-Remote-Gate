@@ -26,6 +26,7 @@ INIT_FILE="/etc/init.d/remote-gate-agent"
 HOTPLUG_FILE="/etc/hotplug.d/iface/95-remote-gate"
 PLATFORM="$LIB_DIR/remote-gate-platform.sh"
 BACKUP_ROOT="/var/backups/weig-remote-gate"
+LEGACY_BACKUP_ROOT="/tmp/backups/weig-remote-gate"
 TMP_DIR="/tmp/remote-gate-update.$$"
 SUCCESS=0
 BACKUP=""
@@ -92,8 +93,10 @@ fetch() {
 FILES="remote-gate-platform.sh remote-gate-report.sh remote-gate-agent.sh remote-gate-egress-probe.sh remote-gate-wireguard-egress.sh remote-gate-service-registry.sh remote-gate-mapping.sh remote-gate-mapper-install.sh remote-gate-firewall.sh remote-gate-firewall-backends.sh remote-gate-wireguard-verify.sh remote-gate-firewall-include.sh remote-gate-audit.sh remote-gate-agent.init remote-gate-hotplug.sh uninstall.sh update.sh"
 info "Downloading OpenWrt-family update."
 for rel in $FILES; do fetch "$rel" "$TMP_DIR/$rel"; done
+fetch_repo_path "shared/backup-retention.sh" "$TMP_DIR/backup-retention.sh"
 fetch_repo_path "VERSION" "$TMP_DIR/VERSION"
 for rel in $FILES; do sh -n "$TMP_DIR/$rel" || fail "Shell syntax check failed: $rel"; done
+sh -n "$TMP_DIR/backup-retention.sh" || fail "Shell syntax check failed: shared/backup-retention.sh"
 
 sh "$TMP_DIR/remote-gate-platform.sh" core-capable || fail "Required OpenWrt-family core runtime capabilities are unavailable."
 init_system="$(sh "$TMP_DIR/remote-gate-platform.sh" init 2>/dev/null || printf unknown)"
@@ -192,10 +195,18 @@ INIT_SYSTEM="$("$PLATFORM" init 2>/dev/null || printf unknown)"
 PKG_MANAGER="$("$PLATFORM" package-manager 2>/dev/null || printf none)"
 PKG_ARCH="$("$PLATFORM" package-arch 2>/dev/null || true)"
 
-SUCCESS=1; trap - EXIT INT TERM; rm -rf "$TMP_DIR"
+SUCCESS=1
+trap - EXIT INT TERM
+# Retention is deliberately post-success and best-effort: it can never trigger rollback.
+# shellcheck disable=SC1090
+. "$TMP_DIR/backup-retention.sh"
+remote_gate_retain_backups "$BACKUP_ROOT" "$LEGACY_BACKUP_ROOT" || true
+backup_keep="$(remote_gate_backup_keep 2>/dev/null || printf 2)"
+rm -rf "$TMP_DIR"
 printf 'WeiG Remote Gate OpenWrt-family updated: %s -> %s\n' "$local_version" "$remote_version"
 printf 'Platform: %s %s | service=%s | package=%s | ABI=%s\n' "$DIST" "$RELEASE" "$INIT_SYSTEM" "$PKG_MANAGER" "${PKG_ARCH:-unknown}"
 printf 'Backup: %s\n' "$BACKUP"
+printf 'Backup retention: latest %s project backups\n' "$backup_keep"
 ipv6_mode="$(sed -n "s/^GATE_IPV6='\([^']*\)'/\1/p" "$CONFIG_FILE" | sed -n '1p')"
 printf 'IPv6 Gate mode: %s\n' "${ipv6_mode:-auto}"
 if [ "$ipv6_mode" = disabled ] && "$LIB_DIR/remote-gate-firewall.sh" ipv6-capable >/dev/null 2>&1; then

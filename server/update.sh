@@ -17,6 +17,7 @@ LIB_DIR="/usr/local/lib/remote-gate"
 SERVICE_FILE="/etc/systemd/system/remote-gate.service"
 SERVICE_NAME="remote-gate.service"
 BACKUP_ROOT="/var/backups/weig-remote-gate"
+LEGACY_BACKUP_ROOT="/tmp/backups/weig-remote-gate"
 
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 warn() { printf 'WARN: %s\n' "$*" >&2; }
@@ -144,6 +145,7 @@ FILES=(
   "server/app/static/js/duration-control.js"
   "server/app/static/js/gate-controls.js"
   "server/app/static/js/app.js"
+  "shared/backup-retention.sh"
   "VERSION"
 )
 
@@ -155,6 +157,7 @@ done
 python3 -m py_compile "$TMP_DIR"/server/app/*.py "$TMP_DIR/server/remote-gate.py"
 bash -n "$TMP_DIR/server/uninstall.sh"
 bash -n "$TMP_DIR/server/update.sh"
+sh -n "$TMP_DIR/shared/backup-retention.sh"
 
 REMOTE_VERSION="$(sed -n '1p' "$TMP_DIR/VERSION")"
 LOCAL_VERSION="$(cat "$LIB_DIR/VERSION" 2>/dev/null || echo unknown)"
@@ -245,10 +248,15 @@ PULL_CODE="$(curl -sS -o /dev/null -w '%{http_code}' -H "Host: $HOSTNAME" -H "Au
 
 SUCCESS=1
 trap - EXIT INT TERM
+# Retention is deliberately post-success and best-effort: it can never trigger rollback.
+# shellcheck disable=SC1091
+. "$TMP_DIR/shared/backup-retention.sh"
+remote_gate_retain_backups "$BACKUP_ROOT" "$LEGACY_BACKUP_ROOT" || true
 rm -rf "$TMP_DIR"
 unset WRITE_TOKEN
 printf 'WeiG Remote Gate updated: %s -> %s\n' "$LOCAL_VERSION" "$REMOTE_VERSION"
 printf 'Build: %s\n' "$BUILD_SHA"
 printf 'Backup: %s\n' "$BACKUP"
+printf 'Backup retention: latest %s project backups\n' "$(remote_gate_backup_keep 2>/dev/null || printf 2)"
 printf 'Safe update: %s/update.sh\n' "$LIB_DIR"
 printf 'Safe uninstall: %s/uninstall.sh --dry-run\n' "$LIB_DIR"
