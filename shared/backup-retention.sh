@@ -34,6 +34,15 @@ remote_gate_backup_candidates() {
     done
 }
 
+remote_gate_backup_physical_root() {
+    root="$1"
+    [ -d "$root" ] || return 1
+    (
+        cd "$root" 2>/dev/null || exit 1
+        pwd -P
+    )
+}
+
 remote_gate_retain_backups() {
     current_root="$1"
     legacy_root="${2:-}"
@@ -43,6 +52,17 @@ remote_gate_retain_backups() {
         return 0
     }
 
+    current_physical="$(remote_gate_backup_physical_root "$current_root" 2>/dev/null || true)"
+    legacy_physical=""
+    if [ -n "$legacy_root" ] && [ -d "$legacy_root" ]; then
+        legacy_physical="$(remote_gate_backup_physical_root "$legacy_root" 2>/dev/null || true)"
+    fi
+
+    roots_are_same=0
+    if [ -n "$current_physical" ] && [ -n "$legacy_physical" ] && [ "$current_physical" = "$legacy_physical" ]; then
+        roots_are_same=1
+    fi
+
     tmp="${TMPDIR:-/tmp}/remote-gate-backup-retention.$$"
     : > "$tmp" 2>/dev/null || {
         remote_gate_backup_warn "cannot create retention scratch file"
@@ -51,7 +71,7 @@ remote_gate_retain_backups() {
 
     {
         remote_gate_backup_candidates "$current_root"
-        if [ -n "$legacy_root" ] && [ "$legacy_root" != "$current_root" ]; then
+        if [ "$roots_are_same" -eq 0 ] && [ -n "$legacy_root" ] && [ "$legacy_root" != "$current_root" ]; then
             remote_gate_backup_candidates "$legacy_root"
         fi
     } | sort -r -t '|' -k1,1 > "$tmp" 2>/dev/null || {
@@ -68,7 +88,7 @@ remote_gate_retain_backups() {
         # A duplicate timestamp may exist in both current and legacy roots.
         # Prefer the current-root copy and remove only the duplicate project dir.
         if [ "$name" = "$previous_name" ]; then
-            if [ "$path" != "$current_root/$name" ]; then
+            if [ "$roots_are_same" -eq 0 ] && [ "$path" != "$current_root/$name" ]; then
                 rm -rf "$path" 2>/dev/null || remote_gate_backup_warn "failed to remove duplicate backup: $path"
             fi
             continue
@@ -77,7 +97,7 @@ remote_gate_retain_backups() {
         count=$((count + 1))
 
         if [ "$count" -le "$keep" ]; then
-            if [ -n "$legacy_root" ] && [ "$path" = "$legacy_root/$name" ] && [ "$legacy_root" != "$current_root" ]; then
+            if [ "$roots_are_same" -eq 0 ] && [ -n "$legacy_root" ] && [ "$path" = "$legacy_root/$name" ] && [ "$legacy_root" != "$current_root" ]; then
                 target="$current_root/$name"
                 if [ -e "$target" ]; then
                     rm -rf "$path" 2>/dev/null || remote_gate_backup_warn "failed to remove duplicate legacy backup: $path"
@@ -92,7 +112,7 @@ remote_gate_retain_backups() {
     done < "$tmp"
     rm -f "$tmp"
 
-    if [ -n "$legacy_root" ] && [ "$legacy_root" != "$current_root" ] && [ -d "$legacy_root" ]; then
+    if [ "$roots_are_same" -eq 0 ] && [ -n "$legacy_root" ] && [ "$legacy_root" != "$current_root" ] && [ -d "$legacy_root" ]; then
         rmdir "$legacy_root" 2>/dev/null || true
         legacy_parent="${legacy_root%/*}"
         [ "$legacy_parent" != "$legacy_root" ] && rmdir "$legacy_parent" 2>/dev/null || true
