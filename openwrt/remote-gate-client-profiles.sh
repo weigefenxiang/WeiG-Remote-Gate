@@ -82,7 +82,7 @@ infer_pool() {
 collect_used_ipv4() {
     wg="$1"; out="$2"
     : > "$out"
-    ip -o -4 addr show dev "$wg" 2>/dev/null | awk '{print $4}' >> "$out" || true
+    ip -o -4 addr show dev "$wg" 2>/dev/null | awk '{split($4,a,"/"); if (a[1] ~ /^[0-9]+\./) print a[1] "/32"}' >> "$out" || true
     wg show "$wg" allowed-ips 2>/dev/null | awk '{
         for (i=2; i<=NF; i++) {
             n=split($i,a,",")
