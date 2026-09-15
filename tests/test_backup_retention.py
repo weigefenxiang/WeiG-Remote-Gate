@@ -72,6 +72,33 @@ remote_gate_retain_backups "{current}" "{legacy or ''}"
             self.assertFalse((legacy / "20260914T120000Z").exists())
             self.assertTrue((legacy / "not-project-owned").is_dir())
 
+    def test_alias_roots_are_counted_once_and_never_delete_kept_backups(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            physical_tmp = base / "tmp"
+            physical_tmp.mkdir()
+            var_alias = base / "var"
+            var_alias.symlink_to(physical_tmp, target_is_directory=True)
+
+            current = var_alias / "backups" / "weig-remote-gate"
+            legacy = physical_tmp / "backups" / "weig-remote-gate"
+            current.mkdir(parents=True)
+            for name in (
+                "20260913T010101Z",
+                "20260914T010101Z",
+                "20260915T010101Z",
+            ):
+                (current / name).mkdir()
+
+            result = self.run_helper(current, legacy)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(current.is_dir())
+            self.assertTrue(legacy.is_dir())
+            self.assertEqual(
+                sorted(p.name for p in current.iterdir() if p.is_dir()),
+                ["20260914T010101Z", "20260915T010101Z"],
+            )
+
     def test_invalid_retention_value_falls_back_to_two(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td) / "backups"
